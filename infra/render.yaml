@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: oto-dial-backend
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        sync: false  # Set this in Render dashboard
+        # Example value: https://your-frontend.vercel.app
+      - key: PORT
+        value: 5000
+    healthCheckPath: /
+

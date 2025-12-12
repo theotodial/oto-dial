@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Save Logo from Base64</title>
+</head>
+<body>
+    <h1>Logo Converter</h1>
+    <p>Paste your complete base64 string below and click "Save Logo"</p>
+    <textarea id="base64Input" rows="10" cols="80" placeholder="Paste base64 string here..."></textarea>
+    <br><br>
+    <button onclick="saveLogo()">Save Logo</button>
+    <script>
+        function saveLogo() {
+            const base64 = document.getElementById('base64Input').value.trim();
+            if (!base64) {
+                alert('Please paste the base64 string');
+                return;
+            }
+            
+            // Remove data URL prefix if present
+            const base64Data = base64.replace(/^data:image\/png;base64,/, '');
+            
+            // Convert to blob and download
+            const byteCharacters = atob(base64Data);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: 'image/png' });
+            
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'logo.png';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            alert('Logo downloaded! Please move it to frontend/public/logo.png');
+        }
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,29 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <!-- Outer white ring -->
+  <circle cx="60" cy="60" r="58" fill="white"/>
+  <!-- Inner teal circle -->
+  <circle cx="60" cy="60" r="50" fill="#17A2B8"/>
+  <!-- Shadow for D -->
+  <text 
+    x="60" 
+    y="85" 
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="72" 
+    font-weight="900" 
+    font-style="italic"
+    fill="#0d7484" 
+    text-anchor="middle"
+    transform="translate(3, 3)"
+  >D</text>
+  <!-- Main white D letter -->
+  <text 
+    x="60" 
+    y="85" 
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="72" 
+    font-weight="900" 
+    font-style="italic"
+    fill="white" 
+    text-anchor="middle"
+  >D</text>
+</svg>
