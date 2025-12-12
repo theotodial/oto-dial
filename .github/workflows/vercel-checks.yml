@@ -1,4 +1,5 @@
 name: Vercel Deployment Checks
+# GitHub Actions workflow for Vercel deployment checks
 
 on:
   push:
