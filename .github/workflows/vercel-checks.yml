@@ -42,7 +42,6 @@ jobs:
         uses: vercel/repository-dispatch/actions/status@v1
         with:
           name: Vercel - oto-dial: lint
-          state: ${{ steps.lint.outcome == 'success' && 'success' || (steps.lint.outcome == 'failure' && 'failure' || 'pending') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -77,7 +76,6 @@ jobs:
         uses: vercel/repository-dispatch/actions/status@v1
         with:
           name: Vercel - oto-dial: build
-          state: ${{ steps.build.outcome == 'success' && 'success' || 'failure' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
