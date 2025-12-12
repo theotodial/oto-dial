@@ -3,20 +3,20 @@ import { motion } from 'framer-motion';
 function FeaturesSection() {
   const features = [
     {
-      title: "Virtual Phone Numbers",
+      title: "Buy Global Numbers",
       description: "Get dedicated phone numbers from multiple countries with instant activation and no hardware required."
     },
     {
-      title: "AI Call Automation",
-      description: "Automate your calls with intelligent AI that handles conversations, schedules follow-ups, and manages leads."
+      title: "Smart Call Routing",
+      description: "Automatically route calls to the right person or department based on time, location, and caller preferences."
     },
     {
-      title: "Advanced Analytics",
-      description: "Track call performance, monitor engagement, and get detailed insights into your communication metrics."
+      title: "Call Recording",
+      description: "Record all your calls automatically with cloud storage, playback, and transcription for quality assurance."
     },
     {
-      title: "Seamless Integration",
-      description: "Connect with your favorite tools and platforms through our comprehensive API and integrations."
+      title: "AI Chat + Voice Inbox",
+      description: "Receive messages and voicemails in a unified inbox with AI-powered transcription and smart categorization."
     }
   ];
 
