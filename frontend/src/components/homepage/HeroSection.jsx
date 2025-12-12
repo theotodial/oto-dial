@@ -3,8 +3,20 @@ import { Link } from 'react-router-dom';
 
 function HeroSection() {
   return (
-    <section className="w-full min-h-screen bg-gradient-to-br from-white via-blue-50 to-indigo-100 flex items-center justify-center px-4 py-20">
-      <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-12 items-center">
+    <section className="w-full min-h-screen bg-gradient-to-b from-[#EEF2F7] via-white to-[#EEF2F7] flex items-center justify-center px-4 py-20 relative overflow-hidden">
+      {/* Blurred Circle Accents */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {/* Large circle top-left */}
+        <div className="absolute -top-32 -left-32 w-96 h-96 bg-indigo-300 rounded-full opacity-20 blur-3xl"></div>
+        {/* Medium circle top-right */}
+        <div className="absolute top-20 -right-40 w-80 h-80 bg-purple-300 rounded-full opacity-15 blur-3xl"></div>
+        {/* Large circle bottom-center */}
+        <div className="absolute -bottom-40 left-1/2 transform -translate-x-1/2 w-[500px] h-[500px] bg-blue-300 rounded-full opacity-10 blur-3xl"></div>
+        {/* Small circle center-right */}
+        <div className="absolute top-1/2 right-20 w-64 h-64 bg-indigo-200 rounded-full opacity-15 blur-2xl hidden lg:block"></div>
+      </div>
+      
+      <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-12 items-center relative z-10">
         {/* Left Content */}
         <motion.div
           initial={{ opacity: 0, x: -50 }}
