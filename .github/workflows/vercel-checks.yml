@@ -41,7 +41,7 @@ jobs:
         if: always()
         uses: vercel/repository-dispatch/actions/status@v1
         with:
-          name: Vercel - oto-dial: lint
+          name: "vercel - oto-dial: lint"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -75,7 +75,7 @@ jobs:
         if: always()
         uses: vercel/repository-dispatch/actions/status@v1
         with:
-          name: Vercel - oto-dial: build
+          name: "Vercel - oto-dial: build"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
