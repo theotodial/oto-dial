@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion';
+import { FadeInUp } from './AnimationWrapper';
 import { Link } from 'react-router-dom';
 
 function HowItWorks() {
@@ -24,20 +24,14 @@ function HowItWorks() {
     <section className="w-full bg-gradient-to-b from-white to-[#EEF2F7] py-20 px-4">
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.6 }}
-          className="text-center mb-16"
-        >
+        <FadeInUp className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
             How It Works
           </h2>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto">
             Get started in three simple steps
           </p>
-        </motion.div>
+        </FadeInUp>
 
         {/* Steps Layout */}
         <div className="flex flex-col md:flex-row items-start md:items-center gap-8 md:gap-6 lg:gap-12 relative">
@@ -45,14 +39,7 @@ function HowItWorks() {
           <div className="hidden md:block absolute top-12 left-1/6 right-1/6 h-0.5 bg-gradient-to-r from-indigo-200 via-purple-200 to-indigo-200 -z-10"></div>
 
           {steps.map((step, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: index * 0.2 }}
-              className="flex-1 flex flex-col items-center text-center"
-            >
+            <FadeInUp key={index} delay={index * 0.2} duration={0.5} className="flex-1 flex flex-col items-center text-center">
               {/* Number Badge */}
               <div className="relative mb-6">
                 <div className="w-16 h-16 md:w-20 md:h-20 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-full flex items-center justify-center shadow-lg relative z-10">
@@ -84,25 +71,19 @@ function HowItWorks() {
                   </svg>
                 </div>
               )}
-            </motion.div>
+            </FadeInUp>
           ))}
         </div>
 
         {/* CTA Button */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.6, delay: 0.6 }}
-          className="text-center mt-16"
-        >
+        <FadeInUp delay={0.6} className="text-center mt-16">
           <Link
             to="/signup"
             className="inline-block px-8 py-4 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
           >
             Get Started Now
           </Link>
-        </motion.div>
+        </FadeInUp>
       </div>
     </section>
   );

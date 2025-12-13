@@ -1,0 +1,16 @@
+{
+  "figmaFile": "https://www.figma.com/make/6qpFF2M9Yi2u2Dfp9gecPV/Website-Design-for-Oto-Dial",
+  "nodeId": "0:1",
+  "components": [
+    "components/Header.tsx",
+    "components/Hero.tsx",
+    "components/Features.tsx",
+    "components/HowItWorks.tsx",
+    "components/Pricing.tsx",
+    "components/Footer.tsx",
+    "components/ComparisonTable.tsx",
+    "components/CallCalculator.tsx"
+  ],
+  "note": "This file contains references to the Figma Make design that should be implemented in the OTO-DIAL homepage"
+}
+
