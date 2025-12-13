@@ -46,7 +46,6 @@ function TestimonialsPreview() {
                   </div>
                 </div>
               </div>
-            </div>
           ))}
         </div>
       </div>
