@@ -13,35 +13,43 @@ function App() {
   return (
     <BrowserRouter>
       <Navbar />
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/signup" element={<Signup />} />
-        <Route path="/login" element={<Login />} />
-        <Route 
-          path="/dashboard" 
-          element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/dialer" 
-          element={
-            <ProtectedRoute>
-              <Dialer />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/chat" 
-          element={
-            <ProtectedRoute>
-              <Chat />
-            </ProtectedRoute>
-          } 
-        />
-      </Routes>
+      <div className="min-h-screen">
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/login" element={<Login />} />
+          <Route 
+            path="/dashboard" 
+            element={
+              <ProtectedRoute>
+                <div className="pt-16">
+                  <Dashboard />
+                </div>
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/dialer" 
+            element={
+              <ProtectedRoute>
+                <div className="pt-16">
+                  <Dialer />
+                </div>
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/chat" 
+            element={
+              <ProtectedRoute>
+                <div className="pt-16">
+                  <Chat />
+                </div>
+              </ProtectedRoute>
+            } 
+          />
+        </Routes>
+      </div>
       <Analytics />
     </BrowserRouter>
   );
