@@ -1,5 +1,3 @@
-import { FadeInUp } from './AnimationWrapper';
-
 function TestimonialsPreview() {
   const testimonials = [
     {
@@ -16,17 +14,16 @@ function TestimonialsPreview() {
     <section className="w-full bg-gradient-to-b from-[#EEF2F7] to-white py-20 px-4">
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
-        <FadeInUp className="text-center mb-16">
+        <div className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
             What Our Customers Say
           </h2>
-        </FadeInUp>
+        </div>
 
         {/* Testimonials Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-6 lg:gap-8">
           {testimonials.map((testimonial, index) => (
-            <FadeInUp key={index} delay={index * 0.2} duration={0.5}>
-              <div className="bg-gradient-to-br from-white to-indigo-50 rounded-xl p-6 md:p-8 shadow-md hover:shadow-lg transition-shadow duration-300 h-full">
+            <div key={index} className="bg-gradient-to-br from-white to-indigo-50 rounded-xl p-6 md:p-8 shadow-md hover:shadow-lg transition-shadow duration-300 h-full">
                 {/* Testimonial Text */}
                 <p className="text-gray-700 text-lg mb-6 leading-relaxed">
                   "{testimonial.text}"
@@ -49,7 +46,7 @@ function TestimonialsPreview() {
                   </div>
                 </div>
               </div>
-            </FadeInUp>
+            </div>
           ))}
         </div>
       </div>

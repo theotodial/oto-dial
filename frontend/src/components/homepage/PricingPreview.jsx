@@ -1,5 +1,3 @@
-import { FadeInUp } from './AnimationWrapper';
-import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 
 function PricingPreview() {
@@ -46,22 +44,19 @@ function PricingPreview() {
     <section className="w-full bg-white py-20 px-4">
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
-        <FadeInUp className="text-center mb-16">
+        <div className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
             Simple Pricing
           </h2>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto">
             Choose the perfect plan for your business needs
           </p>
-        </FadeInUp>
+        </div>
 
         {/* Pricing Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-6 lg:gap-8">
           {plans.map((plan, index) => (
-            <FadeInUp key={index} delay={index * 0.1} duration={0.5}>
-              <motion.div
-                whileHover={{ y: -8, scale: 1.02 }}
-                className={`relative bg-white rounded-xl p-8 border-2 transition-all duration-300 cursor-pointer shadow-md hover:shadow-xl h-full flex flex-col ${
+            <div key={index} className={`relative bg-white rounded-xl p-8 border-2 transition-all duration-300 cursor-pointer shadow-md hover:shadow-xl h-full flex flex-col hover:-translate-y-2 ${
                   plan.popular
                     ? 'border-indigo-500 shadow-lg md:scale-105'
                     : 'border-gray-200 hover:border-indigo-300'
@@ -122,8 +117,7 @@ function PricingPreview() {
                 >
                   See Full Pricing
                 </Link>
-              </motion.div>
-            </FadeInUp>
+            </div>
           ))}
         </div>
       </div>

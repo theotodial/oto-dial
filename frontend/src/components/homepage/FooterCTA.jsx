@@ -1,11 +1,10 @@
-import { FadeInUp } from './AnimationWrapper';
 import { Link } from 'react-router-dom';
 
 function FooterCTA() {
   return (
     <section className="w-full bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 py-16 md:py-20 px-4">
       <div className="max-w-4xl mx-auto text-center">
-        <FadeInUp className="space-y-6">
+        <div className="space-y-6">
           {/* Headline */}
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white mb-4">
             Get your number today
@@ -23,7 +22,7 @@ function FooterCTA() {
           >
             Get Started
           </Link>
-        </FadeInUp>
+        </div>
       </div>
     </section>
   );
