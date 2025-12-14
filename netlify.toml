@@ -1,0 +1,30 @@
+# Netlify configuration for OTO-DIAL
+# Build from the frontend directory
+
+[build]
+  # Base directory for the build
+  base = "frontend"
+  
+  # Build command
+  command = "npm run build"
+  
+  # Output directory (relative to base)
+  publish = "dist"
+
+  # Environment variables for build
+  [build.environment]
+    NODE_VERSION = "18"
+
+# SPA redirect rules - handle client-side routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Security headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
