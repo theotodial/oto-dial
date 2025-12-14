@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import API from '../api';
+import { supabase } from '../lib/supabase';
 
 function Login() {
   const navigate = useNavigate();
@@ -28,12 +28,18 @@ function Login() {
     setLoading(true);
 
     try {
-      const response = await API.post('/api/auth/login', formData);
-      
-      if (response.data && response.data.access_token) {
-        // Save JWT token and user_id to localStorage
-        localStorage.setItem('jwt_token', response.data.access_token);
-        localStorage.setItem('user_id', response.data.user.id.toString());
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: formData.email,
+        password: formData.password
+      });
+
+      if (authError) {
+        throw new Error(authError.message);
+      }
+
+      if (data.session && data.user) {
+        // Store user info (Supabase handles session/token automatically)
+        localStorage.setItem('user_id', data.user.id);
         
         setSuccess('Login successful! Redirecting...');
         // Redirect to dashboard after a brief delay
@@ -43,20 +49,7 @@ function Login() {
       }
     } catch (err) {
       let errorMessage = 'Login failed. Please check your credentials.';
-      
-      if (err.response) {
-        // Server responded with error
-        errorMessage = err.response?.data?.detail || 
-                      err.response?.data?.error || 
-                      errorMessage;
-      } else if (err.request) {
-        // Request made but no response received
-        errorMessage = 'Cannot connect to server. Please make sure the backend is running on port 5000.';
-      } else {
-        // Error setting up the request
-        errorMessage = err.message || errorMessage;
-      }
-      
+      errorMessage = err.message || errorMessage;
       setError(errorMessage);
     } finally {
       setLoading(false);

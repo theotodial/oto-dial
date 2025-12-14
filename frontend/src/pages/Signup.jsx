@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import API from '../api';
+import { supabase } from '../lib/supabase';
 
 function Signup() {
   const navigate = useNavigate();
@@ -29,31 +29,42 @@ function Signup() {
     setLoading(true);
 
     try {
-      const response = await API.post('/api/auth/signup', formData);
-      
-      if (response.data) {
-        setSuccess('Account created successfully! Redirecting to login...');
-        // Redirect to login after a brief delay
-        setTimeout(() => {
-          navigate('/login');
-        }, 1500);
+      // Sign up with Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password
+      });
+
+      if (authError) {
+        throw new Error(authError.message);
       }
+
+      if (!authData.user) {
+        throw new Error('Signup failed. Please try again.');
+      }
+
+      // Insert user into users table
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert({
+          id: authData.user.id,
+          email: authData.user.email,
+          name: formData.name || null
+        });
+
+      if (insertError) {
+        console.error('Error inserting user:', insertError);
+        // Continue anyway - auth user was created
+      }
+
+      setSuccess('Account created successfully! Redirecting to dashboard...');
+      // Redirect to dashboard after a brief delay
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 1500);
     } catch (err) {
       let errorMessage = 'Signup failed. Please try again.';
-      
-      if (err.response) {
-        // Server responded with error
-        errorMessage = err.response?.data?.detail || 
-                      err.response?.data?.error || 
-                      errorMessage;
-      } else if (err.request) {
-        // Request made but no response received
-        errorMessage = 'Cannot connect to server. Please make sure the backend is running on port 5000.';
-      } else {
-        // Error setting up the request
-        errorMessage = err.message || errorMessage;
-      }
-      
+      errorMessage = err.message || errorMessage;
       setError(errorMessage);
     } finally {
       setLoading(false);

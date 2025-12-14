@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const supabase = require('./src/supabase');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -15,86 +17,88 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// In-memory storage
-const users = [];
-const wallets = {}; // Store by user_id
-const numbers = [];
-const calls = [];
-const messages = [];
-
-// Helper function to generate fake phone number
-const generatePhoneNumber = (country) => {
-  const prefixes = {
-    US: '+1',
-    UK: '+44',
-    CA: '+1',
-    AU: '+61',
-    DE: '+49'
-  };
-  const prefix = prefixes[country] || '+1';
-  const random = Math.floor(Math.random() * 1000000000).toString().padStart(10, '0');
-  return `${prefix}${random}`;
-};
-
 // Health check route
 app.get('/', (req, res) => {
   res.json({ status: 'OK' });
 });
 
 // Auth Routes
-const handleSignup = (req, res) => {
+const handleSignup = async (req, res) => {
   const { email, password, name, full_name } = req.body;
 
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
-  const existingUser = users.find(u => u.email === email);
-  if (existingUser) {
-    return res.status(400).json({ error: 'User already exists' });
+  try {
+    // Hash password before storing
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Insert user into users table
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .insert({
+        email,
+        password_hash: hashedPassword,
+        name: name || full_name || null
+      })
+      .select('id, email')
+      .single();
+
+    if (userError) {
+      if (userError.code === '23505') {
+        return res.status(400).json({ error: 'User already exists' });
+      }
+      return res.status(500).json({ error: userError.message });
+    }
+
+    // Create wallet row with balance 0
+    const { error: walletError } = await supabase
+      .from('wallets')
+      .insert({
+        user_id: user.id,
+        balance: 0
+      });
+
+    if (walletError) {
+      return res.status(500).json({ error: walletError.message });
+    }
+
+    res.json({ id: user.id, email: user.email });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  const userId = Date.now(); // Simple ID generation
-  users.push({ 
-    id: userId,
-    email, 
-    password, 
-    name: name || full_name || email 
-  });
-  wallets[userId] = 0; // Store by user_id
-
-  res.json({ success: true });
 };
 
-const handleLogin = (req, res) => {
+const handleLogin = async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
-  const user = users.find(u => u.email === email);
-  if (!user) {
-    return res.status(400).json({ error: 'User not found' });
-  }
+  try {
+    // Query users table by email
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, email, password_hash')
+      .eq('email', email)
+      .single();
 
-  if (user.password !== password) {
-    return res.status(400).json({ error: 'Wrong password' });
-  }
-
-  // Generate a simple token (in production, use JWT)
-  const token = `token_${user.id}_${Date.now()}`;
-  
-  // Return the structure expected by frontend
-  res.json({
-    access_token: token,
-    token_type: 'bearer',
-    user: {
-      id: user.id || Date.now(), // Ensure ID exists
-      email: user.email,
-      name: user.name
+    if (error || !user) {
+      return res.status(400).json({ error: 'User not found' });
     }
-  });
+
+    // Compare password with stored hash
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Wrong password' });
+    }
+
+    res.json({ id: user.id, email: user.email });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
 // Support both /api/auth/* and /api/* routes
@@ -103,99 +107,306 @@ app.post('/api/signup', handleSignup);
 app.post('/api/auth/login', handleLogin);
 app.post('/api/login', handleLogin);
 
-// Wallet Routes
-app.get('/api/wallet/:user_id', (req, res) => {
-  const user_id = parseInt(req.params.user_id);
-  
-  if (wallets[user_id] === undefined) {
-    wallets[user_id] = 0;
+// Supabase Auth signup endpoint
+app.post('/api/auth/supabase/signup', async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
   }
-  
-  res.json({ balance: wallets[user_id] });
+
+  try {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password
+    });
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    if (!data.user) {
+      return res.status(400).json({ error: 'User creation failed' });
+    }
+
+    res.json({ id: data.user.id, email: data.user.email });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/wallet/topup', (req, res) => {
-  const { user_id, amount } = req.body;
-  const userId = parseInt(user_id);
+// Supabase Auth login endpoint
+app.post('/api/auth/supabase/login', async (req, res) => {
+  const { email, password } = req.body;
 
-  if (wallets[userId] === undefined) {
-    wallets[userId] = 0;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
   }
 
-  wallets[userId] += amount;
-  res.json({ success: true, balance: wallets[userId] });
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    if (!data.session || !data.user) {
+      return res.status(401).json({ error: 'Login failed' });
+    }
+
+    res.json({
+      access_token: data.session.access_token,
+      token_type: 'bearer',
+      expires_in: data.session.expires_in,
+      user: {
+        id: data.user.id,
+        email: data.user.email
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Wallet Routes
+app.get('/api/wallet/:user_id', async (req, res) => {
+  const user_id = req.params.user_id;
+
+  try {
+    const { data: wallet, error } = await supabase
+      .from('wallets')
+      .select('balance')
+      .eq('user_id', user_id)
+      .single();
+
+    if (error || !wallet) {
+      return res.json({ balance: 0 });
+    }
+
+    res.json({ balance: wallet.balance });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/wallet/topup', async (req, res) => {
+  const { user_id, amount } = req.body;
+
+  try {
+    // Get current balance
+    const { data: wallet, error: fetchError } = await supabase
+      .from('wallets')
+      .select('balance')
+      .eq('user_id', user_id)
+      .single();
+
+    if (fetchError || !wallet) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+
+    const newBalance = Number(wallet.balance) + Number(amount);
+
+    // Update wallet balance
+    const { data: updated, error: updateError } = await supabase
+      .from('wallets')
+      .update({ balance: newBalance, updated_at: new Date().toISOString() })
+      .eq('user_id', user_id)
+      .select('balance')
+      .single();
+
+    if (updateError) {
+      return res.status(500).json({ error: updateError.message });
+    }
+
+    res.json({ success: true, balance: updated.balance });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Numbers Routes
-app.post('/api/numbers/buy', (req, res) => {
+app.post('/api/numbers/buy', async (req, res) => {
   const { user_id, country } = req.body;
-  const userId = parseInt(user_id);
 
-  const fakeNumber = "+1" + Math.floor(1000000000 + Math.random() * 9000000000);
-  const createdNumberObj = { 
-    id: Date.now(), 
-    user_id: userId, 
-    number: fakeNumber, 
-    country: country || 'US',
-    created_at: new Date().toISOString()
-  };
+  try {
+    const fakeNumber = "+1" + Math.floor(1000000000 + Math.random() * 9000000000);
 
-  numbers.push(createdNumberObj);
+    // Insert into phone_numbers table
+    const { data: createdNumber, error: insertError } = await supabase
+      .from('phone_numbers')
+      .insert({
+        user_id,
+        number: fakeNumber,
+        country: country || 'US'
+      })
+      .select()
+      .single();
 
-  if (wallets[userId] !== undefined) {
-    wallets[userId] -= 1;
+    if (insertError) {
+      return res.status(500).json({ error: insertError.message });
+    }
+
+    // Deduct from wallet
+    const { data: wallet } = await supabase
+      .from('wallets')
+      .select('balance')
+      .eq('user_id', user_id)
+      .single();
+
+    if (wallet) {
+      await supabase
+        .from('wallets')
+        .update({ balance: Number(wallet.balance) - 1, updated_at: new Date().toISOString() })
+        .eq('user_id', user_id);
+    }
+
+    res.json({ number: createdNumber });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  res.json({ number: createdNumberObj });
 });
 
-app.get('/api/numbers/:user_id', (req, res) => {
-  const user_id = parseInt(req.params.user_id);
+app.get('/api/numbers/:user_id', async (req, res) => {
+  const user_id = req.params.user_id;
 
-  const userNumbers = numbers.filter(n => n.user_id === user_id);
-  res.json(userNumbers);
+  try {
+    const { data: userNumbers, error } = await supabase
+      .from('phone_numbers')
+      .select('*')
+      .eq('user_id', user_id);
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json(userNumbers || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Call Routes
-app.post('/api/calls', (req, res) => {
-  const { user_id, from_number, to_number, transcript } = req.body;
-  const userId = parseInt(user_id);
+app.post('/api/calls', async (req, res) => {
+  const { user_id, from_number, to_number, status } = req.body;
 
-  const call = { 
-    id: Date.now(), 
-    user_id: userId,
-    from_number, 
-    to_number, 
-    transcript: transcript || null,
-    created_at: new Date().toISOString()
-  };
-  calls.push(call);
+  try {
+    const { data: call, error } = await supabase
+      .from('calls')
+      .insert({
+        user_id,
+        from_number,
+        to_number,
+        status: status || 'completed'
+      })
+      .select()
+      .single();
 
-  res.json(call);
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json(call);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.get('/api/calls/:user_id', (req, res) => {
-  const user_id = parseInt(req.params.user_id);
+app.get('/api/calls/:user_id', async (req, res) => {
+  const user_id = req.params.user_id;
 
-  const userCalls = calls.filter(c => c.user_id === user_id);
-  res.json(userCalls);
+  try {
+    const { data: userCalls, error } = await supabase
+      .from('calls')
+      .select('*')
+      .eq('user_id', user_id);
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json(userCalls || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Chat Routes
-app.get('/api/chat', (req, res) => {
-  res.json(messages);
+app.get('/api/chat', async (req, res) => {
+  try {
+    const { data: messages, error } = await supabase
+      .from('messages')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json(messages || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/chat', (req, res) => {
-  const { from, text } = req.body;
+app.post('/api/chat', async (req, res) => {
+  const { user_id, text } = req.body;
 
-  const msg = { id: Date.now(), from, text, timestamp: new Date() };
-  messages.push(msg);
+  try {
+    // Insert user message
+    const { data: userMsg, error: userError } = await supabase
+      .from('messages')
+      .insert({
+        user_id,
+        direction: 'outbound',
+        content: text
+      })
+      .select()
+      .single();
 
-  const reply = { id: Date.now() + 1, from: "bot", text: "Echo: " + text };
-  messages.push(reply);
+    if (userError) {
+      return res.status(500).json({ error: userError.message });
+    }
 
-  res.json({ user: msg, bot: reply });
+    // Insert bot reply
+    const { data: botMsg, error: botError } = await supabase
+      .from('messages')
+      .insert({
+        user_id,
+        direction: 'inbound',
+        content: 'Echo: ' + text
+      })
+      .select()
+      .single();
+
+    if (botError) {
+      return res.status(500).json({ error: botError.message });
+    }
+
+    res.json({ user: userMsg, bot: botMsg });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Database test route
+app.get('/api/db-test', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .limit(1);
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Start server

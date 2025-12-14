@@ -1,6 +1,24 @@
 import { useState, useEffect } from 'react';
 import API from '../api';
 
+const WalletIcon = () => (
+  <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+  </svg>
+);
+
+const PhoneIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+  </svg>
+);
+
+const PlusIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+  </svg>
+);
+
 function Dashboard() {
   const [balance, setBalance] = useState(null);
   const [numbers, setNumbers] = useState([]);
@@ -11,7 +29,6 @@ function Dashboard() {
 
   const user_id = localStorage.getItem('user_id');
 
-  // Fetch wallet balance and numbers
   const fetchData = async () => {
     if (!user_id) {
       setError('User not logged in');
@@ -22,7 +39,6 @@ function Dashboard() {
     try {
       setError('');
       setSuccess('');
-      // Fetch wallet and numbers in parallel
       const [walletResponse, numbersResponse] = await Promise.all([
         API.get(`/api/wallet/${user_id}`),
         API.get(`/api/numbers/${user_id}`)
@@ -62,9 +78,7 @@ function Dashboard() {
       });
 
       setSuccess('Wallet topped up successfully!');
-      // Refresh wallet and numbers after top-up
       await fetchData();
-      // Clear success message after 3 seconds
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(
@@ -93,9 +107,7 @@ function Dashboard() {
       });
 
       setSuccess(`Number ${response.data.number} purchased successfully!`);
-      // Refresh wallet and numbers after purchase
       await fetchData();
-      // Clear success message after 3 seconds
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(
@@ -110,162 +122,128 @@ function Dashboard() {
 
   if (loading) {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center' }}>
-        <p>Loading dashboard...</p>
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-500 dark:text-gray-400">Loading dashboard...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ maxWidth: '900px', margin: '2rem auto', padding: '0 1rem' }}>
-      <h1 style={{ marginBottom: '2rem' }}>Dashboard</h1>
+    <div className="h-full overflow-auto p-6">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
+        <p className="text-gray-500 dark:text-gray-400 mt-1">Welcome back! Here is an overview of your account.</p>
+      </div>
 
       {actionLoading && (
-        <div style={{
-          padding: '0.75rem',
-          marginBottom: '1.5rem',
-          backgroundColor: '#e7f3ff',
-          color: '#004085',
-          borderRadius: '4px',
-          fontSize: '0.875rem',
-          textAlign: 'center'
-        }}>
+        <div className="mb-6 px-4 py-3 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-xl text-sm flex items-center">
+          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mr-3"></div>
           Processing...
         </div>
       )}
 
       {success && (
-        <div style={{
-          padding: '0.75rem',
-          marginBottom: '1.5rem',
-          backgroundColor: '#d4edda',
-          color: '#155724',
-          borderRadius: '4px',
-          fontSize: '0.875rem'
-        }}>
+        <div className="mb-6 px-4 py-3 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-xl text-sm flex items-center">
+          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
           {success}
         </div>
       )}
 
       {error && (
-        <div style={{
-          padding: '0.75rem',
-          marginBottom: '1.5rem',
-          backgroundColor: '#f8d7da',
-          color: '#721c24',
-          borderRadius: '4px',
-          fontSize: '0.875rem'
-        }}>
+        <div className="mb-6 px-4 py-3 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-xl text-sm flex items-center">
+          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
           {error}
         </div>
       )}
 
-      {/* Wallet Section */}
-      <div style={{
-        backgroundColor: '#f8f9fa',
-        padding: '1.5rem',
-        borderRadius: '8px',
-        marginBottom: '2rem',
-        border: '1px solid #dee2e6'
-      }}>
-        <h2 style={{ marginTop: 0, marginBottom: '1rem' }}>Wallet Balance</h2>
-        <div style={{
-          fontSize: '2rem',
-          fontWeight: 'bold',
-          color: '#28a745',
-          marginBottom: '1rem'
-        }}>
-          ${balance !== null ? balance.toFixed(2) : '0.00'}
-        </div>
-        <button
-          onClick={handleTopUp}
-          disabled={actionLoading}
-          style={{
-            padding: '0.75rem 1.5rem',
-            backgroundColor: actionLoading ? '#6c757d' : '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '1rem',
-            fontWeight: '500',
-            cursor: actionLoading ? 'not-allowed' : 'pointer',
-            transition: 'background-color 0.2s'
-          }}
-        >
-          {actionLoading ? 'Processing...' : 'Top Up $10'}
-        </button>
-      </div>
-
-      {/* Numbers Section */}
-      <div style={{
-        backgroundColor: '#f8f9fa',
-        padding: '1.5rem',
-        borderRadius: '8px',
-        border: '1px solid #dee2e6'
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '1.5rem'
-        }}>
-          <h2 style={{ margin: 0 }}>My Numbers</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-6 text-white shadow-lg">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
+              <WalletIcon />
+            </div>
+            <span className="text-xs bg-white/20 px-3 py-1 rounded-full">Wallet</span>
+          </div>
+          <p className="text-indigo-100 text-sm mb-1">Available Balance</p>
+          <p className="text-4xl font-bold mb-4">
+            ${balance !== null ? balance.toFixed(2) : '0.00'}
+          </p>
           <button
-            onClick={handleBuyNumber}
+            onClick={handleTopUp}
             disabled={actionLoading}
-            style={{
-              padding: '0.75rem 1.5rem',
-              backgroundColor: actionLoading ? '#6c757d' : '#28a745',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              fontSize: '1rem',
-              fontWeight: '500',
-              cursor: actionLoading ? 'not-allowed' : 'pointer',
-              transition: 'background-color 0.2s'
-            }}
+            className="w-full py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium
+                       transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+                       flex items-center justify-center"
           >
-            {actionLoading ? 'Processing...' : 'Buy Number'}
+            <PlusIcon />
+            <span className="ml-2">Top Up $10</span>
           </button>
         </div>
 
+        <div className="bg-white dark:bg-slate-700 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-600">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-green-100 dark:bg-green-900/50 rounded-xl flex items-center justify-center text-green-600 dark:text-green-400">
+              <PhoneIcon />
+            </div>
+            <span className="text-xs bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-400 px-3 py-1 rounded-full">Numbers</span>
+          </div>
+          <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">Active Numbers</p>
+          <p className="text-4xl font-bold text-gray-900 dark:text-white mb-4">{numbers.length}</p>
+          <button
+            onClick={handleBuyNumber}
+            disabled={actionLoading}
+            className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-medium
+                       transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+                       flex items-center justify-center"
+          >
+            <PlusIcon />
+            <span className="ml-2">Buy Number</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white dark:bg-slate-700 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-600 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-600 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">My Phone Numbers</h2>
+          <span className="text-sm text-gray-500 dark:text-gray-400">{numbers.length} total</span>
+        </div>
+
         {numbers.length === 0 ? (
-          <p style={{ color: '#6c757d', fontStyle: 'italic' }}>
-            No numbers purchased yet. Click "Buy Number" to get started.
-          </p>
+          <div className="p-8 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 dark:bg-slate-600 rounded-full flex items-center justify-center text-gray-400 dark:text-gray-300">
+              <PhoneIcon />
+            </div>
+            <p className="text-gray-500 dark:text-gray-400 mb-2">No numbers purchased yet</p>
+            <p className="text-gray-400 dark:text-gray-500 text-sm">Click Buy Number to get started</p>
+          </div>
         ) : (
-          <div style={{
-            display: 'grid',
-            gap: '1rem'
-          }}>
+          <div className="divide-y divide-gray-100 dark:divide-slate-600">
             {numbers.map((number) => (
               <div
                 key={number.id}
-                style={{
-                  backgroundColor: 'white',
-                  padding: '1rem',
-                  borderRadius: '4px',
-                  border: '1px solid #dee2e6',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}
+                className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-600/50 transition-colors"
               >
-                <div>
-                  <div style={{
-                    fontSize: '1.1rem',
-                    fontWeight: '500',
-                    marginBottom: '0.25rem'
-                  }}>
-                    {number.number}
+                <div className="flex items-center space-x-4">
+                  <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/50 rounded-lg flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                    <PhoneIcon />
                   </div>
-                  <div style={{
-                    fontSize: '0.875rem',
-                    color: '#6c757d'
-                  }}>
-                    {number.country} • {new Date(number.created_at).toLocaleDateString()}
+                  <div>
+                    <p className="font-medium text-gray-900 dark:text-white">{number.number}</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      {number.country} - Added {new Date(number.created_at).toLocaleDateString()}
+                    </p>
                   </div>
                 </div>
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-400">
+                  Active
+                </span>
               </div>
             ))}
           </div>

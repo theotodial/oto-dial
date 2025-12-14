@@ -1,6 +1,18 @@
 import { useState, useEffect } from 'react';
 import API from '../api';
 
+const PhoneIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+  </svg>
+);
+
+const BackspaceIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414 6.414a2 2 0 001.414.586H19a2 2 0 002-2V7a2 2 0 00-2-2h-8.172a2 2 0 00-1.414.586L3 12z" />
+  </svg>
+);
+
 function Dialer() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [callLogs, setCallLogs] = useState([]);
@@ -13,7 +25,7 @@ function Dialer() {
   // Handle dialpad button clicks
   const handleDialpadClick = (digit) => {
     setPhoneNumber(prev => prev + digit);
-    setError(''); // Clear any errors when typing
+    setError('');
   };
 
   // Handle backspace
@@ -40,7 +52,6 @@ function Dialer() {
     try {
       setError('');
       setSuccess('');
-      // Fetch numbers and call logs in parallel
       const [numbersResponse, callsResponse] = await Promise.all([
         API.get(`/api/numbers/${user_id}`),
         API.get(`/api/calls/${user_id}`)
@@ -74,7 +85,6 @@ function Dialer() {
       return;
     }
 
-    // Get user's first number as from_number
     const fromNumber = userNumbers.length > 0 ? userNumbers[0].number : null;
     
     if (!fromNumber) {
@@ -94,10 +104,8 @@ function Dialer() {
       });
 
       setSuccess(`Call to ${phoneNumber.trim()} initiated successfully!`);
-      // Clear input and refresh call logs
       setPhoneNumber('');
       await fetchData();
-      // Clear success message after 3 seconds
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(
@@ -112,454 +120,184 @@ function Dialer() {
 
   if (loading) {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center' }}>
-        <p>Loading dialer...</p>
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-500 dark:text-gray-400">Loading dialer...</p>
+        </div>
       </div>
     );
   }
 
+  const dialpadButtons = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
+
   return (
-    <div style={{ maxWidth: '900px', margin: '2rem auto', padding: '0 1rem' }}>
-      <h1 style={{ marginBottom: '2rem' }}>Dialer</h1>
-
-      {calling && (
-        <div style={{
-          padding: '0.75rem',
-          marginBottom: '1.5rem',
-          backgroundColor: '#e7f3ff',
-          color: '#004085',
-          borderRadius: '4px',
-          fontSize: '0.875rem',
-          textAlign: 'center'
-        }}>
-          Processing call...
-        </div>
-      )}
-
-      {success && (
-        <div style={{
-          padding: '0.75rem',
-          marginBottom: '1.5rem',
-          backgroundColor: '#d4edda',
-          color: '#155724',
-          borderRadius: '4px',
-          fontSize: '0.875rem'
-        }}>
-          {success}
-        </div>
-      )}
-
-      {error && (
-        <div style={{
-          padding: '0.75rem',
-          marginBottom: '1.5rem',
-          backgroundColor: '#f8d7da',
-          color: '#721c24',
-          borderRadius: '4px',
-          fontSize: '0.875rem'
-        }}>
-          {error}
-        </div>
-      )}
-
-      {/* Call Input Section */}
-      <div style={{
-        backgroundColor: '#f8f9fa',
-        padding: '1.5rem',
-        borderRadius: '8px',
-        marginBottom: '2rem',
-        border: '1px solid #dee2e6'
-      }}>
-        {/* Phone Number Display */}
-        <div style={{ marginBottom: '1.5rem' }}>
-          <label htmlFor="phoneNumber" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
-            Phone Number
-          </label>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <input
-              type="tel"
-              id="phoneNumber"
-              value={phoneNumber}
-              onChange={(e) => {
-                setPhoneNumber(e.target.value);
-                setError(''); // Clear errors when typing
-              }}
-              onKeyDown={(e) => {
-                // Allow backspace, delete, arrow keys, etc.
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  if (phoneNumber.trim() && !calling && userNumbers.length > 0) {
-                    handleCall();
-                  }
-                } else if (e.key === 'Backspace') {
-                  handleBackspace();
-                  e.preventDefault();
-                }
-              }}
-              placeholder="Enter Phone Number"
-              disabled={calling || userNumbers.length === 0}
-              style={{
-                flex: 1,
-                padding: '1rem',
-                border: '2px solid #ced4da',
-                borderRadius: '8px',
-                fontSize: '1.5rem',
-                fontWeight: '500',
-                textAlign: 'center',
-                letterSpacing: '0.1em',
-                boxSizing: 'border-box',
-                backgroundColor: calling || userNumbers.length === 0 ? '#e9ecef' : '#fff',
-                cursor: calling || userNumbers.length === 0 ? 'not-allowed' : 'text'
-              }}
-            />
-            {phoneNumber && (
-              <button
-                type="button"
-                onClick={handleClear}
-                disabled={calling}
-                style={{
-                  padding: '0.75rem 1rem',
-                  backgroundColor: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontSize: '0.875rem',
-                  fontWeight: '500',
-                  cursor: calling ? 'not-allowed' : 'pointer',
-                  transition: 'background-color 0.2s'
-                }}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-          {userNumbers.length > 0 && (
-            <div style={{
-              fontSize: '0.875rem',
-              color: '#6c757d',
-              marginTop: '0.5rem',
-              textAlign: 'center'
-            }}>
-              Calling from: <strong>{userNumbers[0].number}</strong>
-            </div>
-          )}
-          {userNumbers.length === 0 && (
-            <div style={{
-              fontSize: '0.875rem',
-              color: '#dc3545',
-              marginTop: '0.5rem',
-              textAlign: 'center'
-            }}>
-              You need to purchase a number first. Go to Dashboard to buy a number.
-            </div>
-          )}
-        </div>
-
-        {/* Dialpad */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: '0.75rem',
-          marginBottom: '1.5rem',
-          maxWidth: '320px',
-          margin: '0 auto 1.5rem auto'
-        }}>
-          {/* Dialpad buttons 1-9 */}
-          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-            <button
-              key={num}
-              type="button"
-              onClick={() => handleDialpadClick(num.toString())}
-              disabled={calling || userNumbers.length === 0}
-              style={{
-                padding: '1.25rem',
-                fontSize: '1.5rem',
-                fontWeight: '600',
-                backgroundColor: '#fff',
-                border: '2px solid #dee2e6',
-                borderRadius: '12px',
-                cursor: calling || userNumbers.length === 0 ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s',
-                color: '#333',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-              }}
-              onMouseDown={(e) => {
-                if (!calling && userNumbers.length > 0) {
-                  e.target.style.transform = 'scale(0.95)';
-                  e.target.style.backgroundColor = '#e9ecef';
-                }
-              }}
-              onMouseUp={(e) => {
-                if (!calling && userNumbers.length > 0) {
-                  e.target.style.transform = 'scale(1)';
-                  e.target.style.backgroundColor = '#fff';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!calling && userNumbers.length > 0) {
-                  e.target.style.transform = 'scale(1)';
-                  e.target.style.backgroundColor = '#fff';
-                }
-              }}
-            >
-              {num}
-            </button>
-          ))}
-          
-          {/* Asterisk */}
-          <button
-            type="button"
-            onClick={() => handleDialpadClick('*')}
-            disabled={calling || userNumbers.length === 0}
-            style={{
-              padding: '1.25rem',
-              fontSize: '1.5rem',
-              fontWeight: '600',
-              backgroundColor: '#fff',
-              border: '2px solid #dee2e6',
-              borderRadius: '12px',
-              cursor: calling || userNumbers.length === 0 ? 'not-allowed' : 'pointer',
-              transition: 'all 0.2s',
-              color: '#333',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-            }}
-            onMouseDown={(e) => {
-              if (!calling && userNumbers.length > 0) {
-                e.target.style.transform = 'scale(0.95)';
-                e.target.style.backgroundColor = '#e9ecef';
-              }
-            }}
-            onMouseUp={(e) => {
-              if (!calling && userNumbers.length > 0) {
-                e.target.style.transform = 'scale(1)';
-                e.target.style.backgroundColor = '#fff';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!calling && userNumbers.length > 0) {
-                e.target.style.transform = 'scale(1)';
-                e.target.style.backgroundColor = '#fff';
-              }
-            }}
-          >
-            *
-          </button>
-
-          {/* Zero */}
-          <button
-            type="button"
-            onClick={() => handleDialpadClick('0')}
-            disabled={calling || userNumbers.length === 0}
-            style={{
-              padding: '1.25rem',
-              fontSize: '1.5rem',
-              fontWeight: '600',
-              backgroundColor: '#fff',
-              border: '2px solid #dee2e6',
-              borderRadius: '12px',
-              cursor: calling || userNumbers.length === 0 ? 'not-allowed' : 'pointer',
-              transition: 'all 0.2s',
-              color: '#333',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-            }}
-            onMouseDown={(e) => {
-              if (!calling && userNumbers.length > 0) {
-                e.target.style.transform = 'scale(0.95)';
-                e.target.style.backgroundColor = '#e9ecef';
-              }
-            }}
-            onMouseUp={(e) => {
-              if (!calling && userNumbers.length > 0) {
-                e.target.style.transform = 'scale(1)';
-                e.target.style.backgroundColor = '#fff';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!calling && userNumbers.length > 0) {
-                e.target.style.transform = 'scale(1)';
-                e.target.style.backgroundColor = '#fff';
-              }
-            }}
-          >
-            0
-          </button>
-
-          {/* Hash/Pound */}
-          <button
-            type="button"
-            onClick={() => handleDialpadClick('#')}
-            disabled={calling || userNumbers.length === 0}
-            style={{
-              padding: '1.25rem',
-              fontSize: '1.5rem',
-              fontWeight: '600',
-              backgroundColor: '#fff',
-              border: '2px solid #dee2e6',
-              borderRadius: '12px',
-              cursor: calling || userNumbers.length === 0 ? 'not-allowed' : 'pointer',
-              transition: 'all 0.2s',
-              color: '#333',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-            }}
-            onMouseDown={(e) => {
-              if (!calling && userNumbers.length > 0) {
-                e.target.style.transform = 'scale(0.95)';
-                e.target.style.backgroundColor = '#e9ecef';
-              }
-            }}
-            onMouseUp={(e) => {
-              if (!calling && userNumbers.length > 0) {
-                e.target.style.transform = 'scale(1)';
-                e.target.style.backgroundColor = '#fff';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!calling && userNumbers.length > 0) {
-                e.target.style.transform = 'scale(1)';
-                e.target.style.backgroundColor = '#fff';
-              }
-            }}
-          >
-            #
-          </button>
-        </div>
-
-        {/* Action Buttons */}
-        <div style={{
-          display: 'flex',
-          gap: '1rem',
-          justifyContent: 'center',
-          maxWidth: '320px',
-          margin: '0 auto'
-        }}>
-          {/* Backspace Button */}
-          <button
-            type="button"
-            onClick={handleBackspace}
-            disabled={calling || !phoneNumber || userNumbers.length === 0}
-            style={{
-              padding: '1rem 1.5rem',
-              fontSize: '1rem',
-              fontWeight: '500',
-              backgroundColor: '#6c757d',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              cursor: calling || !phoneNumber || userNumbers.length === 0 ? 'not-allowed' : 'pointer',
-              transition: 'background-color 0.2s',
-              opacity: calling || !phoneNumber || userNumbers.length === 0 ? 0.6 : 1
-            }}
-          >
-            ⌫ Delete
-          </button>
-
-          {/* Call Button */}
-          <button
-            type="button"
-            onClick={handleCall}
-            disabled={calling || !phoneNumber.trim() || userNumbers.length === 0}
-            style={{
-              flex: 1,
-              padding: '1rem 2rem',
-              fontSize: '1.25rem',
-              fontWeight: '600',
-              backgroundColor: calling || !phoneNumber.trim() || userNumbers.length === 0 ? '#6c757d' : '#28a745',
-              color: 'white',
-              border: 'none',
-              borderRadius: '50px',
-              cursor: calling || !phoneNumber.trim() || userNumbers.length === 0 ? 'not-allowed' : 'pointer',
-              transition: 'all 0.2s',
-              boxShadow: calling || !phoneNumber.trim() || userNumbers.length === 0 ? 'none' : '0 4px 12px rgba(40, 167, 69, 0.3)'
-            }}
-            onMouseEnter={(e) => {
-              if (!calling && phoneNumber.trim() && userNumbers.length > 0) {
-                e.target.style.backgroundColor = '#218838';
-                e.target.style.transform = 'scale(1.05)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!calling && phoneNumber.trim() && userNumbers.length > 0) {
-                e.target.style.backgroundColor = '#28a745';
-                e.target.style.transform = 'scale(1)';
-              }
-            }}
-          >
-            {calling ? '⏳ Calling...' : '📞 Call'}
-          </button>
-        </div>
+    <div className="h-full overflow-auto p-6">
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Dialer</h1>
+        <p className="text-gray-500 dark:text-gray-400 mt-1">Make calls to any number worldwide</p>
       </div>
 
-      {/* Call Logs Section */}
-      <div style={{
-        backgroundColor: '#f8f9fa',
-        padding: '1.5rem',
-        borderRadius: '8px',
-        border: '1px solid #dee2e6'
-      }}>
-        <h2 style={{ marginTop: 0, marginBottom: '1.5rem' }}>Call History</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Dialpad Section */}
+        <div className="bg-white dark:bg-slate-700 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-600 p-6">
+          {/* Alerts */}
+          {success && (
+            <div className="mb-4 px-4 py-3 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-xl text-sm flex items-center">
+              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              {success}
+            </div>
+          )}
 
-        {callLogs.length === 0 ? (
-          <p style={{ color: '#6c757d', fontStyle: 'italic' }}>
-            No call logs yet. Make your first call to see history here.
-          </p>
-        ) : (
-          <div style={{
-            display: 'grid',
-            gap: '1rem'
-          }}>
-            {callLogs.map((call) => (
-              <div
-                key={call.id}
-                style={{
-                  backgroundColor: 'white',
-                  padding: '1rem',
-                  borderRadius: '4px',
-                  border: '1px solid #dee2e6'
+          {error && (
+            <div className="mb-4 px-4 py-3 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-xl text-sm flex items-center">
+              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              {error}
+            </div>
+          )}
+
+          {/* Phone Number Display */}
+          <div className="mb-6">
+            <div className="relative">
+              <input
+                type="tel"
+                value={phoneNumber}
+                onChange={(e) => {
+                  setPhoneNumber(e.target.value);
+                  setError('');
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && phoneNumber.trim() && !calling && userNumbers.length > 0) {
+                    handleCall();
+                  }
+                }}
+                placeholder="Enter phone number"
+                disabled={calling || userNumbers.length === 0}
+                className="w-full px-4 py-4 text-2xl font-medium text-center bg-gray-50 dark:bg-slate-600 border-2 border-gray-200 dark:border-slate-500 
+                           rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white dark:focus:bg-slate-500
+                           disabled:opacity-50 disabled:cursor-not-allowed transition-all text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-400"
+              />
+              {phoneNumber && (
+                <button
+                  onClick={handleClear}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            {userNumbers.length > 0 ? (
+              <p className="text-center text-sm text-gray-500 dark:text-gray-400 mt-2">
+                Calling from: <span className="font-medium text-indigo-600 dark:text-indigo-400">{userNumbers[0].number}</span>
+              </p>
+            ) : (
+              <p className="text-center text-sm text-red-500 dark:text-red-400 mt-2">
+                You need to purchase a number first
+              </p>
+            )}
+          </div>
+
+          {/* Dialpad Grid */}
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            {dialpadButtons.map((digit) => (
+              <button
+                key={digit}
+                onClick={() => handleDialpadClick(digit)}
+                disabled={calling || userNumbers.length === 0}
+                className="py-4 text-2xl font-semibold bg-gray-50 dark:bg-slate-600 hover:bg-gray-100 dark:hover:bg-slate-500 
+                           rounded-xl transition-all active:scale-95 text-gray-900 dark:text-white
+                           disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'flex-start',
-                  marginBottom: '0.5rem'
-                }}>
-                  <div>
-                    <div style={{
-                      fontSize: '1rem',
-                      fontWeight: '500',
-                      marginBottom: '0.25rem'
-                    }}>
-                      To: {call.to_number}
-                    </div>
-                    <div style={{
-                      fontSize: '0.875rem',
-                      color: '#6c757d'
-                    }}>
-                      From: {call.from_number}
-                    </div>
-                  </div>
-                  <div style={{
-                    fontSize: '0.875rem',
-                    color: '#6c757d'
-                  }}>
-                    {new Date(call.created_at).toLocaleString()}
-                  </div>
-                </div>
-                {call.transcript && (
-                  <div style={{
-                    fontSize: '0.875rem',
-                    color: '#495057',
-                    marginTop: '0.5rem',
-                    paddingTop: '0.5rem',
-                    borderTop: '1px solid #dee2e6'
-                  }}>
-                    <strong>Transcript:</strong> {call.transcript}
-                  </div>
-                )}
-              </div>
+                {digit}
+              </button>
             ))}
           </div>
-        )}
+
+          {/* Action Buttons */}
+          <div className="flex gap-3">
+            <button
+              onClick={handleBackspace}
+              disabled={!phoneNumber || calling}
+              className="flex-1 py-4 bg-gray-100 dark:bg-slate-600 hover:bg-gray-200 dark:hover:bg-slate-500 text-gray-700 dark:text-gray-200 rounded-xl
+                         flex items-center justify-center gap-2 font-medium
+                         disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              <BackspaceIcon />
+              Delete
+            </button>
+            <button
+              onClick={handleCall}
+              disabled={!phoneNumber.trim() || calling || userNumbers.length === 0}
+              className="flex-[2] py-4 bg-green-600 hover:bg-green-700 text-white rounded-xl
+                         flex items-center justify-center gap-2 font-medium shadow-lg
+                         disabled:opacity-50 disabled:cursor-not-allowed transition-all
+                         disabled:shadow-none"
+            >
+              {calling ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  Calling...
+                </>
+              ) : (
+                <>
+                  <PhoneIcon />
+                  Call
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Call History Section */}
+        <div className="bg-white dark:bg-slate-700 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-600 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-600">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Call History</h2>
+          </div>
+
+          {callLogs.length === 0 ? (
+            <div className="p-8 text-center">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 dark:bg-slate-600 rounded-full flex items-center justify-center text-gray-400 dark:text-gray-300">
+                <PhoneIcon />
+              </div>
+              <p className="text-gray-500 dark:text-gray-400 mb-2">No call history yet</p>
+              <p className="text-gray-400 dark:text-gray-500 text-sm">Your calls will appear here</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100 dark:divide-slate-600 max-h-[500px] overflow-y-auto">
+              {callLogs.map((call) => (
+                <div key={call.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-slate-600/50 transition-colors">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 bg-green-100 dark:bg-green-900/50 rounded-lg flex items-center justify-center text-green-600 dark:text-green-400">
+                        <PhoneIcon />
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900 dark:text-white">{call.to_number}</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">From: {call.from_number}</p>
+                      </div>
+                    </div>
+                    <span className="text-xs text-gray-400 dark:text-gray-500">
+                      {new Date(call.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  {call.transcript && (
+                    <div className="ml-13 pl-13 text-sm text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-slate-600 rounded-lg p-3 mt-2">
+                      <span className="font-medium text-gray-700 dark:text-gray-200">Transcript: </span>
+                      {call.transcript}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
