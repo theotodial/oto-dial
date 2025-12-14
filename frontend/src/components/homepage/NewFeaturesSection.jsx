@@ -57,14 +57,14 @@ function NewFeaturesSection() {
   ];
 
   return (
-    <section className="py-24 px-4 bg-white">
+    <section className="py-24 px-4 bg-white dark:bg-slate-900">
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
         <div className="text-center mb-16">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
+          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4">
             Everything you need to scale
           </h2>
-          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+          <p className="text-xl text-gray-600 dark:text-gray-400 max-w-3xl mx-auto">
             Powerful features that help businesses of all sizes communicate better with their customers
           </p>
         </div>
@@ -74,15 +74,15 @@ function NewFeaturesSection() {
           {features.map((feature, index) => (
             <div
               key={index}
-              className="group p-8 bg-white rounded-2xl border border-gray-200 hover:border-indigo-600 hover:shadow-xl transition-all duration-300"
+              className="group p-8 bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 hover:border-indigo-600 dark:hover:border-indigo-500 hover:shadow-xl transition-all duration-300"
             >
-              <div className="w-14 h-14 bg-indigo-100 group-hover:bg-indigo-600 rounded-xl flex items-center justify-center mb-6 transition-colors duration-300">
-                <div className="text-indigo-600 group-hover:text-white transition-colors duration-300">
+              <div className="w-14 h-14 bg-indigo-100 dark:bg-indigo-900/50 group-hover:bg-indigo-600 rounded-xl flex items-center justify-center mb-6 transition-colors duration-300">
+                <div className="text-indigo-600 dark:text-indigo-400 group-hover:text-white transition-colors duration-300">
                   {feature.icon}
                 </div>
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-3">{feature.title}</h3>
-              <p className="text-gray-600 leading-relaxed">{feature.description}</p>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-3">{feature.title}</h3>
+              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">{feature.description}</p>
             </div>
           ))}
         </div>

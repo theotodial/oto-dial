@@ -72,142 +72,96 @@ function Signup() {
   };
 
   return (
-    <div style={{
-      maxWidth: '400px',
-      margin: '3rem auto',
-      padding: '2rem',
-      border: '1px solid #dee2e6',
-      borderRadius: '8px',
-      backgroundColor: '#fff'
-    }}>
-      <h2 style={{ marginBottom: '1.5rem', textAlign: 'center' }}>Sign Up</h2>
-      
-      {loading && (
-        <div style={{
-          padding: '0.75rem',
-          marginBottom: '1rem',
-          backgroundColor: '#e7f3ff',
-          color: '#004085',
-          borderRadius: '4px',
-          fontSize: '0.875rem',
-          textAlign: 'center'
-        }}>
-          Loading...
-        </div>
-      )}
+    <div className="min-h-screen pt-24 pb-12 px-4 bg-gray-50 dark:bg-slate-900">
+      <div className="max-w-md mx-auto p-8 border border-gray-200 dark:border-slate-700 rounded-2xl bg-white dark:bg-slate-800 shadow-lg">
+        <h2 className="text-2xl font-bold text-center text-gray-900 dark:text-white mb-6">Sign Up</h2>
+        
+        {loading && (
+          <div className="p-3 mb-4 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-lg text-sm text-center">
+            Loading...
+          </div>
+        )}
 
-      {success && (
-        <div style={{
-          padding: '0.75rem',
-          marginBottom: '1rem',
-          backgroundColor: '#d4edda',
-          color: '#155724',
-          borderRadius: '4px',
-          fontSize: '0.875rem'
-        }}>
-          {success}
-        </div>
-      )}
+        {success && (
+          <div className="p-3 mb-4 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-lg text-sm">
+            {success}
+          </div>
+        )}
 
-      {error && (
-        <div style={{
-          padding: '0.75rem',
-          marginBottom: '1rem',
-          backgroundColor: '#f8d7da',
-          color: '#721c24',
-          borderRadius: '4px',
-          fontSize: '0.875rem'
-        }}>
-          {error}
-        </div>
-      )}
+        {error && (
+          <div className="p-3 mb-4 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
 
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '1rem' }}>
-          <label htmlFor="name" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
-            Name
-          </label>
-          <input
-            type="text"
-            id="name"
-            name="name"
-            value={formData.name}
-            onChange={handleChange}
-            required
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              border: '1px solid #ced4da',
-              borderRadius: '4px',
-              fontSize: '1rem',
-              boxSizing: 'border-box'
-            }}
-          />
-        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="mb-4">
+            <label htmlFor="name" className="block mb-2 font-medium text-gray-700 dark:text-gray-300">
+              Name
+            </label>
+            <input
+              type="text"
+              id="name"
+              name="name"
+              value={formData.name}
+              onChange={handleChange}
+              required
+              className="w-full p-3 border border-gray-300 dark:border-slate-600 rounded-lg text-base
+                         bg-white dark:bg-slate-700 text-gray-900 dark:text-white
+                         focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent
+                         transition-all"
+            />
+          </div>
 
-        <div style={{ marginBottom: '1rem' }}>
-          <label htmlFor="email" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
-            Email
-          </label>
-          <input
-            type="email"
-            id="email"
-            name="email"
-            value={formData.email}
-            onChange={handleChange}
-            required
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              border: '1px solid #ced4da',
-              borderRadius: '4px',
-              fontSize: '1rem',
-              boxSizing: 'border-box'
-            }}
-          />
-        </div>
+          <div className="mb-4">
+            <label htmlFor="email" className="block mb-2 font-medium text-gray-700 dark:text-gray-300">
+              Email
+            </label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
+              required
+              className="w-full p-3 border border-gray-300 dark:border-slate-600 rounded-lg text-base
+                         bg-white dark:bg-slate-700 text-gray-900 dark:text-white
+                         focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent
+                         transition-all"
+            />
+          </div>
 
-        <div style={{ marginBottom: '1.5rem' }}>
-          <label htmlFor="password" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
-            Password
-          </label>
-          <input
-            type="password"
-            id="password"
-            name="password"
-            value={formData.password}
-            onChange={handleChange}
-            required
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              border: '1px solid #ced4da',
-              borderRadius: '4px',
-              fontSize: '1rem',
-              boxSizing: 'border-box'
-            }}
-          />
-        </div>
+          <div className="mb-6">
+            <label htmlFor="password" className="block mb-2 font-medium text-gray-700 dark:text-gray-300">
+              Password
+            </label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              value={formData.password}
+              onChange={handleChange}
+              required
+              className="w-full p-3 border border-gray-300 dark:border-slate-600 rounded-lg text-base
+                         bg-white dark:bg-slate-700 text-gray-900 dark:text-white
+                         focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent
+                         transition-all"
+            />
+          </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          style={{
-            width: '100%',
-            padding: '0.75rem',
-            backgroundColor: loading ? '#6c757d' : '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            fontSize: '1rem',
-            fontWeight: '500',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            transition: 'background-color 0.2s'
-          }}
-        >
-          {loading ? 'Signing up...' : 'Sign Up'}
-        </button>
-      </form>
+          <button
+            type="submit"
+            disabled={loading}
+            className={`w-full p-3 rounded-lg text-base font-medium text-white transition-all
+                       ${loading 
+                         ? 'bg-gray-400 cursor-not-allowed' 
+                         : 'bg-indigo-600 hover:bg-indigo-700 cursor-pointer'
+                       }`}
+          >
+            {loading ? 'Signing up...' : 'Sign Up'}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

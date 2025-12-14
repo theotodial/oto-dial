@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom';
 
 function Home() {
   return (
-    <div className="w-full">
+    <div className="w-full bg-white dark:bg-slate-900">
       <NewHeroSection />
       <NewFeaturesSection />
       <NewHowItWorks />
