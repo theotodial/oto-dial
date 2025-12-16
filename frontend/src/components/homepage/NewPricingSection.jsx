@@ -7,13 +7,11 @@ function NewPricingSection() {
       price: "19",
       description: "Perfect for individuals and small teams",
       features: [
-        "1 Virtual Phone Number",
-        "500 Minutes/month",
-        "Call Recording",
-        "Basic Analytics",
+        "1 Local Phone Number",
+        "5000 Minutes/Month",
         "Email Support"
       ],
-      cta: "Start Free Trial",
+      cta: "Get Started Instantly",
       popular: false
     },
     {
@@ -21,15 +19,13 @@ function NewPricingSection() {
       price: "49",
       description: "For growing businesses",
       features: [
-        "5 Virtual Phone Numbers",
-        "2,000 Minutes/month",
+        "2 Local Numbers",
+        "10000 Minutes/Month",
         "Advanced Call Routing",
-        "AI-Powered Analytics",
         "Priority Support",
-        "Team Collaboration",
-        "API Access"
+        "Team Collaboration"
       ],
-      cta: "Start Free Trial",
+      cta: "Get Started Instantly",
       popular: true
     },
     {
@@ -37,7 +33,7 @@ function NewPricingSection() {
       price: "Custom",
       description: "For large organizations",
       features: [
-        "Unlimited Phone Numbers",
+        "Max 10 Phone Numbers",
         "Unlimited Minutes",
         "Dedicated Account Manager",
         "Custom Integrations",
@@ -123,7 +119,7 @@ function NewPricingSection() {
 
               {/* CTA Button */}
               <Link
-                to={plan.price === "Custom" ? "/contact" : "/signup"}
+                to={plan.price === "Custom" ? "/contact" : "/billing"}
                 className={`block w-full text-center py-3 px-6 rounded-xl font-semibold transition-all duration-200 ${
                   plan.popular
                     ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg hover:shadow-xl'

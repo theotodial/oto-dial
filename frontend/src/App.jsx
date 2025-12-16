@@ -9,10 +9,13 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Home from './pages/Home';
 import Signup from './pages/Signup';
 import Login from './pages/Login';
+import ForgotPassword from './pages/ForgotPassword';
 import Dashboard from './pages/Dashboard';
 import Dialer from './pages/Dialer';
 import Chat from './pages/Chat';
 import Billing from './pages/Billing';
+import Profile from './pages/Profile';
+import Contact from './pages/Contact';
 
 function AppContent() {
   const location = useLocation();
@@ -34,12 +37,12 @@ function AppContent() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const publicRoutes = ['/', '/login', '/signup'];
+  const publicRoutes = ['/', '/login', '/signup', '/contact', '/forgot-password'];
   const isPublicRoute = publicRoutes.includes(location.pathname);
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-slate-900">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
@@ -88,19 +91,31 @@ function AppContent() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <DashboardLayout>
+                <Profile />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     );
   }
 
   return (
-    <div className="min-h-screen bg-white dark:bg-slate-900">
+    <>
       <Navbar />
       <div className="min-h-screen">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/contact" element={<Contact />} />
           <Route
             path="/dashboard"
             element={
@@ -141,9 +156,19 @@ function AppContent() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <Profile />
+                </DashboardLayout>
+              </ProtectedRoute>
+            }
+          />
         </Routes>
       </div>
-    </div>
+    </>
   );
 }
 

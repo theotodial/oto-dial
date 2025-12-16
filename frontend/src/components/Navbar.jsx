@@ -158,24 +158,24 @@ function Navbar() {
         {mobileMenuOpen && (
           <div className="md:hidden py-4 border-t border-gray-200 dark:border-slate-700">
             {isAuthenticated ? (
-              <div className="flex flex-col space-y-4">
+              <div className="flex flex-col space-y-4 items-center">
                 <Link
                   to="/dashboard"
-                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium"
+                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Dashboard
                 </Link>
                 <Link
                   to="/dialer"
-                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium"
+                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Dialer
                 </Link>
                 <Link
                   to="/chat"
-                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium"
+                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Chat
@@ -185,23 +185,23 @@ function Navbar() {
                     handleLogout();
                     setMobileMenuOpen(false);
                   }}
-                  className="text-left px-4 py-2 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 font-medium"
+                  className="px-6 py-2 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 font-medium"
                 >
                   Logout
                 </button>
               </div>
             ) : (
-              <div className="flex flex-col space-y-4">
+              <div className="flex flex-col space-y-4 items-center">
                 <Link
                   to="/login"
-                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium"
+                  className="px-6 py-2 text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Login
                 </Link>
                 <Link
                   to="/signup"
-                  className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium text-center"
+                  className="px-8 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium text-center inline-block"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Get Started

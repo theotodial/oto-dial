@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import API from '../api';
+import { supabase } from '../lib/supabase';
 
 const WalletIcon = () => (
   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -20,28 +22,48 @@ const PlusIcon = () => (
 );
 
 function Dashboard() {
+  const navigate = useNavigate();
   const [balance, setBalance] = useState(null);
   const [numbers, setNumbers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [userId, setUserId] = useState(null);
 
-  const user_id = localStorage.getItem('user_id');
+  // Get auth headers helper
+  const getAuthHeaders = async () => {
+    const { data: { session }, error } = await supabase.auth.getSession();
+    
+    if (error || !session) {
+      throw new Error('Not authenticated');
+    }
+    
+    return {
+      'Authorization': `Bearer ${session.access_token}`,
+    };
+  };
+
+  // Get user ID from Supabase session
+  useEffect(() => {
+    const getUserId = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        setUserId(session.user.id);
+      }
+    };
+    getUserId();
+  }, []);
 
   const fetchData = async () => {
-    if (!user_id) {
-      setError('User not logged in');
-      setLoading(false);
-      return;
-    }
-
     try {
       setError('');
       setSuccess('');
+      const headers = await getAuthHeaders();
+      
       const [walletResponse, numbersResponse] = await Promise.all([
-        API.get(`/api/wallet/${user_id}`),
-        API.get(`/api/numbers/${user_id}`)
+        API.get('/api/wallet', { headers }),
+        API.get('/api/numbers', { headers })
       ]);
 
       setBalance(walletResponse.data.balance);
@@ -50,6 +72,7 @@ function Dashboard() {
       setError(
         err.response?.data?.detail || 
         err.response?.data?.error || 
+        err.message ||
         'Failed to load dashboard data'
       );
     } finally {
@@ -58,53 +81,26 @@ function Dashboard() {
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
-
-  const handleTopUp = async () => {
-    if (!user_id) {
-      setError('User not logged in');
-      return;
+    if (userId) {
+      fetchData();
     }
+  }, [userId]);
 
-    setActionLoading(true);
-    setError('');
-    setSuccess('');
-
-    try {
-      await API.post('/api/wallet/topup', {
-        user_id: parseInt(user_id),
-        amount: 10
-      });
-
-      setSuccess('Wallet topped up successfully!');
-      await fetchData();
-      setTimeout(() => setSuccess(''), 3000);
-    } catch (err) {
-      setError(
-        err.response?.data?.detail || 
-        err.response?.data?.error || 
-        'Failed to top up wallet'
-      );
-    } finally {
-      setActionLoading(false);
-    }
+  const handleChoosePlan = () => {
+    navigate('/billing');
   };
 
   const handleBuyNumber = async () => {
-    if (!user_id) {
-      setError('User not logged in');
-      return;
-    }
-
     setActionLoading(true);
     setError('');
     setSuccess('');
 
     try {
-      const response = await API.post('/api/numbers/buy', {
-        user_id: parseInt(user_id)
-      });
+      const headers = await getAuthHeaders();
+      const response = await API.post('/api/numbers/buy', 
+        {},
+        { headers }
+      );
 
       setSuccess(`Number ${response.data.number} purchased successfully!`);
       await fetchData();
@@ -113,6 +109,7 @@ function Dashboard() {
       setError(
         err.response?.data?.detail || 
         err.response?.data?.error || 
+        err.message ||
         'Failed to buy number'
       );
     } finally {
@@ -176,14 +173,14 @@ function Dashboard() {
             ${balance !== null ? balance.toFixed(2) : '0.00'}
           </p>
           <button
-            onClick={handleTopUp}
+            onClick={handleChoosePlan}
             disabled={actionLoading}
             className="w-full py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium
                        transition-colors disabled:opacity-50 disabled:cursor-not-allowed
                        flex items-center justify-center"
           >
             <PlusIcon />
-            <span className="ml-2">Top Up $10</span>
+            <span className="ml-2">Choose Your Plan</span>
           </button>
         </div>
 

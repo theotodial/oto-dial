@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
 function Login() {
@@ -128,6 +128,25 @@ function Login() {
             {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
+
+        {/* Forgot Password & Sign Up Links */}
+        <div className="mt-6 text-center space-y-3">
+          <Link
+            to="/forgot-password"
+            className="block text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
+          >
+            Forgot your password?
+          </Link>
+          <div className="text-sm text-gray-600 dark:text-gray-400">
+            Don't have an account?{' '}
+            <Link
+              to="/signup"
+              className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-medium transition-colors"
+            >
+              Sign up here
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -1,41 +1,6 @@
 import { useState, useEffect } from 'react';
 import API from '../api';
-
-const CreditCardIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-  </svg>
-);
-
-const GlobeIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-);
-
-const ShieldIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-  </svg>
-);
-
-const LockIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-  </svg>
-);
-
-const DollarIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-);
-
-const PhoneIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-  </svg>
-);
+import { supabase } from '../lib/supabase';
 
 const CheckIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -43,48 +8,80 @@ const CheckIcon = () => (
   </svg>
 );
 
-const creditAmounts = [
-  { value: 5, label: '$5', badge: null },
-  { value: 10, label: '$10', badge: null },
-  { value: 20, label: '$20', badge: 'Most Popular', badgeColor: 'bg-green-500' },
-  { value: 50, label: '$50', badge: '5% Free', badgeColor: 'bg-yellow-500' },
-  { value: 100, label: '$100', badge: '10% Free', badgeColor: 'bg-yellow-500' },
-];
-
-const benefits = [
-  { icon: GlobeIcon, text: 'International calls to any country without restrictions.' },
-  { icon: ShieldIcon, text: 'Our service works in all countries, no restrictions.' },
-  { icon: LockIcon, text: "Privacy first. We don't store your payment information." },
-  { icon: CreditCardIcon, text: 'Credit based, no subscription. Pay only for what you use.' },
-  { icon: DollarIcon, text: 'No phone number required. Start calling immediately.' },
-];
-
 function Billing() {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
-  const [selectedAmount, setSelectedAmount] = useState(20);
-  const [customAmount, setCustomAmount] = useState('');
-  const [autoTopUp, setAutoTopUp] = useState(false);
-  const [taxInvoice, setTaxInvoice] = useState(false);
-  const [promoCode, setPromoCode] = useState('');
+  const [selectedPlan, setSelectedPlan] = useState(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const user_id = localStorage.getItem('user_id');
+  const plans = [
+    {
+      id: 'starter',
+      name: "Starter",
+      price: "19",
+      description: "Perfect for individuals and small teams",
+      features: [
+        "1 Local Phone Number",
+        "5000 Minutes/Month",
+        "Email Support"
+      ],
+      popular: false
+    },
+    {
+      id: 'professional',
+      name: "Professional",
+      price: "49",
+      description: "For growing businesses",
+      features: [
+        "2 Local Numbers",
+        "10000 Minutes/Month",
+        "Advanced Call Routing",
+        "Priority Support",
+        "Team Collaboration"
+      ],
+      popular: true
+    },
+    {
+      id: 'enterprise',
+      name: "Enterprise",
+      price: "Custom",
+      description: "For large organizations",
+      features: [
+        "Max 10 Phone Numbers",
+        "Unlimited Minutes",
+        "Dedicated Account Manager",
+        "Custom Integrations",
+        "24/7 Priority Support",
+        "Advanced Security",
+        "SLA Guarantee"
+      ],
+      popular: false
+    }
+  ];
+
+  // Get auth headers helper
+  const getAuthHeaders = async () => {
+    const { data: { session }, error } = await supabase.auth.getSession();
+    
+    if (error || !session) {
+      throw new Error('Not authenticated');
+    }
+    
+    return {
+      'Authorization': `Bearer ${session.access_token}`,
+    };
+  };
 
   useEffect(() => {
     fetchBalance();
   }, []);
 
   const fetchBalance = async () => {
-    if (!user_id) {
-      setLoading(false);
-      return;
-    }
-
     try {
-      const response = await API.get(`/api/wallet/${user_id}`);
+      const headers = await getAuthHeaders();
+      const response = await API.get('/api/wallet', { headers });
       setBalance(response.data.balance);
     } catch (err) {
       console.error('Failed to fetch balance:', err);
@@ -93,55 +90,41 @@ function Billing() {
     }
   };
 
-  const handleAmountSelect = (amount) => {
-    setSelectedAmount(amount);
-    setCustomAmount('');
-  };
-
-  const handleCustomAmountChange = (e) => {
-    const value = e.target.value.replace(/[^0-9]/g, '');
-    setCustomAmount(value);
-    if (value) {
-      setSelectedAmount(null);
-    }
-  };
-
-  const getFinalAmount = () => {
-    if (customAmount) {
-      return parseInt(customAmount) || 0;
-    }
-    return selectedAmount || 0;
-  };
-
-  const handleCheckout = async () => {
-    const amount = getFinalAmount();
-    
-    if (amount < 5) {
-      setError('Minimum deposit amount is $5');
+  const handleSelectPlan = async (plan) => {
+    if (plan.price === "Custom") {
+      // Redirect to contact page for enterprise
+      window.location.href = '/contact';
       return;
     }
 
+    setSelectedPlan(plan.id);
     setProcessing(true);
     setError('');
     setSuccess('');
 
     try {
-      await API.post('/api/wallet/topup', {
-        user_id: parseInt(user_id),
-        amount: amount
-      });
+      const headers = await getAuthHeaders();
+      const amount = parseInt(plan.price);
+      
+      await API.post('/api/wallet/topup', 
+        { amount: amount },
+        { headers }
+      );
 
-      setSuccess(`Successfully added $${amount} to your wallet!`);
+      setSuccess(`Successfully subscribed to ${plan.name} plan! $${amount} has been added to your wallet.`);
       await fetchBalance();
-      setCustomAmount('');
-      setSelectedAmount(20);
-      setTimeout(() => setSuccess(''), 5000);
+      setTimeout(() => {
+        setSuccess('');
+        setSelectedPlan(null);
+      }, 5000);
     } catch (err) {
       setError(
         err.response?.data?.detail || 
         err.response?.data?.error || 
+        err.message ||
         'Failed to process payment'
       );
+      setSelectedPlan(null);
     } finally {
       setProcessing(false);
     }
@@ -151,7 +134,7 @@ function Billing() {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-slate-900">
         <div className="text-center">
-          <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-500 dark:text-gray-400">Loading...</p>
         </div>
       </div>
@@ -159,219 +142,148 @@ function Billing() {
   }
 
   return (
-    <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-white">
-      <div className="max-w-6xl mx-auto p-6 lg:p-8">
-        {/* Wallet Balance Card */}
-        <div className="mb-8 bg-gradient-to-r from-green-600 to-emerald-600 rounded-2xl p-6 shadow-xl">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-green-100 text-sm mb-1">Current Wallet Balance</p>
-              <p className="text-4xl font-bold text-white">${balance !== null ? balance.toFixed(2) : '0.00'}</p>
-            </div>
-            <div className="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center text-white">
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-              </svg>
-            </div>
+    <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900">
+      <div className="max-w-7xl mx-auto p-6 lg:p-8">
+        {/* Header with Balance */}
+        <div className="text-center mb-8">
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
+            Choose Your Plan
+          </h1>
+          <p className="text-xl text-gray-600 dark:text-gray-400 mb-4">
+            Select the perfect plan for your calling needs
+          </p>
+          
+          {/* Current Balance */}
+          <div className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full shadow-lg">
+            <span className="text-white font-medium mr-2">Current Balance:</span>
+            <span className="text-2xl font-bold text-white">
+              ${balance !== null ? balance.toFixed(2) : '0.00'}
+            </span>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left Section - Credit Selection */}
-          <div className="lg:col-span-2">
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-gray-200 dark:border-slate-700">
-              {/* Header */}
-              <div className="flex items-center space-x-3 mb-6">
-                <CreditCardIcon />
-                <h2 className="text-xl font-semibold">Select Your Credit Amount</h2>
-              </div>
+        {/* Alerts */}
+        {error && (
+          <div className="mb-6 max-w-2xl mx-auto px-4 py-3 bg-red-100 dark:bg-red-500/20 border border-red-300 dark:border-red-500/50 text-red-700 dark:text-red-400 rounded-xl text-sm">
+            {error}
+          </div>
+        )}
 
-              {/* Enterprise Banner */}
-              <div className="bg-gray-100 dark:bg-slate-700/50 rounded-xl p-4 mb-6 flex items-center justify-between">
-                <span className="text-gray-600 dark:text-gray-300">Need OTO-DIAL for the team?</span>
-                <button className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white text-sm font-medium rounded-lg transition-colors">
-                  See enterprise plans
-                </button>
-              </div>
+        {success && (
+          <div className="mb-6 max-w-2xl mx-auto px-4 py-3 bg-green-100 dark:bg-green-500/20 border border-green-300 dark:border-green-500/50 text-green-700 dark:text-green-400 rounded-xl text-sm flex items-center">
+            <CheckIcon />
+            <span className="ml-2">{success}</span>
+          </div>
+        )}
 
-              {/* Info text */}
-              <p className="text-gray-500 dark:text-gray-400 text-sm mb-6">
-                Your credits are used to make international calls at competitive rates.{' '}
-                <a href="#" className="text-green-600 dark:text-green-400 hover:underline">View our detailed rate calculator →</a>
-              </p>
-
-              {/* Alerts */}
-              {error && (
-                <div className="mb-4 px-4 py-3 bg-red-100 dark:bg-red-500/20 border border-red-300 dark:border-red-500/50 text-red-700 dark:text-red-400 rounded-xl text-sm">
-                  {error}
+        {/* Pricing Cards */}
+        <div className="grid md:grid-cols-3 gap-8 mb-12">
+          {plans.map((plan) => (
+            <div
+              key={plan.id}
+              className={`relative bg-white dark:bg-slate-800 rounded-2xl ${
+                plan.popular
+                  ? 'border-2 border-indigo-600 shadow-2xl md:scale-105'
+                  : 'border border-gray-200 dark:border-slate-700 shadow-lg'
+              } p-8 hover:shadow-2xl transition-all duration-300`}
+            >
+              {/* Popular badge */}
+              {plan.popular && (
+                <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
+                  <span className="bg-indigo-600 text-white px-4 py-1 rounded-full text-sm font-semibold shadow-lg">
+                    Most Popular
+                  </span>
                 </div>
               )}
 
-              {success && (
-                <div className="mb-4 px-4 py-3 bg-green-100 dark:bg-green-500/20 border border-green-300 dark:border-green-500/50 text-green-700 dark:text-green-400 rounded-xl text-sm flex items-center">
-                  <CheckIcon />
-                  <span className="ml-2">{success}</span>
-                </div>
-              )}
+              {/* Plan name */}
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{plan.name}</h3>
+              <p className="text-gray-600 dark:text-gray-400 mb-6">{plan.description}</p>
 
-              {/* Amount Selection */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                  Choose Amount (USD)*
-                </label>
-                <div className="grid grid-cols-5 gap-3">
-                  {creditAmounts.map((amount) => (
-                    <button
-                      key={amount.value}
-                      onClick={() => handleAmountSelect(amount.value)}
-                      className={`
-                        relative py-4 px-2 rounded-xl border-2 font-semibold transition-all
-                        ${selectedAmount === amount.value && !customAmount
-                          ? 'border-green-500 bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400'
-                          : 'border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white hover:border-gray-400 dark:hover:border-slate-500'
-                        }
-                      `}
+              {/* Price */}
+              <div className="mb-8">
+                {plan.price === "Custom" ? (
+                  <div className="text-4xl font-bold text-gray-900 dark:text-white">{plan.price}</div>
+                ) : (
+                  <div className="flex items-baseline">
+                    <span className="text-5xl font-bold text-gray-900 dark:text-white">${plan.price}</span>
+                    <span className="text-gray-600 dark:text-gray-400 ml-2">/month</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Features */}
+              <ul className="space-y-4 mb-8">
+                {plan.features.map((feature, featureIndex) => (
+                  <li key={featureIndex} className="flex items-start">
+                    <svg
+                      className="w-5 h-5 text-indigo-600 dark:text-indigo-400 mt-0.5 mr-3 flex-shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
                     >
-                      {amount.badge && (
-                        <span className={`absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 ${amount.badgeColor} text-white text-[10px] font-medium rounded-full whitespace-nowrap`}>
-                          {amount.badge}
-                        </span>
-                      )}
-                      {amount.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                    <span className="text-gray-700 dark:text-gray-300">{feature}</span>
+                  </li>
+                ))}
+              </ul>
 
-              {/* Custom Amount */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Or enter custom amount (minimum $5)
-                </label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-                  <input
-                    type="text"
-                    value={customAmount}
-                    onChange={handleCustomAmountChange}
-                    placeholder="20"
-                    className="w-full pl-8 pr-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl
-                               text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-green-500
-                               transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* Options */}
-              <div className="space-y-4 mb-6">
-                <label className="flex items-center space-x-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={autoTopUp}
-                    onChange={(e) => setAutoTopUp(e.target.checked)}
-                    className="w-5 h-5 rounded border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-green-500 
-                               focus:ring-green-500 focus:ring-offset-0 cursor-pointer"
-                  />
-                  <span className="text-gray-700 dark:text-gray-300">
-                    Enable Auto Top-up{' '}
-                    <span className="text-green-600 dark:text-green-400 text-sm">Avoid interrupting an important call</span>
-                  </span>
-                </label>
-
-                <label className="flex items-center space-x-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={taxInvoice}
-                    onChange={(e) => setTaxInvoice(e.target.checked)}
-                    className="w-5 h-5 rounded border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-green-500 
-                               focus:ring-green-500 focus:ring-offset-0 cursor-pointer"
-                  />
-                  <span className="text-gray-700 dark:text-gray-300">
-                    Issue tax-deductible invoice (address required)
-                  </span>
-                </label>
-              </div>
-
-              {/* Promo Code */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Promo Code (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={promoCode}
-                  onChange={(e) => setPromoCode(e.target.value)}
-                  placeholder="Enter promo code"
-                  className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl
-                             text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-green-500
-                             transition-colors"
-                />
-              </div>
-
-              {/* Minutes info */}
-              <div className="flex items-center space-x-2 text-gray-600 dark:text-gray-300 mb-6">
-                <PhoneIcon />
-                <span>Up to <strong className="text-gray-900 dark:text-white">1,000 minutes</strong> of international calling time</span>
-              </div>
-
-              {/* Checkout Button */}
+              {/* CTA Button */}
               <button
-                onClick={handleCheckout}
-                disabled={processing || getFinalAmount() < 5}
-                className={`
-                  w-full py-4 rounded-xl font-semibold text-lg transition-all
-                  ${processing || getFinalAmount() < 5
-                    ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                    : 'bg-green-500 hover:bg-green-600 text-white shadow-lg shadow-green-500/25'
-                  }
-                `}
+                onClick={() => handleSelectPlan(plan)}
+                disabled={processing && selectedPlan === plan.id}
+                className={`block w-full text-center py-3 px-6 rounded-xl font-semibold transition-all duration-200 ${
+                  plan.popular
+                    ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed'
+                    : 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed'
+                }`}
               >
-                {processing ? (
+                {processing && selectedPlan === plan.id ? (
                   <span className="flex items-center justify-center">
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                    <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin mr-2"></div>
                     Processing...
                   </span>
+                ) : plan.price === "Custom" ? (
+                  'Contact Sales'
                 ) : (
-                  `Secure Checkout - $${getFinalAmount()}`
+                  'Get Started'
                 )}
               </button>
-
-              {/* Guarantee */}
-              <div className="mt-4 flex items-center justify-center text-gray-500 dark:text-gray-400 text-sm">
-                <CheckIcon />
-                <span className="ml-2 text-green-600 dark:text-green-400">100% Money Back Guarantee. No Questions Asked.</span>
-              </div>
-
-              <p className="text-center text-gray-400 dark:text-gray-500 text-xs mt-4">
-                *VAT may be added depending on your country and payment method
-              </p>
             </div>
-          </div>
+          ))}
+        </div>
 
-          {/* Right Section - Why OTO-DIAL */}
-          <div className="lg:col-span-1">
-            <div className="bg-white dark:bg-slate-800/50 rounded-2xl p-6 border border-gray-200 dark:border-slate-700 sticky top-6">
-              <h3 className="text-xl font-semibold mb-6">
-                Why <span className="text-green-600 dark:text-green-400 italic">OTO-DIAL</span>
-              </h3>
-
-              <div className="space-y-5">
-                {benefits.map((benefit, index) => (
-                  <div key={index} className="flex items-start space-x-3">
-                    <div className="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-500/20 flex items-center justify-center flex-shrink-0 text-green-600 dark:text-green-400">
-                      <benefit.icon />
-                    </div>
-                    <p className="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">{benefit.text}</p>
-                  </div>
-                ))}
+        {/* Info Section */}
+        <div className="max-w-3xl mx-auto text-center">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-lg border border-gray-200 dark:border-slate-700">
+            <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
+              Flexible & Transparent Pricing
+            </h3>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">
+              All plans include our core features with no hidden fees. Credits are added to your wallet and can be used for international calls at competitive rates. No contracts, cancel anytime.
+            </p>
+            <div className="flex flex-wrap justify-center gap-6 text-sm text-gray-600 dark:text-gray-400">
+              <div className="flex items-center">
+                <CheckIcon />
+                <span className="ml-2">No Setup Fees</span>
               </div>
-
-              {/* Testimonial */}
-              <div className="mt-8 pt-6 border-t border-gray-200 dark:border-slate-700">
-                <p className="text-gray-500 dark:text-gray-400 text-sm italic mb-3">
-                  "After Skype announced they were shutting down, I've been looking for an alternative for ages. I'm so glad I found OTO-DIAL!"
-                </p>
-                <p className="text-green-600 dark:text-green-400 text-sm font-medium">- Michael T., Canada</p>
+              <div className="flex items-center">
+                <CheckIcon />
+                <span className="ml-2">Cancel Anytime</span>
+              </div>
+              <div className="flex items-center">
+                <CheckIcon />
+                <span className="ml-2">24/7 Support</span>
+              </div>
+              <div className="flex items-center">
+                <CheckIcon />
+                <span className="ml-2">Money-Back Guarantee</span>
               </div>
             </div>
           </div>
@@ -382,3 +294,4 @@ function Billing() {
 }
 
 export default Billing;
+

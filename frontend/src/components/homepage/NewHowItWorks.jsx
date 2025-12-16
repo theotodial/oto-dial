@@ -91,7 +91,7 @@ function NewHowItWorks() {
         {/* CTA */}
         <div className="text-center mt-16">
           <Link
-            to="/signup"
+            to="/billing"
             className="inline-flex items-center px-8 py-4 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-all duration-200 shadow-lg hover:shadow-xl"
           >
             Get Started Now

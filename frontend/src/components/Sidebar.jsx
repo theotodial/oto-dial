@@ -27,6 +27,12 @@ const BillingIcon = () => (
   </svg>
 );
 
+const ProfileIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+  </svg>
+);
+
 const LogoutIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -50,6 +56,7 @@ const navItems = [
   { path: '/dialer', label: 'Dialer', icon: DialerIcon },
   { path: '/chat', label: 'Chat', icon: ChatIcon },
   { path: '/billing', label: 'Billing', icon: BillingIcon },
+  { path: '/profile', label: 'Profile', icon: ProfileIcon },
 ];
 
 function Sidebar() {
@@ -64,16 +71,16 @@ function Sidebar() {
   };
 
   return (
-    <div className="w-20 bg-gradient-to-b from-indigo-600 to-purple-700 dark:from-slate-800 dark:to-slate-900 flex flex-col items-center py-6 h-full">
+    <div className="w-24 bg-gradient-to-b from-indigo-600 to-purple-700 dark:from-slate-800 dark:to-slate-900 flex flex-col items-center py-6 h-full shadow-xl">
       {/* Logo */}
-      <div className="mb-8">
-        <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
-          <span className="text-white font-bold text-lg">OD</span>
+      <Link to="/dashboard" className="mb-8">
+        <div className="w-14 h-14 bg-white/20 hover:bg-white/30 transition-all rounded-xl flex items-center justify-center group">
+          <span className="text-white font-bold text-xl group-hover:scale-110 transition-transform">OD</span>
         </div>
-      </div>
+      </Link>
 
       {/* Navigation Items */}
-      <nav className="flex-1 flex flex-col items-center space-y-2 w-full px-2">
+      <nav className="flex-1 flex flex-col items-center space-y-3 w-full px-3">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = location.pathname === item.path;
@@ -83,21 +90,21 @@ function Sidebar() {
               key={item.path}
               to={item.path}
               className={`
-                w-14 h-14 rounded-xl flex flex-col items-center justify-center
+                w-16 h-16 rounded-xl flex flex-col items-center justify-center
                 transition-all duration-200 group relative
                 ${isActive 
-                  ? 'bg-white/20 text-white' 
-                  : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  ? 'bg-white/25 text-white shadow-lg scale-105' 
+                  : 'text-white/70 hover:bg-white/15 hover:text-white hover:scale-105'
                 }
               `}
               title={item.label}
             >
               <Icon />
-              <span className="text-[10px] mt-1 font-medium">{item.label}</span>
+              <span className="text-[9px] mt-1 font-semibold uppercase tracking-wide">{item.label}</span>
               
               {/* Active indicator */}
               {isActive && (
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-white rounded-r-full" />
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-10 bg-white rounded-r-full shadow-lg" />
               )}
             </Link>
           );
@@ -105,29 +112,29 @@ function Sidebar() {
       </nav>
 
       {/* Bottom section - Theme Toggle & Logout */}
-      <div className="mt-auto flex flex-col items-center space-y-2 px-2">
+      <div className="mt-auto flex flex-col items-center space-y-3 px-3 pt-4 border-t border-white/20">
         {/* Theme Toggle Button */}
         <button
           onClick={toggleTheme}
-          className="w-14 h-14 rounded-xl flex flex-col items-center justify-center
-                     text-white/70 hover:bg-white/10 hover:text-white
+          className="w-16 h-14 rounded-xl flex flex-col items-center justify-center
+                     text-white/70 hover:bg-white/15 hover:text-white hover:scale-105
                      transition-all duration-200"
           title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
         >
           {isDarkMode ? <SunIcon /> : <MoonIcon />}
-          <span className="text-[10px] mt-1 font-medium">{isDarkMode ? 'Light' : 'Dark'}</span>
+          <span className="text-[9px] mt-1 font-semibold uppercase tracking-wide">{isDarkMode ? 'Light' : 'Dark'}</span>
         </button>
 
         {/* Logout Button */}
         <button
           onClick={handleLogout}
-          className="w-14 h-14 rounded-xl flex flex-col items-center justify-center
-                     text-white/70 hover:bg-white/10 hover:text-white
+          className="w-16 h-14 rounded-xl flex flex-col items-center justify-center
+                     text-white/70 hover:bg-red-500/30 hover:text-white hover:scale-105
                      transition-all duration-200"
           title="Logout"
         >
           <LogoutIcon />
-          <span className="text-[10px] mt-1 font-medium">Logout</span>
+          <span className="text-[9px] mt-1 font-semibold uppercase tracking-wide">Logout</span>
         </button>
       </div>
     </div>
