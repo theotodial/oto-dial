@@ -8,6 +8,13 @@
   # Environment variables for build
   [build.environment]
     NODE_VERSION = "18"
+    
+  # IMPORTANT: Set these in Netlify Dashboard → Site Settings → Environment Variables
+  # VITE_SUPABASE_URL = "your-supabase-url"
+  # VITE_SUPABASE_ANON_KEY = "your-supabase-anon-key"
+  # VITE_API_URL = "your-backend-api-url" (optional)
+  #
+  # See NETLIFY_SETUP.md for detailed setup instructions
 
 # SPA redirect rules (backup to _redirects file)
 [[redirects]]

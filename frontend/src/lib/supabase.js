@@ -19,8 +19,17 @@ export const supabase = isSupabaseConfigured
       },
     };
 
-// Log warning in development if not configured
+// Log warning if not configured
 if (!isSupabaseConfigured && typeof window !== 'undefined') {
-  console.warn('Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY environment variables.');
+  console.error(
+    '🚨 SUPABASE NOT CONFIGURED!\n\n' +
+    'Login and authentication will NOT work.\n\n' +
+    'Required environment variables:\n' +
+    '- VITE_SUPABASE_URL\n' +
+    '- VITE_SUPABASE_ANON_KEY\n\n' +
+    'For Netlify deployment, add these in:\n' +
+    'Netlify Dashboard → Site Settings → Environment Variables\n\n' +
+    'See NETLIFY_SETUP.md for detailed instructions.'
+  );
 }
 
