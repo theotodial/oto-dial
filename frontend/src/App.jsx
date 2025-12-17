@@ -10,6 +10,7 @@ import Home from './pages/Home';
 import Signup from './pages/Signup';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
+import OAuthConsent from './pages/OAuthConsent';
 import Dashboard from './pages/Dashboard';
 import Dialer from './pages/Dialer';
 import Chat from './pages/Chat';
@@ -37,7 +38,7 @@ function AppContent() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const publicRoutes = ['/', '/login', '/signup', '/contact', '/forgot-password'];
+  const publicRoutes = ['/', '/login', '/signup', '/contact', '/forgot-password', '/oauth/consent'];
   const isPublicRoute = publicRoutes.includes(location.pathname);
 
   if (loading) {
@@ -115,6 +116,7 @@ function AppContent() {
           <Route path="/signup" element={<Signup />} />
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/oauth/consent" element={<OAuthConsent />} />
           <Route path="/contact" element={<Contact />} />
           <Route
             path="/dashboard"
