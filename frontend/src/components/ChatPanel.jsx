@@ -54,7 +54,7 @@ function ChatPanel({ selectedChat }) {
       const response = await API.get(`/api/chat/${user_id}`);
       setMessages(response.data || []);
     } catch (err) {
-      console.error('Failed to load messages:', err);
+      // Silent fail - will show empty state
     } finally {
       setLoading(false);
     }
@@ -92,7 +92,6 @@ function ChatPanel({ selectedChat }) {
       // Remove the optimistic message on error
       setMessages(prev => prev.filter(msg => msg.id !== tempUserMessage.id));
       setInputMessage(userMessageText);
-      console.error('Failed to send message:', err);
     } finally {
       setSending(false);
     }

@@ -52,10 +52,10 @@ function NewFeaturesSection() {
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
         <div className="text-center mb-16">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4">
+          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4 tracking-tight">
             Everything you need to scale
           </h2>
-          <p className="text-xl text-gray-600 dark:text-gray-400 max-w-3xl mx-auto">
+          <p className="text-lg md:text-xl text-gray-600 dark:text-gray-400 max-w-3xl mx-auto leading-relaxed">
             Powerful features that help businesses of all sizes communicate better with their customers
           </p>
         </div>
@@ -72,8 +72,8 @@ function NewFeaturesSection() {
                   {feature.icon}
                 </div>
               </div>
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-3">{feature.title}</h3>
-              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">{feature.description}</p>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-3 tracking-tight">{feature.title}</h3>
+              <p className="text-base text-gray-600 dark:text-gray-400 leading-relaxed">{feature.description}</p>
             </div>
           ))}
         </div>

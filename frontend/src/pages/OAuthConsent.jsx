@@ -107,7 +107,7 @@ function OAuthConsent() {
             <span className="text-white font-bold text-2xl">OD</span>
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-            OTO-DIAL
+            OTO DIAL
           </h1>
         </div>
 
@@ -148,7 +148,7 @@ function OAuthConsent() {
                   Authorization Request
                 </h2>
                 <p className="text-center text-gray-600 dark:text-gray-400 text-sm">
-                  <strong>{appInfo.name}</strong> wants to access your OTO-DIAL account
+                  <strong>{appInfo.name}</strong> wants to access your OTO DIAL account
                 </p>
               </div>
 

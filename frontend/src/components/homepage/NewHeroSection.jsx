@@ -22,15 +22,15 @@ function NewHeroSection() {
             </div>
 
             {/* Headline */}
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-gray-900 dark:text-white leading-tight">
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-gray-900 dark:text-white leading-tight tracking-tight">
               Cheap International Calls
-              <span className="block text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 dark:from-indigo-400 dark:to-purple-400">
+              <span className="block text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 dark:from-indigo-400 dark:to-purple-400 mt-2">
                 Right From Your Browser
               </span>
             </h1>
 
             {/* Subheadline */}
-            <p className="text-xl text-gray-600 dark:text-gray-300 leading-relaxed max-w-xl text-center mx-auto">
+            <p className="text-lg md:text-xl text-gray-600 dark:text-gray-300 leading-relaxed max-w-2xl text-center mx-auto mt-6">
               Call clients, banks, government offices, or any number worldwide. Pay only for what you use. No contracts or hidden fees.
             </p>
 
@@ -44,17 +44,6 @@ function NewHeroSection() {
               </a>
             </div>
 
-            {/* Trust indicators */}
-            <div className="flex items-center justify-center space-x-6 pt-4">
-              <div className="flex items-center justify-center space-x-2 text-center">
-                <div className="flex -space-x-2">
-                  <div className="w-8 h-8 rounded-full bg-indigo-500 border-2 border-white dark:border-slate-900"></div>
-                  <div className="w-8 h-8 rounded-full bg-purple-500 border-2 border-white dark:border-slate-900"></div>
-                  <div className="w-8 h-8 rounded-full bg-pink-500 border-2 border-white dark:border-slate-900"></div>
-                </div>
-                <span className="text-sm text-gray-600 dark:text-gray-400">1000+ happy customers</span>
-              </div>
-            </div>
           </div>
         </div>
       </div>

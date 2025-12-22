@@ -80,11 +80,17 @@ function Billing() {
 
   const fetchBalance = async () => {
     try {
+      setError('');
       const headers = await getAuthHeaders();
       const response = await API.get('/api/wallet', { headers });
-      setBalance(response.data.balance);
+      // Handle standardized API response
+      setBalance(response.data.balance !== undefined ? response.data.balance : 0);
     } catch (err) {
-      console.error('Failed to fetch balance:', err);
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.detail ||
+                          err.message ||
+                          'Failed to fetch wallet balance';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -118,12 +124,11 @@ function Billing() {
         setSelectedPlan(null);
       }, 5000);
     } catch (err) {
-      setError(
-        err.response?.data?.detail || 
-        err.response?.data?.error || 
-        err.message ||
-        'Failed to process payment'
-      );
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.detail ||
+                          err.message ||
+                          'Failed to process payment';
+      setError(errorMessage);
       setSelectedPlan(null);
     } finally {
       setProcessing(false);
@@ -135,7 +140,38 @@ function Billing() {
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-slate-900">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-500 dark:text-gray-400">Loading...</p>
+          <p className="text-gray-500 dark:text-gray-400">Loading pricing plans...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state for balance fetch failure
+  if (error && balance === null) {
+    return (
+      <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-slate-900">
+        <div className="text-center max-w-md px-6">
+          <div className="w-16 h-16 mx-auto mb-4 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
+            <svg className="w-8 h-8 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+            Unable to Load Billing Information
+          </h3>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            {error}
+          </p>
+          <button
+            onClick={() => {
+              setError('');
+              setLoading(true);
+              fetchBalance();
+            }}
+            className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl transition-colors"
+          >
+            Try Again
+          </button>
         </div>
       </div>
     );

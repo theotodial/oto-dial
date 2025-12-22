@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  // Base path for production (use '/' for Vercel, not './' which is for GitHub Pages)
+  // Base path for production
   base: '/',
   build: {
     // Ensure relative paths in built assets

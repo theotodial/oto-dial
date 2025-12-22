@@ -1,11 +1,12 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Analytics } from '@vercel/analytics/react';
-import { useState, useEffect } from 'react';
-import { supabase } from './lib/supabase';
 import { ThemeProvider } from './context/ThemeContext';
+import { AuthProvider } from './context/AuthContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import Navbar from './components/Navbar';
 import DashboardLayout from './components/DashboardLayout';
 import ProtectedRoute from './components/ProtectedRoute';
+import PublicRoute from './components/PublicRoute';
 import Home from './pages/Home';
 import Signup from './pages/Signup';
 import Login from './pages/Login';
@@ -17,107 +18,91 @@ import Chat from './pages/Chat';
 import Billing from './pages/Billing';
 import Profile from './pages/Profile';
 import Contact from './pages/Contact';
+import Privacy from './pages/Privacy';
+import Terms from './pages/Terms';
 
-function AppContent() {
-  const location = useLocation();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const checkAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setIsAuthenticated(!!session);
-      setLoading(false);
-    };
-    checkAuth();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      setIsAuthenticated(!!session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const publicRoutes = ['/', '/login', '/signup', '/contact', '/forgot-password', '/oauth/consent'];
-  const isPublicRoute = publicRoutes.includes(location.pathname);
-
-  if (loading) {
+function App() {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
-  }
-
-  if (isAuthenticated && !isPublicRoute) {
-    return (
+    <ErrorBoundary>
+      <ThemeProvider>
+        <AuthProvider>
+          <BrowserRouter>
       <Routes>
+            {/* Public Routes - Accessible to everyone, redirects if authenticated */}
         <Route
-          path="/dashboard"
+              path="/"
           element={
-            <ProtectedRoute>
-              <DashboardLayout>
-                <Dashboard />
-              </DashboardLayout>
-            </ProtectedRoute>
+                <>
+                  <Navbar />
+                  <Home />
+                </>
           }
         />
+            
         <Route
-          path="/dialer"
+              path="/login"
           element={
-            <ProtectedRoute>
-              <DashboardLayout>
-                <Dialer />
-              </DashboardLayout>
-            </ProtectedRoute>
+                <PublicRoute>
+                  <Navbar />
+                  <Login />
+                </PublicRoute>
           }
         />
+            
         <Route
-          path="/chat"
+              path="/signup"
           element={
-            <ProtectedRoute>
-              <DashboardLayout>
-                <Chat />
-              </DashboardLayout>
-            </ProtectedRoute>
+                <PublicRoute>
+                  <Navbar />
+                  <Signup />
+                </PublicRoute>
           }
         />
+            
         <Route
-          path="/billing"
+              path="/forgot-password"
           element={
-            <ProtectedRoute>
-              <DashboardLayout>
-                <Billing />
-              </DashboardLayout>
-            </ProtectedRoute>
+                <>
+                  <Navbar />
+                  <ForgotPassword />
+                </>
           }
         />
-        <Route
-          path="/profile"
-          element={
-            <ProtectedRoute>
-              <DashboardLayout>
-                <Profile />
-              </DashboardLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
-    );
-  }
-
-  return (
+            
+            <Route
+              path="/contact"
+              element={
     <>
       <Navbar />
-      <div className="min-h-screen">
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/oauth/consent" element={<OAuthConsent />} />
-          <Route path="/contact" element={<Contact />} />
+                  <Contact />
+                </>
+              }
+            />
+            
+            <Route
+              path="/privacy"
+              element={
+                <>
+                  <Navbar />
+                  <Privacy />
+                </>
+              }
+            />
+            
+            <Route
+              path="/terms"
+              element={
+                <>
+                  <Navbar />
+                  <Terms />
+                </>
+              }
+            />
+            
+            {/* OAuth consent page - public but special */}
+            <Route path="/oauth/consent" element={<OAuthConsent />} />
+
+            {/* Protected Routes - Require authentication */}
           <Route
             path="/dashboard"
             element={
@@ -128,6 +113,7 @@ function AppContent() {
               </ProtectedRoute>
             }
           />
+            
           <Route
             path="/dialer"
             element={
@@ -138,6 +124,7 @@ function AppContent() {
               </ProtectedRoute>
             }
           />
+            
           <Route
             path="/chat"
             element={
@@ -148,6 +135,7 @@ function AppContent() {
               </ProtectedRoute>
             }
           />
+            
           <Route
             path="/billing"
             element={
@@ -158,30 +146,26 @@ function AppContent() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/profile"
-            element={
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <Profile />
-                </DashboardLayout>
-              </ProtectedRoute>
-            }
-          />
-        </Routes>
-      </div>
-    </>
-  );
-}
+            
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <DashboardLayout>
+                    <Profile />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
 
-function App() {
-  return (
-    <ThemeProvider>
-      <BrowserRouter>
-        <AppContent />
+            {/* Catch-all route - redirect to home */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         <Analytics />
       </BrowserRouter>
+      </AuthProvider>
     </ThemeProvider>
+    </ErrorBoundary>
   );
 }
 

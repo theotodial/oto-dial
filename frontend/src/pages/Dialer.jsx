@@ -57,14 +57,18 @@ function Dialer() {
         API.get(`/api/calls/${user_id}`)
       ]);
 
-      setUserNumbers(numbersResponse.data || []);
-      setCallLogs(callsResponse.data || []);
+      // Handle standardized API responses
+      const numbersData = numbersResponse.data;
+      const callsData = callsResponse.data;
+      
+      setUserNumbers(numbersData.numbers || numbersData || []);
+      setCallLogs(callsData.calls || callsData || []);
     } catch (err) {
-      setError(
-        err.response?.data?.detail || 
-        err.response?.data?.error || 
-        'Failed to load dialer data'
-      );
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.detail ||
+                          err.message ||
+                          'Failed to load dialer data';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -108,11 +112,11 @@ function Dialer() {
       await fetchData();
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError(
-        err.response?.data?.detail || 
-        err.response?.data?.error || 
-        'Failed to make call'
-      );
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.detail ||
+                          err.message ||
+                          'Failed to make call';
+      setError(errorMessage);
     } finally {
       setCalling(false);
     }

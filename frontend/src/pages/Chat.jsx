@@ -71,6 +71,8 @@ function Chat() {
   const [callSuccess, setCallSuccess] = useState('');
   const [callError, setCallError] = useState('');
   const [userNumbers, setUserNumbers] = useState([]);
+  const [error, setError] = useState('');
+  const [sendError, setSendError] = useState('');
   const messagesEndRef = useRef(null);
 
   const user_id = localStorage.getItem('user_id');
@@ -94,7 +96,7 @@ function Chat() {
       const response = await API.get(`/api/numbers/${user_id}`);
       setUserNumbers(response.data || []);
     } catch (err) {
-      console.error('Failed to fetch user numbers:', err);
+      // Silent fail for user numbers - it's not critical for chat
     }
   };
 
@@ -136,13 +138,17 @@ function Chat() {
 
   const fetchChatData = async () => {
     if (!user_id) {
+      setError('Please log in to view chat messages');
       setLoading(false);
       return;
     }
 
     try {
+      setError('');
       const response = await API.get(`/api/chat/${user_id}`);
-      const allMessages = response.data || [];
+      // Handle standardized API response
+      const responseData = response.data;
+      const allMessages = responseData.messages || responseData || [];
       setMessages(allMessages);
       
       // Group messages into sessions by phone number
@@ -154,7 +160,11 @@ function Chat() {
         setSelectedChat(sessions[0]);
       }
     } catch (err) {
-      console.error('Failed to load chat messages:', err);
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.detail ||
+                          err.message ||
+                          'Failed to load chat messages';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -295,6 +305,7 @@ function Chat() {
     }
 
     try {
+      setSendError('');
       const response = await API.post('/api/chat', {
         user_id: parseInt(user_id),
         message: userMessageText,
@@ -321,7 +332,12 @@ function Chat() {
         }));
       }
       setInputMessage(userMessageText);
-      console.error('Failed to send message:', err);
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.detail ||
+                          err.message ||
+                          'Failed to send message';
+      setSendError(errorMessage);
+      setTimeout(() => setSendError(''), 5000);
     } finally {
       setSending(false);
     }
@@ -352,6 +368,37 @@ function Chat() {
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-500 dark:text-gray-400">Loading chat...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error && !loading) {
+    return (
+      <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-slate-800">
+        <div className="text-center max-w-md px-6">
+          <div className="w-16 h-16 mx-auto mb-4 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
+            <svg className="w-8 h-8 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+            Unable to Load Chat
+          </h3>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            {error}
+          </p>
+          <button
+            onClick={() => {
+              setError('');
+              setLoading(true);
+              fetchChatData();
+            }}
+            className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl transition-colors"
+          >
+            Try Again
+          </button>
         </div>
       </div>
     );
@@ -655,8 +702,19 @@ function Chat() {
             </div>
 
             {/* Input Form */}
-            <div className="p-4 bg-white dark:bg-slate-700 border-t border-gray-200 dark:border-slate-600 flex-shrink-0">
-              <form onSubmit={handleSend} className="flex items-center space-x-3">
+            <div className="bg-white dark:bg-slate-700 border-t border-gray-200 dark:border-slate-600 flex-shrink-0">
+              {/* Send Error */}
+              {sendError && (
+                <div className="px-4 pt-3 pb-1">
+                  <div className="px-3 py-2 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-sm flex items-center">
+                    <svg className="w-4 h-4 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {sendError}
+                  </div>
+                </div>
+              )}
+              <form onSubmit={handleSend} className="p-4 flex items-center space-x-3">
                 <div className="flex-1 relative">
                   <input
                     type="text"
@@ -684,9 +742,9 @@ function Chat() {
                   {sending ? (
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   ) : (
-                    <SendIcon />
-                  )}
-                </button>
+                  <SendIcon />
+                )}
+              </button>
               </form>
             </div>
           </>

@@ -78,7 +78,7 @@ function HeroSection() {
               <div className="w-full h-full bg-white rounded-[2.5rem] overflow-hidden relative">
                 {/* Status Bar */}
                 <div className="h-8 bg-gradient-to-r from-indigo-500 to-purple-600 flex items-center justify-center">
-                  <div className="text-white text-xs font-medium">OTO-DIAL</div>
+                  <div className="text-white text-xs font-medium">OTO DIAL</div>
                 </div>
                 {/* Screen Content */}
                 <div className="p-6 space-y-4 h-full overflow-y-auto">

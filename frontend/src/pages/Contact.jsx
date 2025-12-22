@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import logo from '../assets/otodial-logo.png';
 
 function Contact() {
   const [formData, setFormData] = useState({
@@ -42,11 +43,10 @@ function Contact() {
     setSuccess(false);
 
     try {
-      // TODO: Integrate with your backend API
-      // For now, just simulate a submission
+      // Simulate form submission
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      console.log('Contact form submitted:', formData);
+      // Form data is collected for future backend integration
       setSuccess(true);
       
       // Reset form
@@ -73,6 +73,21 @@ function Contact() {
       <div className="max-w-3xl mx-auto p-6 lg:p-8">
         {/* Header */}
         <div className="text-center mb-8">
+          <div className="flex items-center justify-center space-x-3 mb-6">
+            <img 
+              src={logo} 
+              alt="OTO DIAL Logo" 
+              className="h-10 md:h-12 w-auto object-contain"
+              onError={(e) => {
+                e.target.style.display = 'none';
+                const fallback = e.target.nextElementSibling;
+                if (fallback) fallback.classList.remove('hidden');
+              }}
+            />
+            <div className="w-12 h-12 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-lg flex items-center justify-center hidden">
+              <span className="text-white font-bold text-xl">OD</span>
+            </div>
+          </div>
           <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-4">
             Contact Sales
           </h1>

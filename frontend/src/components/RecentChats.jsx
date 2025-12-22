@@ -44,7 +44,7 @@ function RecentChats({ onSelectChat, selectedChatId, onNewChat }) {
       const sessions = groupMessagesIntoSessions(messages);
       setChatSessions(sessions);
     } catch (err) {
-      console.error('Failed to fetch chat sessions:', err);
+      // Silent fail - will show empty state
     } finally {
       setLoading(false);
     }

@@ -51,10 +51,10 @@ function NewPricingSection() {
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
         <div className="text-center mb-16">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4">
+          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4 tracking-tight">
             Simple, transparent pricing
           </h2>
-          <p className="text-xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+          <p className="text-lg md:text-xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto leading-relaxed">
             Choose the perfect plan for your business. No hidden fees, no surprises.
           </p>
         </div>
@@ -132,15 +132,6 @@ function NewPricingSection() {
           ))}
         </div>
 
-        {/* Trust indicators */}
-        <div className="mt-16 text-center">
-          <p className="text-gray-600 dark:text-gray-400 mb-8">Trusted by 1000+ businesses worldwide</p>
-          <div className="flex flex-wrap justify-center items-center gap-8 opacity-50">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="w-24 h-12 bg-gray-200 dark:bg-slate-700 rounded-lg"></div>
-            ))}
-          </div>
-        </div>
       </div>
     </section>
   );

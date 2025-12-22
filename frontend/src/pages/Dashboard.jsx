@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { supabase } from '../lib/supabase';
+import logo from '../assets/otodial-logo.png';
 
 const WalletIcon = () => (
   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -66,15 +67,19 @@ function Dashboard() {
         API.get('/api/numbers', { headers })
       ]);
 
-      setBalance(walletResponse.data.balance);
-      setNumbers(numbersResponse.data || []);
+      // Handle standardized API response format
+      const walletData = walletResponse.data;
+      setBalance(walletData.balance !== undefined ? walletData.balance : 0);
+      
+      // Handle both { numbers: [...] } and raw array formats
+      const numbersData = numbersResponse.data;
+      setNumbers(numbersData.numbers || numbersData || []);
     } catch (err) {
-      setError(
+      const errorMessage = err.response?.data?.error || 
         err.response?.data?.detail || 
-        err.response?.data?.error || 
-        err.message ||
-        'Failed to load dashboard data'
-      );
+                          err.message ||
+                          'Failed to load dashboard data';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -82,7 +87,7 @@ function Dashboard() {
 
   useEffect(() => {
     if (userId) {
-      fetchData();
+    fetchData();
     }
   }, [userId]);
 
@@ -102,16 +107,17 @@ function Dashboard() {
         { headers }
       );
 
-      setSuccess(`Number ${response.data.number} purchased successfully!`);
+      // Handle standardized response: { success: true, number: {...} }
+      const numberData = response.data.number || response.data;
+      setSuccess(`Number ${numberData.number || 'purchased'} successfully!`);
       await fetchData();
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError(
+      const errorMessage = err.response?.data?.error || 
         err.response?.data?.detail || 
-        err.response?.data?.error || 
-        err.message ||
-        'Failed to buy number'
-      );
+                          err.message ||
+                          'Failed to buy number';
+      setError(errorMessage);
     } finally {
       setActionLoading(false);
     }
@@ -129,10 +135,25 @@ function Dashboard() {
   }
 
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-6 max-w-7xl mx-auto">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">Welcome back! Here is an overview of your account.</p>
+        <div className="flex items-center space-x-3 mb-4">
+          <img 
+            src={logo} 
+            alt="OTO DIAL Logo" 
+            className="h-8 md:h-10 w-auto object-contain"
+            onError={(e) => {
+              e.target.style.display = 'none';
+              const fallback = e.target.nextElementSibling;
+              if (fallback) fallback.classList.remove('hidden');
+            }}
+          />
+          <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-lg flex items-center justify-center hidden">
+            <span className="text-white font-bold text-xl">OD</span>
+          </div>
+        </div>
+        <h1 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white tracking-tight">Dashboard</h1>
+        <p className="text-base md:text-lg text-gray-500 dark:text-gray-400 mt-2">Welcome back! Here is an overview of your account.</p>
       </div>
 
       {actionLoading && (

@@ -2,6 +2,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
+import logo from '../assets/otodial-logo.png';
 
 // Theme toggle icons
 const SunIcon = () => (
@@ -50,11 +51,22 @@ function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
-          <Link to="/" className="flex items-center space-x-2">
-            <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-lg flex items-center justify-center">
+          <Link to="/" className="flex items-center space-x-3 hover:opacity-80 transition-opacity">
+            <img 
+              src={logo} 
+              alt="OTO DIAL Logo" 
+              className="h-8 md:h-10 w-auto object-contain"
+              onError={(e) => {
+                // Fallback if image doesn't exist yet - show gradient box
+                e.target.style.display = 'none';
+                const fallback = e.target.nextElementSibling;
+                if (fallback) fallback.classList.remove('hidden');
+              }}
+            />
+            <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-lg flex items-center justify-center hidden">
               <span className="text-white font-bold text-xl">OD</span>
             </div>
-            <span className="text-xl font-bold text-gray-900 dark:text-white">OTO-DIAL</span>
+            <span className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white tracking-tight">OTO DIAL</span>
           </Link>
 
           {/* Desktop Navigation */}

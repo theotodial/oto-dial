@@ -2,7 +2,7 @@ function TestimonialsPreview() {
   const testimonials = [
     {
       name: "Sarah Johnson",
-      text: "OTO-DIAL transformed how we handle customer communications. The virtual numbers are a game-changer!"
+      text: "OTO DIAL transformed how we handle customer communications. The virtual numbers are a game-changer!"
     },
     {
       name: "Michael Chen",
