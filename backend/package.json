@@ -1,6 +1,7 @@
 {
   "name": "oto-dial-backend",
   "version": "1.0.0",
+  "type": "commonjs",
   "description": "OTO-DIAL Backend Server",
   "main": "index.js",
   "scripts": {
