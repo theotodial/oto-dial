@@ -100,35 +100,73 @@ const handleSignup = asyncHandler(async (req, res) => {
 const handleLogin = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  // Validation
+  // Validate email and password are provided
   if (!email || !password) {
     const error = validationError('Email and password are required');
     const { response, status } = createErrorResponse(error);
     return res.status(status).json(response);
   }
 
-  // Query users table by email
-  const { data: user, error } = await supabase
+  // Validate email format (basic validation)
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email.trim().toLowerCase())) {
+    const error = validationError('Invalid email format');
+    const { response, status } = createErrorResponse(error);
+    return res.status(status).json(response);
+  }
+
+  // Validate password is not empty
+  if (typeof password !== 'string' || password.trim().length === 0) {
+    const error = validationError('Password is required');
+    const { response, status } = createErrorResponse(error);
+    return res.status(status).json(response);
+  }
+
+  // Normalize email to lowercase for consistent lookup
+  const normalizedEmail = email.trim().toLowerCase();
+
+  // Fetch user by email from Supabase
+  const { data: user, error: queryError } = await supabase
     .from('users')
     .select('id, email, password_hash')
-    .eq('email', email)
+    .eq('email', normalizedEmail)
     .single();
 
-  if (error || !user) {
-    const authError = authenticationError('Invalid email or password');
+  // Use consistent error message to prevent user enumeration
+  // Don't reveal whether email exists or not
+  const authErrorMessage = 'Invalid email or password';
+
+  // Check if user exists and has password_hash
+  if (queryError || !user || !user.password_hash) {
+    const authError = authenticationError(authErrorMessage);
     const { response, status } = createErrorResponse(authError);
     return res.status(status).json(response);
   }
 
-  // Compare password with stored hash
-  const isMatch = await bcrypt.compare(password, user.password_hash);
-  if (!isMatch) {
-    const authError = authenticationError('Invalid email or password');
+  // Compare password using bcrypt
+  let isPasswordValid = false;
+  try {
+    isPasswordValid = await bcrypt.compare(password, user.password_hash);
+  } catch (bcryptError) {
+    // Log bcrypt error but don't expose details
+    logError(bcryptError, { context: 'password_comparison', email: normalizedEmail });
+    const authError = authenticationError(authErrorMessage);
     const { response, status } = createErrorResponse(authError);
     return res.status(status).json(response);
   }
 
-  res.json(createSuccessResponse({ id: user.id, email: user.email }));
+  // If password doesn't match, return generic error
+  if (!isPasswordValid) {
+    const authError = authenticationError(authErrorMessage);
+    const { response, status } = createErrorResponse(authError);
+    return res.status(status).json(response);
+  }
+
+  // Return user id and email on success
+  res.json(createSuccessResponse({ 
+    id: user.id, 
+    email: user.email 
+  }));
 });
 
 // Support both /api/auth/* and /api/* routes
