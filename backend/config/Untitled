@@ -1,0 +1,11 @@
+Backend starts without crashing
+
+We will immediately:
+
+Lock Basic Plan limits (2500 mins / 200 SMS)
+
+Block calls/SMS before Telnyx
+
+Prevent ANY over-usage
+
+Prepare Stripe plan creation

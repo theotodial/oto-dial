@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
+import logo from '../assets/otodial-logo.png';
 
 // Icon components
 const DashboardIcon = () => (
@@ -21,15 +23,9 @@ const ChatIcon = () => (
   </svg>
 );
 
-const BillingIcon = () => (
+const RecentsIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-  </svg>
-);
-
-const ProfileIcon = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
   </svg>
 );
 
@@ -52,30 +48,71 @@ const MoonIcon = () => (
 );
 
 const navItems = [
+  { path: '/recents', label: 'Recents', icon: RecentsIcon },
   { path: '/dashboard', label: 'Dashboard', icon: DashboardIcon },
   { path: '/dialer', label: 'Dialer', icon: DialerIcon },
   { path: '/chat', label: 'Chat', icon: ChatIcon },
-  { path: '/billing', label: 'Billing', icon: BillingIcon },
-  { path: '/profile', label: 'Profile', icon: ProfileIcon },
 ];
+
+const MenuIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+  </svg>
+);
+
+const CloseIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+  </svg>
+);
 
 function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { isDarkMode, toggleTheme } = useTheme();
+  const { logout } = useAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    localStorage.removeItem('user_id');
+    await logout();
     navigate('/login');
   };
 
   return (
-    <div className="w-24 bg-gradient-to-b from-indigo-600 to-purple-700 dark:from-slate-800 dark:to-slate-900 flex flex-col items-center py-6 h-full shadow-xl">
+    <>
+      {/* Mobile Hamburger Button - Positioned to not cover content */}
+      <button
+        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+        className="lg:hidden fixed top-2 left-2 z-30 w-10 h-10 bg-indigo-600 text-white rounded-lg flex items-center justify-center shadow-lg hover:bg-indigo-700 transition-colors"
+        style={{ margin: '8px' }}
+      >
+        {mobileMenuOpen ? <CloseIcon /> : <MenuIcon />}
+      </button>
+
+      {/* Mobile Overlay */}
+      {mobileMenuOpen && (
+        <div
+          className="lg:hidden fixed inset-0 bg-black/50 z-40"
+          onClick={() => setMobileMenuOpen(false)}
+        ></div>
+      )}
+
+      {/* Sidebar */}
+      <div className={`
+        fixed lg:static inset-y-0 left-0 z-40
+        w-24 bg-gradient-to-b from-indigo-600 to-purple-700 dark:from-slate-800 dark:to-slate-900 
+        flex flex-col items-center py-6 h-full shadow-xl
+        transform transition-transform duration-300 ease-in-out
+        ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
       {/* Logo */}
-      <Link to="/dashboard" className="mb-8">
-        <div className="w-14 h-14 bg-white/20 hover:bg-white/30 transition-all rounded-xl flex items-center justify-center group">
-          <span className="text-white font-bold text-xl group-hover:scale-110 transition-transform">OD</span>
+      <Link 
+        to="/recents" 
+        className="mb-8"
+        onClick={() => setMobileMenuOpen(false)}
+      >
+        <div className="w-14 h-14 bg-white/20 hover:bg-white/30 transition-all rounded-xl flex items-center justify-center group overflow-hidden p-2">
+          <img src={logo} alt="OTO Dial" className="w-full h-full object-contain group-hover:scale-110 transition-transform" />
         </div>
       </Link>
 
@@ -89,6 +126,7 @@ function Sidebar() {
             <Link
               key={item.path}
               to={item.path}
+              onClick={() => setMobileMenuOpen(false)}
               className={`
                 w-16 h-16 rounded-xl flex flex-col items-center justify-center
                 transition-all duration-200 group relative
@@ -101,11 +139,6 @@ function Sidebar() {
             >
               <Icon />
               <span className="text-[9px] mt-1 font-semibold uppercase tracking-wide">{item.label}</span>
-              
-              {/* Active indicator */}
-              {isActive && (
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-10 bg-white rounded-r-full shadow-lg" />
-              )}
             </Link>
           );
         })}
@@ -137,7 +170,8 @@ function Sidebar() {
           <span className="text-[9px] mt-1 font-semibold uppercase tracking-wide">Logout</span>
         </button>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getMyNumbers } from '../services/numberService';
 
@@ -7,21 +7,40 @@ function MyNumbers() {
   const [numbers, setNumbers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
+    isMountedRef.current = true;
+    
     const fetchNumbers = async () => {
+      if (!isMountedRef.current) return;
+      
       try {
         const data = await getMyNumbers();
-        setNumbers(data);
-        setError(null);
+        
+        if (!isMountedRef.current) return;
+        
+        if (Array.isArray(data)) {
+          setNumbers(data);
+          setError(null);
+        } else {
+          setError('Failed to load numbers');
+          setNumbers([]);
+        }
+        setLoading(false);
       } catch (err) {
-        setError(err.message || 'Failed to load numbers');
-      } finally {
+        if (!isMountedRef.current) return;
+        setError('Failed to load numbers');
+        setNumbers([]);
         setLoading(false);
       }
     };
 
     fetchNumbers();
+    
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   const handleManage = (number) => {

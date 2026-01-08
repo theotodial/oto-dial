@@ -1,106 +1,414 @@
-# Deployment Guide
+# OTO DIAL - Production Deployment Guide
 
-## A. Deploying Backend to Render
+## 📋 Pre-Deployment Checklist
 
-1. **Create a new Web Service**
-   - Go to [Render Dashboard](https://dashboard.render.com)
-   - Click **"New +"** → **"Web Service"**
-
-2. **Connect Repository**
-   - Choose **"Connect a repository"** and select your GitHub repo
-   - OR choose **"Deploy a folder"** and upload the `backend/` folder
-
-3. **Configure Service**
-   - **Name**: `oto-dial-backend` (or your preferred name)
-   - **Environment**: `Node`
-   - **Build Command**: `npm install`
-   - **Start Command**: `node index.js`
-   - **Plan**: Free
-
-4. **Set Environment Variables**
-   - Go to **Environment** tab
-   - Add: `PORT` = `10000`
-   - (Render uses port 10000 for free tier services)
-
-5. **Deploy**
-   - Click **"Create Web Service"**
-   - Wait for deployment to complete
-   - Note your public URL (e.g., `https://oto-dial-backend.onrender.com`)
+### ✅ Prerequisites
+- [ ] Hostinger VPS with Ubuntu 20.04+ 
+- [ ] Domain name configured and pointing to VPS IP
+- [ ] SSH access to VPS
+- [ ] MongoDB database (local or MongoDB Atlas)
+- [ ] Stripe account with production API keys
+- [ ] Telnyx account with production API key
+- [ ] Google OAuth credentials (production)
+- [ ] SSL certificate (Let's Encrypt recommended)
 
 ---
 
-## B. Deploying Frontend to Vercel
+## 🚀 Step-by-Step Deployment
 
-1. **Import Repository**
-   - Go to [Vercel Dashboard](https://vercel.com/dashboard)
-   - Click **"Add New..."** → **"Project"**
-   - Import your GitHub repository
+### 1. Initial VPS Setup
 
-2. **Configure Project**
-   - **Root Directory**: Set to `frontend`
-   - **Framework Preset**: Vite (auto-detected)
-   - **Build Command**: `npm run build` (auto-detected)
-   - **Output Directory**: `dist` (auto-detected)
+```bash
+# Connect to your VPS
+ssh root@your-vps-ip
 
-3. **Set Environment Variables**
-   - Go to **Environment Variables**
-   - Add: `VITE_API_URL` = `https://YOUR_BACKEND_URL.onrender.com`
-     - Replace `YOUR_BACKEND_URL` with your actual Render backend URL
-   - Select **Production** (and **Preview** if needed)
+# Update system
+sudo apt update && sudo apt upgrade -y
 
-4. **Deploy**
-   - Click **"Deploy"**
-   - Wait for build and deployment to complete
-   - Note your public URL (e.g., `https://oto-dial.vercel.app`)
+# Install essential tools
+sudo apt install -y curl wget git build-essential nginx certbot python3-certbot-nginx
+```
+
+### 2. Install Node.js (v18+)
+
+```bash
+# Install Node.js using NodeSource
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Verify installation
+node --version  # Should be v18.x or higher
+npm --version
+```
+
+### 3. Install PM2 (Process Manager)
+
+```bash
+sudo npm install -g pm2
+
+# Setup PM2 to start on boot
+pm2 startup systemd
+# Follow the instructions displayed
+```
+
+### 4. Install MongoDB (or use MongoDB Atlas)
+
+**Option A: Local MongoDB**
+```bash
+wget -qO - https://www.mongodb.org/static/pgp/server-6.0.asc | sudo apt-key add -
+echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+sudo apt update
+sudo apt install -y mongodb-org
+sudo systemctl start mongod
+sudo systemctl enable mongod
+```
+
+**Option B: MongoDB Atlas (Recommended)**
+- Create account at https://www.mongodb.com/cloud/atlas
+- Create cluster and get connection string
+- Use connection string in `.env` file
+
+### 5. Clone Repository
+
+```bash
+# Create application directory
+sudo mkdir -p /var/www/oto-dial
+sudo chown -R $USER:$USER /var/www/oto-dial
+
+# Clone repository
+cd /var/www/oto-dial
+git clone https://github.com/yourusername/oto-dial.git .
+
+# Or if repository is private, use SSH:
+# git clone git@github.com:yourusername/oto-dial.git .
+```
+
+### 6. Setup Environment Variables
+
+```bash
+# Backend environment
+cd /var/www/oto-dial/backend
+cp .env.example .env
+nano .env  # Edit with your production values
+```
+
+**Required Backend Environment Variables:**
+```env
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/oto-dial
+PORT=5000
+NODE_ENV=production
+FRONTEND_URL=https://yourdomain.com
+
+JWT_SECRET=generate-strong-random-string-here
+JWT_EXPIRES_IN=7d
+
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_PUBLISHABLE_KEY=pk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+
+TELNYX_API_KEY=your_telnyx_api_key
+TELNYX_APP_ID=your_telnyx_app_id
+
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GOOGLE_CALLBACK_URL=https://yourdomain.com/api/auth/google/callback
+
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-app-password
+```
+
+```bash
+# Frontend environment
+cd /var/www/oto-dial/frontend
+cp .env.example .env
+nano .env  # Edit with your production values
+```
+
+**Required Frontend Environment Variables:**
+```env
+VITE_API_URL=https://yourdomain.com
+VITE_NODE_ENV=production
+```
+
+### 7. Install Dependencies & Build
+
+```bash
+# Backend dependencies
+cd /var/www/oto-dial/backend
+npm install --production
+
+# Frontend dependencies and build
+cd /var/www/oto-dial/frontend
+npm install
+npm run build
+
+# Verify build
+ls -la dist/  # Should contain index.html and assets/
+```
+
+### 8. Setup PM2
+
+```bash
+cd /var/www/oto-dial
+
+# Create logs directory
+mkdir -p logs
+
+# Start backend with PM2
+pm2 start ecosystem.config.js
+
+# Save PM2 process list
+pm2 save
+
+# Check status
+pm2 status
+pm2 logs oto-dial-backend
+```
+
+### 9. Configure Nginx
+
+```bash
+# Copy nginx configuration
+sudo cp /var/www/oto-dial/nginx.conf /etc/nginx/sites-available/oto-dial
+
+# Edit configuration with your domain
+sudo nano /etc/nginx/sites-available/oto-dial
+# Replace 'yourdomain.com' with your actual domain
+
+# Create symbolic link
+sudo ln -s /etc/nginx/sites-available/oto-dial /etc/nginx/sites-enabled/
+
+# Remove default site (optional)
+sudo rm /etc/nginx/sites-enabled/default
+
+# Test Nginx configuration
+sudo nginx -t
+
+# Reload Nginx
+sudo systemctl reload nginx
+```
+
+### 10. Setup SSL Certificate (Let's Encrypt)
+
+```bash
+# Install SSL certificate
+sudo certbot --nginx -d yourdomain.com -d www.yourdomain.com
+
+# Test auto-renewal
+sudo certbot renew --dry-run
+
+# Certbot will automatically configure HTTPS in nginx.conf
+```
+
+### 11. Configure Firewall
+
+```bash
+# Allow SSH, HTTP, HTTPS
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# Enable firewall
+sudo ufw enable
+
+# Check status
+sudo ufw status
+```
+
+### 12. Setup MongoDB Database (if using local)
+
+```bash
+# Connect to MongoDB
+mongosh
+
+# Create database and user (if needed)
+use oto-dial
+db.createUser({
+  user: "otodial_user",
+  pwd: "strong_password_here",
+  roles: ["readWrite"]
+})
+```
 
 ---
 
-## C. Testing Deployed Site
+## 🔧 Post-Deployment Configuration
 
-### Test Backend (Render)
+### 1. Update Google OAuth Callback URL
 
-1. **Check API Endpoint**
-   - Open: `https://YOUR_BACKEND_URL.onrender.com/api/auth/login`
-   - Should return an error (expected - needs POST with credentials)
-   - Or test: `https://YOUR_BACKEND_URL.onrender.com/`
-   - Should return: `{"status":"OK"}`
+In Google Cloud Console:
+- Go to APIs & Services > Credentials
+- Edit your OAuth 2.0 Client ID
+- Add authorized redirect URI: `https://yourdomain.com/api/auth/google/callback`
+- Save changes
 
-### Test Frontend (Vercel)
+### 2. Update Stripe Webhook URL
 
-1. **Open Frontend URL**
-   - Visit your Vercel deployment URL
+In Stripe Dashboard:
+- Go to Developers > Webhooks
+- Add endpoint: `https://yourdomain.com/api/webhooks/stripe`
+- Select events: `checkout.session.completed`, `customer.subscription.*`
+- Copy webhook secret to backend `.env` as `STRIPE_WEBHOOK_SECRET`
 
-2. **Test Signup**
-   - Go to Signup page
-   - Create a new account
-   - Should redirect to Login
+### 3. Update Telnyx Webhook URLs
 
-3. **Test Login**
-   - Login with your credentials
-   - Should redirect to Dashboard
+In Telnyx Dashboard:
+- Voice Webhook: `https://yourdomain.com/api/webhooks/telnyx/voice`
+- SMS Webhook: `https://yourdomain.com/api/webhooks/telnyx/sms`
 
-4. **Test Dashboard**
-   - View wallet balance
-   - Top up wallet
-   - Buy a phone number
+### 4. Test Application
 
-5. **Test Calls**
-   - Go to Dialer page
-   - Use dialpad to enter a number
-   - Make a test call
-   - Check call history
+```bash
+# Check backend health
+curl https://yourdomain.com/api/health
 
-6. **Test Chat**
-   - Go to Chat page
-   - Send a message
-   - Verify AI response appears
+# Should return: {"success":true,"status":"ok","time":"..."}
+
+# Check PM2 status
+pm2 status
+pm2 logs
+
+# Check Nginx logs
+sudo tail -f /var/log/nginx/error.log
+sudo tail -f /var/log/nginx/access.log
+```
 
 ---
 
-## Troubleshooting
+## 🔄 Maintenance Commands
 
-- **Backend not responding**: Check Render logs, verify PORT=10000
-- **Frontend can't connect**: Verify `VITE_API_URL` matches your Render backend URL
-- **CORS errors**: Ensure backend CORS allows your Vercel domain
-- **404 on routes**: Ensure React Router is configured for client-side routing
+### PM2 Commands
+```bash
+# View logs
+pm2 logs oto-dial-backend
 
+# Restart application
+pm2 restart oto-dial-backend
+
+# Stop application
+pm2 stop oto-dial-backend
+
+# Monitor
+pm2 monit
+
+# View detailed info
+pm2 show oto-dial-backend
+```
+
+### Nginx Commands
+```bash
+# Test configuration
+sudo nginx -t
+
+# Reload configuration
+sudo systemctl reload nginx
+
+# Restart Nginx
+sudo systemctl restart nginx
+
+# View logs
+sudo tail -f /var/log/nginx/error.log
+```
+
+### Update Application
+```bash
+cd /var/www/oto-dial
+
+# Pull latest changes
+git pull origin main
+
+# Update backend dependencies (if needed)
+cd backend
+npm install --production
+
+# Rebuild frontend
+cd ../frontend
+npm install
+npm run build
+
+# Restart PM2
+pm2 restart oto-dial-backend
+```
+
+---
+
+## 🔐 Security Checklist
+
+- [ ] All `.env` files are in `.gitignore`
+- [ ] Strong JWT_SECRET generated (use: `openssl rand -base64 32`)
+- [ ] MongoDB uses authentication
+- [ ] Firewall configured (UFW)
+- [ ] SSL certificate installed and auto-renewal enabled
+- [ ] Nginx security headers configured
+- [ ] PM2 running as non-root user
+- [ ] Regular backups configured
+- [ ] Environment variables validated on startup
+
+---
+
+## 📊 Monitoring & Logs
+
+### PM2 Logs Location
+- Backend: `/var/www/oto-dial/logs/backend-error.log`
+- Backend: `/var/www/oto-dial/logs/backend-out.log`
+
+### Nginx Logs Location
+- Access: `/var/log/nginx/access.log`
+- Error: `/var/log/nginx/error.log`
+
+### View Logs
+```bash
+# PM2 logs (real-time)
+pm2 logs oto-dial-backend --lines 100
+
+# Nginx logs
+sudo tail -f /var/log/nginx/error.log
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Backend won't start
+```bash
+# Check PM2 logs
+pm2 logs oto-dial-backend --lines 50
+
+# Check if port is in use
+sudo netstat -tlnp | grep 5000
+
+# Test backend directly
+cd /var/www/oto-dial/backend
+node index.js
+```
+
+### Frontend not loading
+```bash
+# Check if build exists
+ls -la /var/www/oto-dial/frontend/dist/
+
+# Check Nginx error logs
+sudo tail -f /var/log/nginx/error.log
+
+# Verify Nginx configuration
+sudo nginx -t
+```
+
+### API calls failing
+```bash
+# Check CORS settings in backend/index.js
+# Verify FRONTEND_URL in backend/.env matches your domain
+# Check browser console for CORS errors
+```
+
+---
+
+## 📝 Notes
+
+- Always test in staging environment first
+- Keep backups of `.env` files securely (not in git)
+- Monitor PM2 logs regularly
+- Set up automated backups for MongoDB
+- Keep dependencies updated for security patches

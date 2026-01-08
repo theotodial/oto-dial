@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
+import API from '../api';
 import logo from '../assets/otodial-logo.png';
 
 function Contact() {
@@ -14,6 +15,7 @@ function Contact() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  const isMountedRef = useRef(true);
 
   const businessCategories = [
     'E-commerce',
@@ -38,15 +40,21 @@ function Contact() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (loading || !isMountedRef.current) return; // Prevent duplicate submits
+    
     setLoading(true);
     setError('');
     setSuccess(false);
 
     try {
-      // Simulate form submission
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Form data is collected for future backend integration
+      const response = await API.post('/api/contact', formData);
+
+      if (!isMountedRef.current) return;
+
+      if (response.error) {
+        throw new Error(response.error);
+      }
+
       setSuccess(true);
       
       // Reset form
@@ -60,11 +68,18 @@ function Contact() {
         isUrgent: false
       });
 
-      setTimeout(() => setSuccess(false), 5000);
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          setSuccess(false);
+        }
+      }, 5000);
     } catch (err) {
-      setError('Failed to submit form. Please try again.');
+      if (!isMountedRef.current) return;
+      setError(err.message || 'Failed to submit form. Please try again.');
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -137,7 +152,7 @@ function Contact() {
                 className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 transition-colors"
               >
                 <option value="">Select your business category</option>
-                {businessCategories.map(category => (
+                {(businessCategories || []).map(category => (
                   <option key={category} value={category}>{category}</option>
                 ))}
               </select>

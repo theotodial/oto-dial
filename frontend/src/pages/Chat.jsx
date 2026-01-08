@@ -73,9 +73,16 @@ function Chat() {
   const [userNumbers, setUserNumbers] = useState([]);
   const [error, setError] = useState('');
   const [sendError, setSendError] = useState('');
+  const [subscriptionData, setSubscriptionData] = useState({ remainingSMS: 0, planName: 'No Plan' });
   const messagesEndRef = useRef(null);
 
-  const user_id = localStorage.getItem('user_id');
+  const user_id = (() => {
+    try {
+      return localStorage.getItem('user_id');
+    } catch (e) {
+      return null;
+    }
+  })();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -85,25 +92,57 @@ function Chat() {
     scrollToBottom();
   }, [messages]);
 
+  const isMountedRef = useRef(true);
+  
   useEffect(() => {
-    fetchChatData();
-    fetchUserNumbers();
+    isMountedRef.current = true;
+    
+    const loadData = async () => {
+      try {
+        await Promise.all([
+          fetchChatData(),
+          fetchUserNumbers(),
+          fetchSubscription()
+        ]);
+      } catch (err) {
+        console.error('Error loading chat data:', err);
+      }
+    };
+    
+    loadData();
+    
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
-  const fetchUserNumbers = async () => {
-    if (!user_id) return;
-    try {
-      const response = await API.get(`/api/numbers/${user_id}`);
-      setUserNumbers(response.data || []);
-    } catch (err) {
-      // Silent fail for user numbers - it's not critical for chat
+  const fetchSubscription = async () => {
+    if (!isMountedRef.current) return;
+    const response = await API.get('/api/subscription').catch(() => ({ error: true }));
+    if (!isMountedRef.current) return;
+    if (!response.error && response.data) {
+      setSubscriptionData({
+        remainingSMS: response.data.remainingSMS || 0,
+        planName: response.data.planName || 'No Plan'
+      });
     }
+  };
+
+  const fetchUserNumbers = async () => {
+    if (!isMountedRef.current) return;
+    const response = await API.get('/api/numbers');
+    if (!isMountedRef.current) return;
+    if (response.error) {
+      // Silent fail for user numbers - it's not critical for chat
+      return;
+    }
+    setUserNumbers(response.data?.numbers || response.data || []);
   };
 
   const handleCall = async () => {
     if (!selectedChat?.phoneNumber || calling) return;
 
-    const fromNumber = userNumbers.length > 0 ? userNumbers[0].number : null;
+    const fromNumber = userNumbers?.length > 0 ? (userNumbers[0]?.number || userNumbers[0]?.phoneNumber) : null;
     
     if (!fromNumber) {
       setCallError('You need to purchase a number first. Go to Dashboard to buy a number.');
@@ -115,63 +154,63 @@ function Chat() {
     setCallError('');
     setCallSuccess('');
 
-    try {
-      await API.post('/api/calls', {
-        user_id: parseInt(user_id),
-        from_number: fromNumber,
-        to_number: selectedChat.phoneNumber
-      });
+    const response = await API.post('/api/calls', {
+      phoneNumber: selectedChat.phoneNumber
+    });
 
+    if (response.error) {
+      setCallError(response.error);
+      setTimeout(() => setCallError(''), 5000);
+    } else {
       setCallSuccess(`Calling ${selectedChat.phoneNumber}...`);
       setTimeout(() => setCallSuccess(''), 5000);
-    } catch (err) {
-      setCallError(
-        err.response?.data?.detail || 
-        err.response?.data?.error || 
-        'Failed to make call'
-      );
-      setTimeout(() => setCallError(''), 5000);
-    } finally {
-      setCalling(false);
     }
+    setCalling(false);
   };
 
   const fetchChatData = async () => {
-    if (!user_id) {
-      setError('Please log in to view chat messages');
-      setLoading(false);
-      return;
-    }
-
-    try {
-      setError('');
-      const response = await API.get(`/api/chat/${user_id}`);
+    if (!isMountedRef.current) return;
+    setError('');
+    const response = await API.get('/api/messages');
+    
+    if (!isMountedRef.current) return;
+    
+      if (response.error) {
+        // Don't block render - just show empty state
+        if (!isMountedRef.current) return;
+        setMessages([]);
+        setChatSessions([]);
+        setLoading(false);
+        return;
+      }
+      
+      if (!isMountedRef.current) return;
+      
       // Handle standardized API response
       const responseData = response.data;
-      const allMessages = responseData.messages || responseData || [];
+      const allMessages = responseData?.messages || responseData || [];
+      
+      if (!isMountedRef.current) return;
       setMessages(allMessages);
       
       // Group messages into sessions by phone number
       const sessions = groupMessagesIntoSessions(allMessages);
+      
+      if (!isMountedRef.current) return;
       setChatSessions(sessions);
       
       // Select the first session by default if available and not in new chat mode
       if (sessions.length > 0 && !selectedChat && !isNewChat) {
-        setSelectedChat(sessions[0]);
-      }
-    } catch (err) {
-      const errorMessage = err.response?.data?.error || 
-                          err.response?.data?.detail ||
-                          err.message ||
-                          'Failed to load chat messages';
-      setError(errorMessage);
-    } finally {
+      setSelectedChat(sessions[0]);
+    }
+    
+    if (isMountedRef.current) {
       setLoading(false);
     }
   };
 
   const groupMessagesIntoSessions = (messages) => {
-    if (messages.length === 0) return [];
+    if (!messages || !Array.isArray(messages) || messages.length === 0) return [];
 
     // Group by phone number if available, otherwise by date
     const sessionMap = new Map();
@@ -256,7 +295,7 @@ function Chat() {
     }
 
     // Check if chat with this number already exists
-    const existingChat = chatSessions.find(s => s.phoneNumber === newChatNumber.trim());
+    const existingChat = (chatSessions || []).find(s => s?.phoneNumber === newChatNumber.trim());
     if (existingChat) {
       setSelectedChat(existingChat);
       setIsNewChat(false);
@@ -280,7 +319,24 @@ function Chat() {
   const handleSend = async (e) => {
     e.preventDefault();
 
-    if (!user_id || !inputMessage.trim() || sending) return;
+    if (!inputMessage.trim() || sending) return;
+
+    // Check SMS limit
+    if (subscriptionData.remainingSMS <= 0) {
+      setSendError('SMS limit reached. Please upgrade your plan or wait for the next billing cycle.');
+      return;
+    }
+
+    if (!selectedChat?.phoneNumber) {
+      setSendError('Please select a chat or enter a phone number');
+      return;
+    }
+
+    const fromNumber = userNumbers?.length > 0 ? (userNumbers[0]?.phoneNumber || userNumbers[0]?.number) : null;
+    if (!fromNumber) {
+      setSendError('You need to purchase a number first. Go to Dashboard to buy a number.');
+      return;
+    }
 
     const userMessageText = inputMessage.trim();
     setInputMessage('');
@@ -288,10 +344,9 @@ function Chat() {
 
     const tempUserMessage = {
       id: Date.now(),
-      user_id: parseInt(user_id),
       message: userMessageText,
       sender: 'user',
-      phone_number: selectedChat?.phoneNumber || null,
+      phone_number: selectedChat.phoneNumber,
       created_at: new Date().toISOString()
     };
 
@@ -304,26 +359,14 @@ function Chat() {
       }));
     }
 
-    try {
-      setSendError('');
-      const response = await API.post('/api/chat', {
-        user_id: parseInt(user_id),
-        message: userMessageText,
-        phone_number: selectedChat?.phoneNumber || null
-      });
+    setSendError('');
+    const response = await API.post('/api/sms/send', {
+      from: fromNumber,
+      to: selectedChat.phoneNumber,
+      text: userMessageText
+    });
 
-      if (response.data) {
-        if (selectedChat) {
-          setSelectedChat(prev => ({
-            ...prev,
-            messages: [...prev.messages, response.data],
-            lastMessage: response.data.message
-          }));
-        }
-        // Refresh chat sessions
-        await fetchChatData();
-      }
-    } catch (err) {
+    if (response.error) {
       // Remove the optimistic message on error
       if (selectedChat) {
         setSelectedChat(prev => ({
@@ -332,15 +375,13 @@ function Chat() {
         }));
       }
       setInputMessage(userMessageText);
-      const errorMessage = err.response?.data?.error || 
-                          err.response?.data?.detail ||
-                          err.message ||
-                          'Failed to send message';
-      setSendError(errorMessage);
+      setSendError(response.error);
       setTimeout(() => setSendError(''), 5000);
-    } finally {
+      } else {
+        // SMS sent successfully, refresh chat sessions and subscription
+        await Promise.all([fetchChatData(), fetchSubscription()]);
+      }
       setSending(false);
-    }
   };
 
   const formatTime = (timestamp) => {
@@ -355,9 +396,9 @@ function Chat() {
     }
   };
 
-  const filteredSessions = chatSessions.filter(session =>
-    session.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    session.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredSessions = (chatSessions || []).filter(session =>
+    (session?.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (session?.lastMessage || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const currentMessages = selectedChat ? selectedChat.messages : [];
@@ -550,7 +591,7 @@ function Chat() {
                 <button
                   onClick={() => {
                     setIsNewChat(false);
-                    if (chatSessions.length > 0) {
+                    if (chatSessions?.length > 0) {
                       setSelectedChat(chatSessions[0]);
                     }
                   }}
@@ -713,24 +754,37 @@ function Chat() {
                     {sendError}
                   </div>
                 </div>
-              )}
-              <form onSubmit={handleSend} className="p-4 flex items-center space-x-3">
-                <div className="flex-1 relative">
-                  <input
-                    type="text"
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    placeholder={`Message ${selectedChat.phoneNumber || ''}...`}
-                    disabled={sending}
-                    className="w-full px-4 py-3 bg-gray-100 dark:bg-slate-600 border-0 rounded-xl text-sm
-                               focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-500
-                               transition-all disabled:opacity-50 text-gray-900 dark:text-white placeholder-gray-400"
-                  />
+                )}
+              {/* SMS Limit Display */}
+              <div className="px-4 py-2 border-t border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700/50">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-600 dark:text-gray-400">
+                    Remaining SMS: <span className={`font-semibold ${subscriptionData.remainingSMS <= 0 ? 'text-red-600 dark:text-red-400' : subscriptionData.remainingSMS < 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}`}>
+                      {subscriptionData.remainingSMS}
+                    </span>
+                  </span>
+                  {subscriptionData.remainingSMS <= 0 && (
+                    <span className="text-red-600 dark:text-red-400 font-medium">Limit Reached</span>
+                  )}
                 </div>
-                <button
-                  type="submit"
-                  disabled={sending || !inputMessage.trim()}
-                  className={`
+              </div>
+              <form onSubmit={handleSend} className="p-4 flex items-center space-x-3">
+                  <div className="flex-1 relative">
+                    <input
+                      type="text"
+                      value={inputMessage}
+                      onChange={(e) => setInputMessage(e.target.value)}
+                      placeholder={`Message ${selectedChat?.phoneNumber || ''}...`}
+                      disabled={sending || subscriptionData.remainingSMS <= 0}
+                      className="w-full px-4 py-3 bg-gray-100 dark:bg-slate-600 border-0 rounded-xl text-sm
+                                 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-500
+                                 transition-all disabled:opacity-50 text-gray-900 dark:text-white placeholder-gray-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={sending || !inputMessage.trim() || subscriptionData.remainingSMS <= 0}
+                    className={`
                     w-12 h-12 rounded-xl flex items-center justify-center
                     transition-all duration-200
                     ${sending || !inputMessage.trim()

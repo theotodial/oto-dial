@@ -46,9 +46,6 @@ Create `backend/.env` file:
 
 ```env
 PORT=5000
-SUPABASE_URL=your_supabase_url
-SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 # Add any other backend environment variables
 ```
 
@@ -59,8 +56,6 @@ Create `frontend/.env.production` file:
 ```env
 VITE_API_URL=http://your-vps-ip:5000
 # Or if using domain: VITE_API_URL=https://api.yourdomain.com
-VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
 ## Build and Deploy

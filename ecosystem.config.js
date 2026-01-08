@@ -16,26 +16,12 @@ module.exports = {
       merge_logs: true,
       autorestart: true,
       max_memory_restart: '1G',
-      watch: false
-    },
-    {
-      name: 'oto-dial-frontend',
-      cwd: './frontend',
-      script: 'npm',
-      args: 'start',
-      instances: 1,
-      exec_mode: 'fork',
-      env: {
-        NODE_ENV: 'production',
-        PORT: 3000
-      },
-      error_file: './logs/frontend-error.log',
-      out_file: './logs/frontend-out.log',
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-      merge_logs: true,
-      autorestart: true,
-      max_memory_restart: '500M',
-      watch: false
+      min_uptime: '10s',
+      max_restarts: 10,
+      restart_delay: 4000,
+      watch: false,
+      ignore_watch: ['node_modules', 'logs', '*.log'],
+      env_file: './.env'
     }
   ]
 };

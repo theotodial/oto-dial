@@ -1,619 +1,178 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const bcrypt = require('bcryptjs');
-const supabase = require('./src/supabase');
-const {
-  createErrorResponse,
-  createSuccessResponse,
-  validationError,
-  authenticationError,
-  notFoundError,
-  errorMiddleware,
-  asyncHandler
-} = require('./src/errorHandler');
-const { logRequest, logError } = require('./src/logger');
+import dotenv from "dotenv";
+dotenv.config();
+
+import express from "express";
+import cors from "cors";
+import passport from "passport";
+
+import connectDB from "./config/db.js";
+import { getTelnyx } from "./config/telnyx.js";
+import { validateEnv } from "./src/utils/envValidator.js";
+
+import authenticateUser from "./src/middleware/authenticateUser.js";
+
+// Validate environment variables
+validateEnv();
+
+import authRoutes from "./src/routes/auth.js";
+import callRoutes from "./src/routes/callRoutes.js";
+import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
+import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
+import numberRoutes from "./src/routes/numberRoutes.js";
+import telnyxNumbersRoutes from "./src/routes/telnyxNumbers.js";
+import subscriptionRoutes from "./src/routes/subscription.js";
+import smsRoutes from "./src/routes/smsRoutes.js";
+import stripeWebhookRoutes from "./src/routes/stripeWebhookRoutes.js";
+import stripeCheckoutRoutes from "./src/routes/stripeCheckoutRoutes.js";
+import adminRoutes from "./src/routes/admin/adminRoutes.js";
+import contactRoutes from "./src/routes/contactRoutes.js";
+import dialerRoutes from "./src/routes/dialerRoutes.js";
+import userRoutes from "./src/routes/userRoutes.js";
+import messageRoutes from "./src/routes/messageRoutes.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
-// CORS configuration: supports localhost frontends and deployed Vercel frontend
-// Note: In production, consider restricting origin to specific URLs for better security
+/* ========================
+   ENV CHECK
+======================== */
+console.log("ENV CHECK AT BOOT:");
+console.log("TELNYX_API_KEY =", process.env.TELNYX_API_KEY ? "✅ set" : "❌ missing");
+console.log("STRIPE_SECRET_KEY =", process.env.STRIPE_SECRET_KEY ? "✅ set" : "❌ missing");
+console.log("JWT_SECRET =", process.env.JWT_SECRET ? "✅ set" : "❌ missing");
+console.log("GOOGLE_CALLBACK_URL =", process.env.GOOGLE_CALLBACK_URL ? "✅ set" : "❌ missing");
+console.log("MONGODB_URI =", process.env.MONGODB_URI);
+
+/* Init Telnyx */
+getTelnyx();
+
+/* ========================
+   MIDDLEWARE
+======================== */
+// CORS Configuration
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : [process.env.FRONTEND_URL];
+
 app.use(cors({
-  origin: "*", // Allows all origins (localhost and Vercel deployments)
-  methods: ["GET", "POST"], // Allowed HTTP methods
-  allowedHeaders: ["Content-Type", "Authorization"], // Allowed request headers
-  credentials: true
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+/* 🚨 REQUIRED FOR GOOGLE OAUTH */
+app.use(passport.initialize());
+
+/* Stripe webhook */
+app.use(
+  "/api/webhooks/stripe",
+  express.raw({ type: "application/json" }),
+  stripeWebhookRoutes
+);
+
 app.use(express.json());
 
-// Request logging middleware (auth, wallet, calls only)
-app.use(logRequest);
+/* ========================
+   WEBHOOKS
+======================== */
+app.use("/api/webhooks/telnyx/voice", telnyxVoiceWebhook);
+app.use("/api/webhooks/telnyx/sms", telnyxSmsWebhook);
 
-// Health check route
-app.get('/', (req, res) => {
-  res.json({ status: 'OK' });
-});
+/* ========================
+   ROUTES
+======================== */
+app.use("/api/auth", authRoutes);
+app.use("/api/subscription", subscriptionRoutes);
+app.use("/api/stripe", stripeCheckoutRoutes);
 
-// ============================================================
-// Auth Routes
-// ============================================================
+app.use("/api/dialer", dialerRoutes);
+app.use("/api/numbers", authenticateUser, numberRoutes);
+app.use("/api/numbers", authenticateUser, telnyxNumbersRoutes);
+app.use("/api/calls", authenticateUser, callRoutes);
+app.use("/api/sms", authenticateUser, smsRoutes);
+app.use("/api/messages", authenticateUser, messageRoutes);
+app.use("/api/admin", authenticateUser, adminRoutes);
+app.use("/api/contact", contactRoutes);
+app.use("/api/users", authenticateUser, userRoutes);
 
-const handleSignup = asyncHandler(async (req, res) => {
-  const { email, password, name, full_name } = req.body;
-
-  // Validation
-  if (!email || !password) {
-    const error = validationError('Email and password are required');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  if (password.length < 6) {
-    const error = validationError('Password must be at least 6 characters');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  // Hash password before storing
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  // Insert user into users table
-  const { data: user, error: userError } = await supabase
-    .from('users')
-    .insert({
-      email,
-      password_hash: hashedPassword,
-      name: name || full_name || null
-    })
-    .select('id, email')
-    .single();
-
-  if (userError) {
-    // Map duplicate email error
-    if (userError.code === '23505') {
-      const error = validationError('An account with this email already exists');
-      const { response, status } = createErrorResponse(error);
-      return res.status(status).json(response);
-    }
-    const { response, status } = createErrorResponse(userError);
-    return res.status(status).json(response);
-  }
-
-  // Create wallet row with balance 0
-  const { error: walletError } = await supabase
-    .from('wallets')
-    .insert({
-      user_id: user.id,
-      balance: 0
-    });
-
-  if (walletError) {
-    const { response, status } = createErrorResponse(walletError);
-    return res.status(status).json(response);
-  }
-
-  res.json(createSuccessResponse({ id: user.id, email: user.email }));
-});
-
-const handleLogin = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-
-  // Validate email and password are provided
-  if (!email || !password) {
-    const error = validationError('Email and password are required');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  // Validate email format (basic validation)
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email.trim().toLowerCase())) {
-    const error = validationError('Invalid email format');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  // Validate password is not empty
-  if (typeof password !== 'string' || password.trim().length === 0) {
-    const error = validationError('Password is required');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  // Normalize email to lowercase for consistent lookup
-  const normalizedEmail = email.trim().toLowerCase();
-
-  // Fetch user by email from Supabase
-  const { data: user, error: queryError } = await supabase
-    .from('users')
-    .select('id, email, password_hash')
-    .eq('email', normalizedEmail)
-    .single();
-
-  // Use consistent error message to prevent user enumeration
-  // Don't reveal whether email exists or not
-  const authErrorMessage = 'Invalid email or password';
-
-  // Check if user exists and has password_hash
-  if (queryError || !user || !user.password_hash) {
-    const authError = authenticationError(authErrorMessage);
-    const { response, status } = createErrorResponse(authError);
-    return res.status(status).json(response);
-  }
-
-  // Compare password using bcrypt
-  let isPasswordValid = false;
-  try {
-    isPasswordValid = await bcrypt.compare(password, user.password_hash);
-  } catch (bcryptError) {
-    // Log bcrypt error but don't expose details
-    logError(bcryptError, { context: 'password_comparison', email: normalizedEmail });
-    const authError = authenticationError(authErrorMessage);
-    const { response, status } = createErrorResponse(authError);
-    return res.status(status).json(response);
-  }
-
-  // If password doesn't match, return generic error
-  if (!isPasswordValid) {
-    const authError = authenticationError(authErrorMessage);
-    const { response, status } = createErrorResponse(authError);
-    return res.status(status).json(response);
-  }
-
-  // Return user id and email on success
-  res.json(createSuccessResponse({ 
-    id: user.id, 
-    email: user.email 
-  }));
-});
-
-// Support both /api/auth/* and /api/* routes
-app.post('/api/auth/signup', handleSignup);
-app.post('/api/signup', handleSignup);
-app.post('/api/auth/login', handleLogin);
-app.post('/api/login', handleLogin);
-
-// Supabase Auth signup endpoint
-app.post('/api/auth/supabase/signup', asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-
-  // Validation
-  if (!email || !password) {
-    const error = validationError('Email and password are required');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  if (password.length < 6) {
-    const error = validationError('Password must be at least 6 characters');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password
+/* ========================
+   HEALTH
+======================== */
+app.get("/api/health", (req, res) => {
+  res.json({
+    success: true,
+    status: "ok",
+    time: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development'
   });
+});
 
-  if (error) {
-    const { response, status } = createErrorResponse(error, 'Failed to create account');
-    return res.status(status).json(response);
-  }
-
-  if (!data.user) {
-    const { response, status } = createErrorResponse(null, 'Account creation failed');
-    return res.status(status).json(response);
-  }
-
-  res.json(createSuccessResponse({ id: data.user.id, email: data.user.email }));
-}));
-
-// Supabase Auth login endpoint
-app.post('/api/auth/supabase/login', asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-
-  // Validation
-  if (!email || !password) {
-    const error = validationError('Email and password are required');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password
-  });
-
-  if (error) {
-    const authError = authenticationError('Invalid email or password');
-    const { response, status } = createErrorResponse(authError);
-    return res.status(status).json(response);
-  }
-
-  if (!data.session || !data.user) {
-    const authError = authenticationError('Login failed');
-    const { response, status } = createErrorResponse(authError);
-    return res.status(status).json(response);
-  }
-
-  res.json(createSuccessResponse({
-    access_token: data.session.access_token,
-    token_type: 'bearer',
-    expires_in: data.session.expires_in,
-    user: {
-      id: data.user.id,
-      email: data.user.email
+// Root endpoint
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "OTO DIAL API",
+    version: "1.0.0",
+    endpoints: {
+      health: "/api/health",
+      docs: "See API documentation"
     }
-  }));
-}));
+  });
+});
 
-// ============================================================
-// Middleware to extract user from Authorization header
-// ============================================================
-const authenticateUser = asyncHandler(async (req, res, next) => {
-  const authHeader = req.headers.authorization;
+/* ========================
+   ERROR HANDLING
+======================== */
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
   
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    const error = authenticationError('Authorization required');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  const token = authHeader.substring(7);
-
-  // Verify token with Supabase
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-
-  if (error || !user) {
-    const authError = authenticationError('Invalid or expired token');
-    const { response, status } = createErrorResponse(authError);
-    return res.status(status).json(response);
-  }
-
-  // Attach user to request
-  req.user = user;
-  next();
+  // Don't leak error details in production
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  res.status(err.status || 500).json({
+    success: false,
+    error: isProduction ? 'Internal server error' : err.message,
+    ...(isProduction ? {} : { stack: err.stack })
+  });
 });
 
-// ============================================================
-// Wallet Routes
-// ============================================================
-
-// Get wallet (with auth)
-app.get('/api/wallet', authenticateUser, asyncHandler(async (req, res) => {
-  const userId = req.user.id;
-
-  const { data: wallet, error } = await supabase
-    .from('wallets')
-    .select('balance')
-    .eq('user_id', userId)
-    .single();
-
-  if (error || !wallet) {
-    // Return default balance if wallet doesn't exist
-    return res.json(createSuccessResponse({ balance: 0 }));
-  }
-
-  res.json(createSuccessResponse({ balance: wallet.balance }));
-}));
-
-// Legacy route (backward compatibility)
-app.get('/api/wallet/:user_id', asyncHandler(async (req, res) => {
-  const user_id = req.params.user_id;
-
-  const { data: wallet, error } = await supabase
-    .from('wallets')
-    .select('balance')
-    .eq('user_id', user_id)
-    .single();
-
-  if (error || !wallet) {
-    return res.json(createSuccessResponse({ balance: 0 }));
-  }
-
-  res.json(createSuccessResponse({ balance: wallet.balance }));
-}));
-
-// Top up wallet
-app.post('/api/wallet/topup', authenticateUser, asyncHandler(async (req, res) => {
-  const userId = req.user.id;
-  const { amount } = req.body;
-
-  // Validation
-  if (!amount || isNaN(amount) || amount <= 0) {
-    const error = validationError('Amount must be a positive number');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  // Get current balance
-  const { data: wallet, error: fetchError } = await supabase
-    .from('wallets')
-    .select('balance')
-    .eq('user_id', userId)
-    .single();
-
-  if (fetchError || !wallet) {
-    const error = notFoundError('Wallet');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  const newBalance = Number(wallet.balance) + Number(amount);
-
-  // Update wallet balance
-  const { data: updated, error: updateError } = await supabase
-    .from('wallets')
-    .update({ balance: newBalance, updated_at: new Date().toISOString() })
-    .eq('user_id', userId)
-    .select('balance')
-    .single();
-
-  if (updateError) {
-    const { response, status } = createErrorResponse(updateError);
-    return res.status(status).json(response);
-  }
-
-  res.json(createSuccessResponse({ balance: updated.balance }));
-}));
-
-// ============================================================
-// Phone Numbers Routes
-// ============================================================
-
-// Buy a number
-app.post('/api/numbers/buy', authenticateUser, asyncHandler(async (req, res) => {
-  const userId = req.user.id;
-  const { country } = req.body;
-
-  // Generate fake number
-  const fakeNumber = "+1" + Math.floor(1000000000 + Math.random() * 9000000000);
-
-  // Check wallet balance first
-  const { data: wallet } = await supabase
-    .from('wallets')
-    .select('balance')
-    .eq('user_id', userId)
-    .single();
-
-  if (!wallet || wallet.balance < 1) {
-    const error = validationError('Insufficient balance. Please top up your wallet');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  // Insert into phone_numbers table
-  const { data: createdNumber, error: insertError } = await supabase
-    .from('phone_numbers')
-    .insert({
-      user_id: userId,
-      number: fakeNumber,
-      country: country || 'US'
-    })
-    .select()
-    .single();
-
-  if (insertError) {
-    const { response, status } = createErrorResponse(insertError);
-    return res.status(status).json(response);
-  }
-
-  // Deduct from wallet
-  await supabase
-    .from('wallets')
-    .update({ 
-      balance: Number(wallet.balance) - 1, 
-      updated_at: new Date().toISOString() 
-    })
-    .eq('user_id', userId);
-
-  res.json(createSuccessResponse({ number: createdNumber }));
-}));
-
-// Get user's numbers
-app.get('/api/numbers', authenticateUser, asyncHandler(async (req, res) => {
-  const userId = req.user.id;
-
-  const { data: userNumbers, error } = await supabase
-    .from('phone_numbers')
-    .select('*')
-    .eq('user_id', userId);
-
-  if (error) {
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  res.json(createSuccessResponse({ numbers: userNumbers || [] }));
-}));
-
-// Legacy route (backward compatibility)
-app.get('/api/numbers/:user_id', asyncHandler(async (req, res) => {
-  const user_id = req.params.user_id;
-
-  const { data: userNumbers, error } = await supabase
-    .from('phone_numbers')
-    .select('*')
-    .eq('user_id', user_id);
-
-  if (error) {
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  res.json(userNumbers || []);
-}));
-
-// ============================================================
-// Call Routes
-// ============================================================
-
-// Create a call
-app.post('/api/calls', authenticateUser, asyncHandler(async (req, res) => {
-  const userId = req.user.id;
-  const { from_number, to_number, status } = req.body;
-
-  // Validation
-  if (!from_number || !to_number) {
-    const error = validationError('From number and to number are required');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  const { data: call, error } = await supabase
-    .from('calls')
-    .insert({
-      user_id: userId,
-      from_number,
-      to_number,
-      status: status || 'completed'
-    })
-    .select()
-    .single();
-
-  if (error) {
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  res.json(createSuccessResponse({ call }));
-}));
-
-// Get user's calls
-app.get('/api/calls', authenticateUser, asyncHandler(async (req, res) => {
-  const userId = req.user.id;
-
-  const { data: userCalls, error } = await supabase
-    .from('calls')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  res.json(createSuccessResponse({ calls: userCalls || [] }));
-}));
-
-// Legacy route (backward compatibility)
-app.get('/api/calls/:user_id', asyncHandler(async (req, res) => {
-  const user_id = req.params.user_id;
-
-  const { data: userCalls, error } = await supabase
-    .from('calls')
-    .select('*')
-    .eq('user_id', user_id);
-
-  if (error) {
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  res.json(userCalls || []);
-}));
-
-// ============================================================
-// Chat Routes
-// ============================================================
-
-// Get chat messages
-app.get('/api/chat', authenticateUser, asyncHandler(async (req, res) => {
-  const userId = req.user.id;
-
-  const { data: messages, error } = await supabase
-    .from('messages')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: true });
-
-  if (error) {
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  res.json(createSuccessResponse({ messages: messages || [] }));
-}));
-
-// Send chat message
-app.post('/api/chat', authenticateUser, asyncHandler(async (req, res) => {
-  const userId = req.user.id;
-  const { text } = req.body;
-
-  // Validation
-  if (!text || text.trim().length === 0) {
-    const error = validationError('Message text is required');
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  // Insert user message
-  const { data: userMsg, error: userError } = await supabase
-    .from('messages')
-    .insert({
-      user_id: userId,
-      direction: 'outbound',
-      content: text
-    })
-    .select()
-    .single();
-
-  if (userError) {
-    const { response, status } = createErrorResponse(userError);
-    return res.status(status).json(response);
-  }
-
-  // Insert bot reply
-  const { data: botMsg, error: botError } = await supabase
-    .from('messages')
-    .insert({
-      user_id: userId,
-      direction: 'inbound',
-      content: 'Echo: ' + text
-    })
-    .select()
-    .single();
-
-  if (botError) {
-    const { response, status } = createErrorResponse(botError);
-    return res.status(status).json(response);
-  }
-
-  res.json(createSuccessResponse({ user: userMsg, bot: botMsg }));
-}));
-
-// ============================================================
-// Database Test Route
-// ============================================================
-
-app.get('/api/db-test', asyncHandler(async (req, res) => {
-  const { data, error } = await supabase
-    .from('users')
-    .select('count')
-    .limit(1);
-
-  if (error) {
-    const { response, status } = createErrorResponse(error);
-    return res.status(status).json(response);
-  }
-
-  res.json(createSuccessResponse({ database: 'connected' }));
-}));
-
-// ============================================================
-// Error Handling Middleware (must be last)
-// ============================================================
-
-app.use(errorMiddleware);
-
-// ============================================================
-// Start Server
-// ============================================================
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log('Standardized API with consistent error handling ready');
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Route not found'
+  });
 });
+
+/* ========================
+   START
+======================== */
+async function startServer() {
+  try {
+    await connectDB();
+    console.log('✅ Database connected');
+    
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🌐 Frontend URL: ${process.env.FRONTEND_URL || 'Not set'}`);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();

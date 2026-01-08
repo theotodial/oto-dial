@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Analytics } from '@vercel/analytics/react';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -12,6 +11,7 @@ import Signup from './pages/Signup';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
 import OAuthConsent from './pages/OAuthConsent';
+import Recents from './pages/Recents';
 import Dashboard from './pages/Dashboard';
 import Dialer from './pages/Dialer';
 import Chat from './pages/Chat';
@@ -104,6 +104,17 @@ function App() {
 
             {/* Protected Routes - Require authentication */}
           <Route
+            path="/recents"
+            element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <Recents />
+                </DashboardLayout>
+              </ProtectedRoute>
+            }
+          />
+          
+          <Route
             path="/dashboard"
             element={
               <ProtectedRoute>
@@ -161,7 +172,6 @@ function App() {
             {/* Catch-all route - redirect to home */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        <Analytics />
       </BrowserRouter>
       </AuthProvider>
     </ThemeProvider>

@@ -21,19 +21,6 @@ Create a file named `.env` in the `frontend/` directory with the following conte
 # ==================================
 
 # ----------------------------------
-# Supabase Configuration (Required)
-# ----------------------------------
-# Get these from: https://app.supabase.com → Your Project → Settings → API
-
-# Your Supabase project URL
-# Example: https://abcdefghijklmn.supabase.co
-VITE_SUPABASE_URL=your_supabase_url_here
-
-# Your Supabase anonymous/public key (safe to expose in frontend)
-# Example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key_here
-
-# ----------------------------------
 # Backend API Configuration
 # ----------------------------------
 # Backend API base URL
@@ -46,15 +33,6 @@ VITE_API_URL=http://localhost:5000
 ---
 
 ## 🔧 How to Get Your Credentials
-
-### Supabase Credentials
-
-1. Go to [Supabase Dashboard](https://app.supabase.com)
-2. Select your **OTO-DIAL** project (or create a new one)
-3. Click **Settings** → **API**
-4. Copy:
-   - **Project URL** → Use for `VITE_SUPABASE_URL`
-   - **anon public** key → Use for `VITE_SUPABASE_ANON_KEY`
 
 ### Backend API URL
 
@@ -70,9 +48,7 @@ VITE_API_URL=http://localhost:5000
 1. Go to [Netlify Dashboard](https://app.netlify.com)
 2. Select your site
 3. Go to **Site Settings** → **Environment Variables**
-4. Add each variable:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
+4. Add variable:
    - `VITE_API_URL` (optional, use your production API URL)
 
 ### For Vercel
@@ -80,7 +56,7 @@ VITE_API_URL=http://localhost:5000
 1. Go to [Vercel Dashboard](https://vercel.com)
 2. Select your project
 3. Go to **Settings** → **Environment Variables**
-4. Add each variable for **Production**, **Preview**, and **Development** environments
+4. Add variable for **Production**, **Preview**, and **Development** environments
 
 ---
 
@@ -90,33 +66,18 @@ VITE_API_URL=http://localhost:5000
 
 - All variables **must** be prefixed with `VITE_` to be accessible in the frontend
 - This is a Vite requirement for exposing env vars to the browser
-- Example: `VITE_SUPABASE_URL` ✅, `SUPABASE_URL` ❌
+- Example: `VITE_API_URL` ✅, `API_URL` ❌
 
 ### Security Best Practices
 
 1. ✅ **DO** use `VITE_` prefix for frontend variables
-2. ✅ **DO** use Supabase anon/public key (it's designed to be public)
-3. ✅ **DO** commit `.env.example` or this template
-4. ❌ **DON'T** commit `.env` with real values
-5. ❌ **DON'T** put backend secrets or service role keys here
-6. ❌ **DON'T** put private API keys in frontend environment variables
-
-### Supabase Keys Explained
-
-- **Anon Key** (Public): ✅ Safe to use in frontend, limited permissions
-- **Service Role Key** (Private): ❌ NEVER use in frontend, full admin access
+2. ✅ **DO** commit `.env.example` or this template
+3. ❌ **DON'T** commit `.env` with real values
+4. ❌ **DON'T** put backend secrets or private API keys in frontend environment variables
 
 ---
 
 ## 🔍 Troubleshooting
-
-### "Supabase not configured" error
-
-**Solution:**
-1. Make sure `.env` file exists in `frontend/` directory
-2. Verify variable names are correct (with `VITE_` prefix)
-3. Restart your dev server: `npm run dev`
-4. Check browser console for specific error messages
 
 ### API calls failing
 
@@ -139,8 +100,6 @@ VITE_API_URL=http://localhost:5000
 ## ✅ Quick Setup Checklist
 
 - [ ] Copy template to `frontend/.env`
-- [ ] Add Supabase URL
-- [ ] Add Supabase anon key
 - [ ] Set API URL (or leave as `http://localhost:5000` for local dev)
 - [ ] Verify `.env` is in `.gitignore`
 - [ ] Restart dev server
@@ -149,13 +108,4 @@ VITE_API_URL=http://localhost:5000
 
 ---
 
-## 📚 Related Documentation
-
-- [NETLIFY_SETUP.md](./NETLIFY_SETUP.md) - Netlify deployment guide
-- [README_NETLIFY.md](./README_NETLIFY.md) - Quick Netlify reference
-- [SUPABASE_OAUTH_SETUP.md](../SUPABASE_OAUTH_SETUP.md) - OAuth configuration
-
----
-
 **Last Updated:** 2025-12-17
-

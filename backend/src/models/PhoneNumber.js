@@ -1,0 +1,27 @@
+import mongoose from "mongoose";
+
+const phoneNumberSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true
+    },
+    telnyxNumberId: String,
+    phoneNumber: {
+      type: String,
+      required: true,
+      unique: true
+    },
+    status: {
+      type: String,
+      enum: ["active", "released"],
+      default: "active"
+    },
+    inboundVoiceProfileId: String,
+    inboundMessagingProfileId: String
+  },
+  { timestamps: true }
+);
+
+export default mongoose.model("PhoneNumber", phoneNumberSchema);

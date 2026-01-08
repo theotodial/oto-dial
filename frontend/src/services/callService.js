@@ -1,4 +1,11 @@
+import API from "../api";
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+export async function getCalls() {
+  const res = await API.get("/api/calls");
+  return res.data.calls || [];
+}
 
 export const getCalls = async () => {
   try {

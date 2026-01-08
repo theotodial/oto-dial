@@ -1,0 +1,83 @@
+import mongoose from "mongoose";
+
+const subscriptionSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true
+    },
+
+    planId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Plan",
+      required: true
+    },
+
+    status: {
+      type: String,
+      enum: ["active", "suspended", "cancelled"],
+      default: "active",
+      index: true
+    },
+
+    periodStart: {
+      type: Date,
+      required: true
+    },
+
+    periodEnd: {
+      type: Date,
+      required: true
+    },
+
+    usage: {
+      minutesUsed: { type: Number, default: 0 },
+      smsUsed: { type: Number, default: 0 }
+    },
+
+    limits: {
+      minutesTotal: { type: Number, required: true },
+      smsTotal: { type: Number, required: true }
+    },
+
+    addons: {
+      minutes: { type: Number, default: 0 },
+      sms: { type: Number, default: 0 }
+    },
+
+    hardStop: {
+      type: Boolean,
+      default: true
+    },
+    
+    ratePerMinute: {
+      type: Number,
+      required: true,
+      default: 0.05
+    },
+    dailyMinutesLimit: {
+      type: Number,
+      default: 200
+    },
+    
+    dailyMinutesUsed: {
+      type: Number,
+      default: 0
+    },
+    
+    lastUsageReset: {
+      type: Date,
+      default: Date.now
+    }        
+  },
+  {
+    timestamps: true
+  }
+);
+
+const Subscription = mongoose.model("Subscription", subscriptionSchema);
+
+export default Subscription;
+

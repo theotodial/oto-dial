@@ -1,284 +1,269 @@
-import { useState } from 'react';
-import { getAvailableNumbers, buyNumber } from '../services/numberService';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import API from '../api';
+import { getMyNumbers, buyNumber } from '../services/numberService';
+
+const countries = [
+  { code: 'US', name: 'United States', flag: '🇺🇸' },
+  { code: 'GB', name: 'United Kingdom', flag: '🇬🇧' },
+  { code: 'DE', name: 'Germany', flag: '🇩🇪' },
+  { code: 'FR', name: 'France', flag: '🇫🇷' },
+  { code: 'IT', name: 'Italy', flag: '🇮🇹' },
+  { code: 'ES', name: 'Spain', flag: '🇪🇸' },
+  { code: 'AE', name: 'UAE', flag: '🇦🇪' },
+  { code: 'SA', name: 'Saudi Arabia', flag: '🇸🇦' },
+  { code: 'MY', name: 'Malaysia', flag: '🇲🇾' },
+  { code: 'SG', name: 'Singapore', flag: '🇸🇬' },
+  { code: 'AU', name: 'Australia', flag: '🇦🇺' },
+];
 
 function BuyNumber() {
   const navigate = useNavigate();
-  const [country, setCountry] = useState('US');
-  const [numberType, setNumberType] = useState('local');
-  const [numbers, setNumbers] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [buying, setBuying] = useState(null);
+  const [selectedCountry, setSelectedCountry] = useState('US');
+  const [userNumbers, setUserNumbers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [buying, setBuying] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [subscriptionActive, setSubscriptionActive] = useState(false);
+  const isMountedRef = useRef(true);
 
-  const countries = [
-    { value: 'US', label: 'United States' },
-    { value: 'UK', label: 'United Kingdom' },
-    { value: 'CA', label: 'Canada' },
-    { value: 'AU', label: 'Australia' },
-    { value: 'DE', label: 'Germany' },
-  ];
+  // Check if user already has a number and subscription status
+  useEffect(() => {
+    isMountedRef.current = true;
+    checkUserStatus();
+    
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
-  const numberTypes = [
-    { value: 'local', label: 'Local' },
-    { value: 'toll-free', label: 'Toll-Free' },
-    { value: 'mobile', label: 'Mobile' },
-    { value: 'vanity', label: 'Vanity' },
-  ];
-
-  const handleSearch = async (e) => {
-    e.preventDefault();
+  const checkUserStatus = async () => {
+    if (!isMountedRef.current) return;
+    
     setLoading(true);
-    setError(null);
-    setNumbers([]);
+    setError('');
 
     try {
-      const data = await getAvailableNumbers(country);
-      setNumbers(data);
+      const [numbersRes, subscriptionRes] = await Promise.all([
+        getMyNumbers(),
+        API.get('/api/subscription').catch(() => ({ error: true }))
+      ]);
+
+      if (!isMountedRef.current) return;
+
+      const numbers = Array.isArray(numbersRes) ? numbersRes : [];
+      setUserNumbers(numbers);
+
+      // Check subscription
+      if (subscriptionRes.error || !subscriptionRes.data) {
+        setError('Active subscription required to buy a number');
+        setSubscriptionActive(false);
+      } else {
+        setSubscriptionActive(true);
+      }
+
+      // If user already has a number, show message
+      if ((numbers || []).length > 0) {
+        setError('You already have a phone number. Maximum 1 number allowed.');
+      }
     } catch (err) {
-      setError(err.message || 'Failed to search numbers. Please try again.');
+      if (!isMountedRef.current) return;
+      console.error('Status check error:', err);
+      setError('Failed to check account status');
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 
-  const handleBuy = async (number) => {
-    const userEmail = localStorage.getItem('userEmail');
-    if (!userEmail) {
-      setError('Please login to buy a number');
+  const handleBuy = async () => {
+    if (userNumbers.length > 0) {
+      setError('You already have a phone number. Maximum 1 number allowed.');
       return;
     }
 
-    setBuying(number.id);
+    if (!subscriptionActive) {
+      setError('Active subscription required to buy a number');
+      navigate('/billing');
+      return;
+    }
+
+    if (!isMountedRef.current) return;
+    
+    setBuying(true);
+    setError('');
+    setSuccess('');
+
     try {
-      const result = await buyNumber({
-        email: userEmail,
-        country: country,
-        number: number.number || number.id,
-        type: numberType
+      const response = await buyNumber({
+        country: selectedCountry
       });
 
-      alert(`Successfully purchased number: ${result.number || number.number}`);
-      navigate('/dashboard');
+      if (!isMountedRef.current) return;
+
+      if (response?.error) {
+        throw new Error(response.error);
+      }
+
+      const purchasedNumber = response?.phoneNumber || response?.phoneNumber?.phoneNumber || response?.number;
+      
+      setSuccess(`Successfully purchased number: ${purchasedNumber}`);
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          navigate('/my-numbers');
+        }
+      }, 2000);
     } catch (err) {
+      if (!isMountedRef.current) return;
       setError(err.message || 'Failed to buy number. Please try again.');
     } finally {
-      setBuying(null);
+      if (isMountedRef.current) {
+        setBuying(false);
+      }
     }
   };
 
-  return (
-    <div style={{ padding: '2rem', maxWidth: '1200px', margin: '0 auto' }}>
-      <h2 style={{ marginBottom: '2rem' }}>Buy Phone Number</h2>
-
-      {/* Search Form */}
-      <div style={{
-        backgroundColor: 'white',
-        padding: '1.5rem',
-        borderRadius: '8px',
-        marginBottom: '2rem',
-        border: '1px solid #dee2e6',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-      }}>
-        <form onSubmit={handleSearch}>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: '1rem',
-            marginBottom: '1rem'
-          }}>
-            <div>
-              <label style={{
-                display: 'block',
-                marginBottom: '0.5rem',
-                fontWeight: '500',
-                color: '#555',
-                fontSize: '0.9rem'
-              }}>
-                Country
-              </label>
-              <select
-                value={country}
-                onChange={(e) => setCountry(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  fontSize: '1rem',
-                  boxSizing: 'border-box',
-                  backgroundColor: 'white'
-                }}
-              >
-                {countries.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label style={{
-                display: 'block',
-                marginBottom: '0.5rem',
-                fontWeight: '500',
-                color: '#555',
-                fontSize: '0.9rem'
-              }}>
-                Number Type
-              </label>
-              <select
-                value={numberType}
-                onChange={(e) => setNumberType(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  fontSize: '1rem',
-                  boxSizing: 'border-box',
-                  backgroundColor: 'white'
-                }}
-              >
-                {numberTypes.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              padding: '0.75rem 2rem',
-              backgroundColor: loading ? '#999' : '#007bff',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              fontSize: '1rem',
-              fontWeight: '500',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              transition: 'background-color 0.2s'
-            }}
-          >
-            {loading ? 'Searching...' : 'Search Available Numbers'}
-          </button>
-        </form>
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-slate-900">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-500 dark:text-gray-400">Loading...</p>
+        </div>
       </div>
+    );
+  }
 
-      {/* Error Message */}
-      {error && (
-        <div style={{
-          padding: '1rem',
-          marginBottom: '1rem',
-          backgroundColor: '#fee',
-          border: '1px solid #fcc',
-          borderRadius: '4px',
-          color: '#c33'
-        }}>
-          {error}
-        </div>
-      )}
-
-      {/* Results */}
-      {numbers.length > 0 && (
-        <div>
-          <h3 style={{ marginBottom: '1rem' }}>
-            Available Numbers ({numbers.length})
-          </h3>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-            gap: '1rem'
-          }}>
-            {numbers.map((num) => (
-              <div
-                key={num.id}
-                style={{
-                  padding: '1.5rem',
-                  backgroundColor: 'white',
-                  border: '1px solid #dee2e6',
-                  borderRadius: '8px',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-                }}
-              >
-                <div style={{
-                  fontSize: '1.25rem',
-                  fontWeight: 'bold',
-                  color: '#333',
-                  marginBottom: '0.5rem'
-                }}>
-                  {num.number}
-                </div>
-                <div style={{
-                  fontSize: '0.9rem',
-                  color: '#666',
-                  marginBottom: '0.5rem'
-                }}>
-                  {num.type} • {num.country}
-                </div>
-                <div style={{
-                  fontSize: '1.1rem',
-                  fontWeight: '600',
-                  color: '#28a745',
-                  marginBottom: '1rem'
-                }}>
-                  ${num.price.toFixed(2)}/month
-                </div>
-                <button
-                  onClick={() => handleBuy(num)}
-                  disabled={buying === num.id}
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    backgroundColor: buying === num.id ? '#999' : '#28a745',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    fontSize: '0.9rem',
-                    fontWeight: '500',
-                    cursor: buying === num.id ? 'not-allowed' : 'pointer',
-                    transition: 'background-color 0.2s'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (buying !== num.id) {
-                      e.currentTarget.style.backgroundColor = '#218838';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (buying !== num.id) {
-                      e.currentTarget.style.backgroundColor = '#28a745';
-                    }
-                  }}
-                >
-                  {buying === num.id ? 'Processing...' : 'Buy Now'}
-                </button>
-              </div>
-            ))}
+  // If user already has a number, show that instead
+  if (userNumbers.length > 0) {
+    const userNumber = userNumbers[0];
+    return (
+      <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900 p-6">
+        <div className="max-w-2xl mx-auto">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-gray-200 dark:border-slate-700 p-8 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center">
+              <svg className="w-8 h-8 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Active Phone Number</h2>
+            <p className="text-3xl font-bold text-indigo-600 dark:text-indigo-400 mb-4">
+              {userNumber.number || userNumber.phoneNumber || userNumber}
+            </p>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">
+              Status: <span className="font-semibold text-green-600 dark:text-green-400">Active</span>
+            </p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              Maximum 1 number allowed per account. You can manage this number from My Numbers.
+            </p>
+            <button
+              onClick={() => navigate('/my-numbers')}
+              className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors"
+            >
+              View My Numbers
+            </button>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {/* No Results */}
-      {!loading && numbers.length === 0 && !error && (
-        <div style={{
-          padding: '3rem',
-          textAlign: 'center',
-          backgroundColor: '#f8f9fa',
-          borderRadius: '8px',
-          border: '1px solid #dee2e6',
-          color: '#666'
-        }}>
-          <p>Search for available numbers to see results.</p>
+  return (
+    <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900 p-6">
+      <div className="max-w-4xl mx-auto">
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Buy Phone Number</h1>
+          <p className="text-gray-600 dark:text-gray-400">Select a country to purchase a phone number</p>
         </div>
-      )}
+
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl">
+            {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300 rounded-xl">
+            {success}
+          </div>
+        )}
+
+        {!subscriptionActive && (
+          <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 text-yellow-700 dark:text-yellow-300 rounded-xl">
+            <p className="font-semibold mb-2">Subscription Required</p>
+            <p className="text-sm mb-3">You need an active subscription to buy a phone number.</p>
+            <button
+              onClick={() => navigate('/billing')}
+              className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Subscribe Now
+            </button>
+          </div>
+        )}
+
+        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-gray-200 dark:border-slate-700 p-8">
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+              Select Country
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {countries.map((country) => (
+                <button
+                  key={country.code}
+                  onClick={() => setSelectedCountry(country.code)}
+                  disabled={!subscriptionActive}
+                  className={`p-4 rounded-xl border-2 transition-all ${
+                    selectedCountry === country.code
+                      ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-900/30'
+                      : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500'
+                  } ${
+                    !subscriptionActive ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                  }`}
+                >
+                  <div className="text-3xl mb-2">{country.flag}</div>
+                  <div className={`text-sm font-medium ${
+                    selectedCountry === country.code
+                      ? 'text-indigo-600 dark:text-indigo-400'
+                      : 'text-gray-700 dark:text-gray-300'
+                  }`}>
+                    {country.name}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="pt-6 border-t border-gray-200 dark:border-slate-700">
+            <button
+              onClick={handleBuy}
+              disabled={!subscriptionActive || buying || userNumbers.length > 0}
+              className={`w-full py-4 rounded-xl font-semibold transition-all ${
+                !subscriptionActive || buying || userNumbers.length > 0
+                  ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600 text-white shadow-lg hover:shadow-xl'
+              }`}
+            >
+              {buying ? (
+                <span className="flex items-center justify-center gap-2">
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  Processing...
+                </span>
+              ) : (
+                `Purchase Number in ${countries.find(c => c.code === selectedCountry)?.name || 'Selected Country'}`
+              )}
+            </button>
+
+            <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
+              Maximum 1 phone number per account
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
 export default BuyNumber;
-

@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../context/AuthContext';
+import API from '../api';
 
 const CheckIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -14,6 +15,7 @@ const UploadIcon = () => (
 );
 
 function Profile() {
+  const { user: authUser } = useAuth();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -38,6 +40,15 @@ function Profile() {
     businessDocument: null,
   });
 
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordData, setPasswordData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const isMountedRef = useRef(true);
+
   const businessTypes = [
     'Individual',
     'Sole Proprietor',
@@ -49,25 +60,62 @@ function Profile() {
   ];
 
   useEffect(() => {
+    isMountedRef.current = true;
     loadUserProfile();
+    
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   const loadUserProfile = async () => {
+    if (!isMountedRef.current) return;
+    
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      setLoading(true);
+      setError('');
       
-      if (session?.user) {
-        setUser(session.user);
+      // Fetch user profile from API
+      const response = await API.get('/api/users/profile');
+      
+      if (!isMountedRef.current) return;
+      
+      if (response.error) {
+        console.warn('Profile load error:', response.error);
+        // Try to use AuthContext user data as fallback
+        if (authUser) {
+          setProfileData(prev => ({
+            ...prev,
+            email: authUser.email || '',
+            fullName: authUser.name || '',
+            phone: authUser.phone || '',
+          }));
+        }
+        setError(response.error);
+        return;
+      }
+
+      const userData = response.data?.user || response.data;
+      if (userData) {
+        setUser(userData);
+        const fullName = userData.name || 
+          (userData.firstName ? `${userData.firstName} ${userData.lastName || ''}`.trim() : '');
         setProfileData(prev => ({
           ...prev,
-          email: session.user.email || '',
-          fullName: session.user.user_metadata?.full_name || '',
+          email: userData.email || prev.email || '',
+          fullName: fullName || prev.fullName || '',
+          phone: userData.phone || prev.phone || '',
+          company: userData.company || prev.company || '',
         }));
       }
     } catch (err) {
+      if (!isMountedRef.current) return;
+      console.error('Profile load error:', err);
       setError('Failed to load profile');
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -81,36 +129,140 @@ function Profile() {
 
   const handleSaveProfile = async (e) => {
     e.preventDefault();
+    if (!isMountedRef.current) return;
+    
     setSaving(true);
     setError('');
     setSuccess('');
 
     try {
-      // Update user metadata in Supabase
-      const { error: updateError } = await supabase.auth.updateUser({
-        data: {
-          full_name: profileData.fullName,
-          phone: profileData.phone,
-          company: profileData.company,
-          business_type: profileData.businessType,
-          country: profileData.country,
-        }
+      // Update user profile via API
+      const response = await API.patch('/api/users/profile', {
+        firstName: (profileData?.fullName || '').split(' ')[0] || profileData?.fullName || '',
+        lastName: (profileData?.fullName || '').split(' ').slice(1).join(' ') || '',
+        name: profileData?.fullName || '',
+        phone: profileData.phone,
+        company: profileData.company,
       });
 
-      if (updateError) throw updateError;
+      if (!isMountedRef.current) return;
 
-      setSuccess('Profile updated successfully!');
-      setTimeout(() => setSuccess(''), 3000);
+      if (response.error) {
+        throw new Error(response.error);
+      }
+
+      if (response.data?.success || response.data?.user) {
+        setSuccess('Profile updated successfully!');
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            setSuccess('');
+          }
+        }, 3000);
+        // Reload profile to get updated data
+        await loadUserProfile();
+      } else {
+        throw new Error(response.data?.error || 'Failed to update profile');
+      }
     } catch (err) {
-      setError(err.message || 'Failed to update profile');
+      if (!isMountedRef.current) return;
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.message ||
+                          err.message || 
+                          'Failed to update profile';
+      setError(errorMessage);
     } finally {
-      setSaving(false);
+      if (isMountedRef.current) {
+        setSaving(false);
+      }
     }
   };
 
-  const handleFileUpload = (type) => {
-    setSuccess(`${type} verification initiated. Our team will review your documents within 24-48 hours.`);
-    setTimeout(() => setSuccess(''), 5000);
+  const handleFileUpload = async (type, file) => {
+    if (!file || !isMountedRef.current) return;
+    
+    const formData = new FormData();
+    formData.append('document', file);
+    formData.append('type', type);
+    
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    
+    try {
+      const response = await API.post('/api/users/verify', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      
+      if (!isMountedRef.current) return;
+      
+      if (response.error) {
+        setError(response.error);
+      } else {
+        setSuccess(`${type} verification initiated. Our team will review your documents within 24-48 hours.`);
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            setSuccess('');
+          }
+        }, 5000);
+        await loadUserProfile();
+      }
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setError('Failed to upload document');
+    } finally {
+      if (isMountedRef.current) {
+        setSaving(false);
+      }
+    }
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    
+    if (!isMountedRef.current) return;
+    
+    if (passwordData.newPassword !== passwordData.confirmPassword) {
+      setError('New passwords do not match');
+      return;
+    }
+    
+    if (passwordData.newPassword.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+    
+    setPasswordSaving(true);
+    setError('');
+    setSuccess('');
+    
+    try {
+      const response = await API.post('/api/users/change-password', {
+        currentPassword: passwordData.currentPassword,
+        newPassword: passwordData.newPassword,
+      });
+      
+      if (!isMountedRef.current) return;
+      
+      if (response.error) {
+        setError(response.error);
+      } else {
+        setSuccess('Password changed successfully!');
+        setShowPasswordModal(false);
+        setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            setSuccess('');
+          }
+        }, 3000);
+      }
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setError(err.response?.data?.error || 'Failed to change password');
+    } finally {
+      if (isMountedRef.current) {
+        setPasswordSaving(false);
+      }
+    }
   };
 
   if (loading) {
@@ -118,7 +270,7 @@ function Profile() {
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-slate-900">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-500 dark:text-gray-400">Loading profile...</p>
+          <p className="text-gray-500 dark:text-gray-300">Loading profile...</p>
         </div>
       </div>
     );
@@ -132,7 +284,7 @@ function Profile() {
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
             Profile Settings
           </h1>
-          <p className="text-gray-600 dark:text-gray-400">
+          <p className="text-gray-600 dark:text-gray-300">
             Manage your account details and verification status
           </p>
         </div>
@@ -185,7 +337,7 @@ function Profile() {
                     disabled
                     className="w-full px-4 py-3 bg-gray-100 dark:bg-slate-700/50 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-500 dark:text-gray-400 cursor-not-allowed"
                   />
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-300">
                     Email cannot be changed. Contact support if needed.
                   </p>
                 </div>
@@ -309,26 +461,42 @@ function Profile() {
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                         Government ID (Driver's License, Passport, etc.)
                       </label>
-                      <button
-                        onClick={() => handleFileUpload('ID')}
-                        className="w-full py-4 border-2 border-dashed border-gray-300 dark:border-slate-600 rounded-xl hover:border-indigo-500 dark:hover:border-indigo-400 transition-colors flex flex-col items-center justify-center text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400"
-                      >
-                        <UploadIcon />
-                        <span className="mt-2 text-sm font-medium">Click to upload ID document</span>
-                      </button>
+                      <label className="block">
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          onChange={(e) => {
+                            const file = e.target.files[0];
+                            if (file) handleFileUpload('ID', file);
+                          }}
+                          className="hidden"
+                        />
+                        <div className="w-full py-4 border-2 border-dashed border-gray-300 dark:border-slate-600 rounded-xl hover:border-indigo-500 dark:hover:border-indigo-400 transition-colors flex flex-col items-center justify-center text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer">
+                          <UploadIcon />
+                          <span className="mt-2 text-sm font-medium">Click to upload ID document</span>
+                        </div>
+                      </label>
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                         Business Verification (Optional - For higher limits)
                       </label>
-                      <button
-                        onClick={() => handleFileUpload('Business')}
-                        className="w-full py-4 border-2 border-dashed border-gray-300 dark:border-slate-600 rounded-xl hover:border-indigo-500 dark:hover:border-indigo-400 transition-colors flex flex-col items-center justify-center text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400"
-                      >
-                        <UploadIcon />
-                        <span className="mt-2 text-sm font-medium">Click to upload business documents</span>
-                      </button>
+                      <label className="block">
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          onChange={(e) => {
+                            const file = e.target.files[0];
+                            if (file) handleFileUpload('Business', file);
+                          }}
+                          className="hidden"
+                        />
+                        <div className="w-full py-4 border-2 border-dashed border-gray-300 dark:border-slate-600 rounded-xl hover:border-indigo-500 dark:hover:border-indigo-400 transition-colors flex flex-col items-center justify-center text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer">
+                          <UploadIcon />
+                          <span className="mt-2 text-sm font-medium">Click to upload business documents</span>
+                        </div>
+                      </label>
                     </div>
                   </div>
                 )}
@@ -367,14 +535,11 @@ function Profile() {
                 Quick Actions
               </h3>
               <div className="space-y-2">
-                <button className="w-full py-2 px-4 text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
+                <button 
+                  onClick={() => setShowPasswordModal(true)}
+                  className="w-full py-2 px-4 text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                >
                   Change Password
-                </button>
-                <button className="w-full py-2 px-4 text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
-                  Download Data
-                </button>
-                <button className="w-full py-2 px-4 text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
-                  API Keys
                 </button>
                 <button className="w-full py-2 px-4 text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">
                   Delete Account

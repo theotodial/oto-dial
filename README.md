@@ -1,166 +1,150 @@
-# OTO-DIAL
+# OTO DIAL - Full-Stack VoIP/SMS Platform
 
-A full-stack application for phone number management, calling, and chat functionality.
+A modern, production-ready VoIP and SMS platform built with React, Node.js, Express, and MongoDB.
 
-## Quick Start
+## 🚀 Features
 
-### Prerequisites
+- **User Authentication**: Email/password and Google OAuth
+- **Phone Numbers**: Purchase and manage phone numbers via Telnyx
+- **Voice Calls**: Make and receive calls
+- **SMS/Messaging**: Send and receive SMS messages
+- **Subscriptions**: Stripe-powered subscription management
+- **Dashboard**: Comprehensive user dashboard
+- **Mobile Responsive**: Works on desktop, tablet, and mobile
 
-- Node.js (v16 or higher)
-- npm (comes with Node.js)
+## 📋 Prerequisites
 
-### Installation
+- Node.js 18+ 
+- MongoDB (local or MongoDB Atlas)
+- Stripe account
+- Telnyx account
+- Google OAuth credentials (optional)
 
-1. **Clone the repository** (if applicable)
+## 🛠️ Development Setup
 
-2. **Install backend dependencies:**
+### 1. Clone Repository
+
+```bash
+git clone https://github.com/yourusername/oto-dial.git
+cd oto-dial
+```
+
+### 2. Backend Setup
+
 ```bash
 cd backend
 npm install
-```
-
-3. **Install frontend dependencies:**
-```bash
-cd ../frontend
-npm install
-```
-
-### Running the Application
-
-#### Local Development Commands
-
-Run both frontend and backend side by side using the root-level scripts:
-
-| Command | Description |
-|--------|-------------|
-| `npm run dev:backend` | Starts backend server on `http://localhost:5000` |
-| `npm run dev:frontend` | Starts frontend dev server on `http://localhost:3000` |
-| `npm run dev` | Runs both backend and frontend concurrently |
-
-**Quick Start:**
-```bash
-# Install root dependencies (includes concurrently)
-npm install
-
-# Run both frontend and backend together
+cp .env.example .env
+# Edit .env with your configuration
 npm run dev
 ```
 
-**Run Individually:**
+### 3. Frontend Setup
+
 ```bash
-# Backend only (in separate terminal)
-npm run dev:backend
-
-# Frontend only (in separate terminal)
-npm run dev:frontend
-```
-
-For detailed local development setup, see [infra/README.dev.md](./infra/README.dev.md)
-
-For deployment instructions (Vercel + Render/Railway), see [infra/README.deploy.md](./infra/README.deploy.md)
-
-## Environment Variables
-
-### Backend
-
-Create a `.env` file in the `backend/` directory:
-
-```env
-PORT=5000
-```
-
-**Default Values:**
-- `PORT`: 5000 (server port)
-
-**Optional:** Copy `.env.example` if available:
-```bash
-cd backend
+cd frontend
+npm install
 cp .env.example .env
+# Edit .env with your configuration
+npm run dev
 ```
 
-### Frontend
+### 4. Environment Variables
 
-Create a `.env` file in the `frontend/` directory:
+See `backend/.env.example` and `frontend/.env.example` for required variables.
 
-```env
-VITE_API_URL=http://localhost:5000
-```
+## 📦 Production Deployment
 
-**Note:** The frontend API helper (`src/api.js`) uses this environment variable to connect to the backend. Make sure to create this file before running the frontend.
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for complete deployment guide.
 
-**Default Value:**
-- `VITE_API_URL`: `http://localhost:5000` (backend API URL)
+Quick deployment:
+1. Follow [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md)
+2. Use `deploy.sh` script for automated deployment
+3. Configure Nginx using `nginx.conf`
 
-To change the backend URL, update the `VITE_API_URL` value in `.env` or modify `vite.config.js` proxy target.
-
-## Project Structure
+## 🗂️ Project Structure
 
 ```
 oto-dial/
-├── backend/          # Node.js + Express API
-│   ├── src/          # Source code (routes, controllers, models, utils)
-│   ├── index.js      # Server entry point
-│   └── package.json  # Backend dependencies
-├── frontend/         # React + Vite application
-│   ├── src/          # React source code
-│   │   ├── pages/    # Page components
-│   │   ├── components/ # Reusable components
-│   │   └── App.jsx   # Main app component
-│   └── package.json  # Frontend dependencies
-└── infra/            # Infrastructure and setup docs
-    ├── README.dev.md # Local development guide
-    ├── README.deploy.md # Deployment guide
-    └── render.yaml   # Render service configuration
+├── backend/           # Node.js/Express backend
+│   ├── src/
+│   │   ├── routes/    # API routes
+│   │   ├── models/    # MongoDB models
+│   │   ├── middleware/# Auth & validation middleware
+│   │   └── services/  # Stripe, Telnyx services
+│   └── index.js       # Entry point
+├── frontend/          # React frontend
+│   ├── src/
+│   │   ├── pages/     # Page components
+│   │   ├── components/# Reusable components
+│   │   ├── context/   # React contexts
+│   │   └── api.js     # API client
+│   └── vite.config.js
+├── nginx.conf         # Nginx configuration
+├── ecosystem.config.js# PM2 configuration
+└── deploy.sh          # Deployment script
 ```
 
-## Features
+## 🔐 Security
 
-- **Authentication:** Sign up and login
-- **Wallet:** Balance management and top-up
-- **Numbers:** Purchase and manage phone numbers
-- **Dialer:** Make calls and view call history
-- **Chat:** Real-time chat with bot echo responses
+- JWT authentication
+- Password hashing with bcrypt
+- CORS configuration
+- Environment variable validation
+- Input sanitization
+- Rate limiting (recommended)
 
-## API Endpoints
+## 📚 API Documentation
 
 ### Authentication
-- `POST /api/auth/signup` - Create new user
+- `POST /api/auth/register` - User registration
 - `POST /api/auth/login` - User login
+- `GET /api/auth/google` - Google OAuth
 
-### Wallet
-- `GET /api/wallet/:email` - Get wallet balance
-- `POST /api/wallet/topup` - Add funds to wallet
+### Subscriptions
+- `GET /api/subscription` - Get user subscription
+- `POST /api/stripe/checkout` - Create checkout session
 
-### Numbers
-- `POST /api/numbers/buy` - Purchase a phone number
-- `GET /api/numbers/:email` - List user's numbers
+### Phone Numbers
+- `GET /api/numbers` - Get user numbers
+- `POST /api/numbers/buy` - Purchase number
 
 ### Calls
-- `POST /api/call` - Create call log
-- `GET /api/calls/:email` - Get user's call history
+- `POST /api/calls` - Initiate call
+- `GET /api/calls` - Get call history
 
-### Chat
-- `GET /api/chat` - Get all messages
-- `POST /api/chat` - Send a message
+### SMS
+- `POST /api/sms/send` - Send SMS
+- `GET /api/messages` - Get message history
 
-## Tech Stack
+## 🧪 Testing
 
-### Backend
-- Node.js
-- Express.js
-- In-memory storage (no database)
+```bash
+# Backend tests (if configured)
+cd backend
+npm test
 
-### Frontend
-- React 18
-- React Router
-- Vite
-- JavaScript (no TypeScript)
+# Frontend tests (if configured)
+cd frontend
+npm test
+```
 
-## Development & Deployment
-
-- **Local Development:** See [infra/README.dev.md](./infra/README.dev.md) for setup and troubleshooting
-- **Production Deployment:** See [infra/README.deploy.md](./infra/README.deploy.md) for deploying to Vercel (frontend) and Render/Railway (backend)
-
-## License
+## 📝 License
 
 ISC
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create feature branch
+3. Commit changes
+4. Push to branch
+5. Create Pull Request
+
+## 📞 Support
+
+For issues and questions, please open an issue on GitHub.
+
+---
+
+**Built with ❤️ for reliable communication**

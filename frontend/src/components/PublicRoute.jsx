@@ -22,9 +22,9 @@ function PublicRoute({ children }) {
     );
   }
 
-  // Redirect to dashboard if already logged in
+  // Redirect to recents if already logged in
   if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/recents" replace />;
   }
 
   // Render the public page (login/signup)

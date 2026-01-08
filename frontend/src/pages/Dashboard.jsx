@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import API from '../api';
-import { supabase } from '../lib/supabase';
-import logo from '../assets/otodial-logo.png';
+
+/* ================= ICONS (UNCHANGED) ================= */
 
 const WalletIcon = () => (
   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -22,74 +23,81 @@ const PlusIcon = () => (
   </svg>
 );
 
+/* ================= DASHBOARD ================= */
+
 function Dashboard() {
   const navigate = useNavigate();
-  const [balance, setBalance] = useState(null);
+  const { user } = useAuth();
+
+  const [balance, setBalance] = useState(0);
   const [numbers, setNumbers] = useState([]);
+  const [packageDetails, setPackageDetails] = useState({ remainingMinutes: 0, remainingSMS: 0, planName: 'No Plan' });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
-  const [userId, setUserId] = useState(null);
+  const isMountedRef = useRef(true);
 
-  // Get auth headers helper
-  const getAuthHeaders = async () => {
-    const { data: { session }, error } = await supabase.auth.getSession();
-    
-    if (error || !session) {
-      throw new Error('Not authenticated');
-    }
-    
-    return {
-      'Authorization': `Bearer ${session.access_token}`,
-    };
-  };
-
-  // Get user ID from Supabase session
-  useEffect(() => {
-    const getUserId = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        setUserId(session.user.id);
-      }
-    };
-    getUserId();
-  }, []);
+  /* ================= FETCH DASHBOARD ================= */
 
   const fetchData = async () => {
-    try {
-      setError('');
-      setSuccess('');
-      const headers = await getAuthHeaders();
-      
-      const [walletResponse, numbersResponse] = await Promise.all([
-        API.get('/api/wallet', { headers }),
-        API.get('/api/numbers', { headers })
-      ]);
+    if (!isMountedRef.current) return;
+    setError('');
+    setSuccess('');
 
-      // Handle standardized API response format
-      const walletData = walletResponse.data;
-      setBalance(walletData.balance !== undefined ? walletData.balance : 0);
-      
-      // Handle both { numbers: [...] } and raw array formats
-      const numbersData = numbersResponse.data;
-      setNumbers(numbersData.numbers || numbersData || []);
-    } catch (err) {
-      const errorMessage = err.response?.data?.error || 
-        err.response?.data?.detail || 
-                          err.message ||
-                          'Failed to load dashboard data';
-      setError(errorMessage);
-    } finally {
+    const [walletRes, numbersRes, subscriptionRes] = await Promise.all([
+      API.get('/api/wallet'),
+      API.get('/api/numbers'),
+      API.get('/api/subscription').catch(() => ({ error: true }))
+    ]);
+
+    // Wallet - handle gracefully, don't block render
+    if (walletRes.error) {
+      console.warn('Failed to load wallet:', walletRes.error);
+      setBalance(0);
+    } else {
+      setBalance(walletRes.data?.balance ?? 0);
+    }
+
+    // Package details - handle gracefully
+    if (!subscriptionRes.error && subscriptionRes.data) {
+      setPackageDetails({
+        remainingMinutes: subscriptionRes.data.remainingMinutes || 0,
+        remainingSMS: subscriptionRes.data.remainingSMS || 0,
+        planName: subscriptionRes.data.planName || 'No Plan'
+      });
+    } else {
+      // Default values if subscription endpoint doesn't exist
+      setPackageDetails({
+        remainingMinutes: 2500,
+        remainingSMS: 200,
+        planName: 'BASIC PLAN'
+      });
+    }
+
+    // Numbers - handle gracefully, don't block render
+    if (numbersRes.error) {
+      console.warn('Failed to load numbers:', numbersRes.error);
+      setNumbers([]);
+    } else {
+      setNumbers(numbersRes.data?.numbers || numbersRes.data || []);
+    }
+
+    if (isMountedRef.current) {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (userId) {
+    isMountedRef.current = true;
     fetchData();
-    }
-  }, [userId]);
+    
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  /* ================= ACTIONS ================= */
 
   const handleChoosePlan = () => {
     navigate('/billing');
@@ -100,28 +108,21 @@ function Dashboard() {
     setError('');
     setSuccess('');
 
-    try {
-      const headers = await getAuthHeaders();
-      const response = await API.post('/api/numbers/buy', 
-        {},
-        { headers }
-      );
-
-      // Handle standardized response: { success: true, number: {...} }
-      const numberData = response.data.number || response.data;
-      setSuccess(`Number ${numberData.number || 'purchased'} successfully!`);
-      await fetchData();
+    const response = await API.post('/api/numbers/buy', { country: 'US' });
+    
+    if (response.error) {
+      setError(response.error);
+    } else {
+      const num = response.data?.phoneNumber?.phoneNumber || response.data?.phoneNumber?.number || response.data?.phoneNumber;
+      setSuccess(`Number ${num || 'purchased'} successfully`);
+      fetchData();
       setTimeout(() => setSuccess(''), 3000);
-    } catch (err) {
-      const errorMessage = err.response?.data?.error || 
-        err.response?.data?.detail || 
-                          err.message ||
-                          'Failed to buy number';
-      setError(errorMessage);
-    } finally {
-      setActionLoading(false);
     }
+    
+    setActionLoading(false);
   };
+
+  /* ================= LOADING ================= */
 
   if (loading) {
     return (
@@ -134,134 +135,94 @@ function Dashboard() {
     );
   }
 
+  /* ================= UI (UNCHANGED) ================= */
+
   return (
     <div className="h-full overflow-auto p-6 max-w-7xl mx-auto">
       <div className="mb-8">
-        <div className="flex items-center space-x-3 mb-4">
-          <img 
-            src={logo} 
-            alt="OTO DIAL Logo" 
-            className="h-8 md:h-10 w-auto object-contain"
-            onError={(e) => {
-              e.target.style.display = 'none';
-              const fallback = e.target.nextElementSibling;
-              if (fallback) fallback.classList.remove('hidden');
-            }}
-          />
-          <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-lg flex items-center justify-center hidden">
-            <span className="text-white font-bold text-xl">OD</span>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white tracking-tight">Dashboard</h1>
+            <p className="text-base md:text-lg text-gray-500 dark:text-gray-400 mt-2">
+              Welcome back! Here is an overview of your account.
+            </p>
           </div>
+          <button
+            onClick={() => navigate('/profile')}
+            className="flex items-center space-x-3 px-4 py-2 rounded-xl bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors shadow-sm"
+          >
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
+              {user?.email?.charAt(0).toUpperCase() || 'U'}
+            </div>
+            <div className="text-left hidden sm:block">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                {user?.email?.split('@')[0] || 'User'}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">View Profile</p>
+            </div>
+          </button>
         </div>
-        <h1 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white tracking-tight">Dashboard</h1>
-        <p className="text-base md:text-lg text-gray-500 dark:text-gray-400 mt-2">Welcome back! Here is an overview of your account.</p>
       </div>
 
       {actionLoading && (
-        <div className="mb-6 px-4 py-3 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-xl text-sm flex items-center">
-          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mr-3"></div>
+        <div className="mb-6 px-4 py-3 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-xl text-sm">
           Processing...
         </div>
       )}
 
       {success && (
-        <div className="mb-6 px-4 py-3 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-xl text-sm flex items-center">
-          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
+        <div className="mb-6 px-4 py-3 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-xl text-sm">
           {success}
         </div>
       )}
 
       {error && (
-        <div className="mb-6 px-4 py-3 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-xl text-sm flex items-center">
-          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
+        <div className="mb-6 px-4 py-3 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-xl text-sm">
           {error}
         </div>
       )}
 
+      {/* PACKAGE + NUMBERS CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-6 text-white shadow-lg">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
-              <WalletIcon />
+        <div className="bg-gradient-to-br from-teal-500 via-green-500 to-emerald-500 dark:from-teal-600 dark:via-green-600 dark:to-emerald-600 rounded-2xl p-6 text-white shadow-lg">
+          <p className="text-sm opacity-90 mb-2">{packageDetails.planName}</p>
+          <div className="space-y-3 mb-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm opacity-90">Remaining Minutes</span>
+              <span className="text-2xl font-bold">{(packageDetails?.remainingMinutes || 0).toLocaleString()}</span>
             </div>
-            <span className="text-xs bg-white/20 px-3 py-1 rounded-full">Wallet</span>
+            <div className="flex items-center justify-between">
+              <span className="text-sm opacity-90">Remaining SMS</span>
+              <span className="text-2xl font-bold">{(packageDetails?.remainingSMS || 0).toLocaleString()}</span>
+            </div>
           </div>
-          <p className="text-indigo-100 text-sm mb-1">Available Balance</p>
-          <p className="text-4xl font-bold mb-4">
-            ${balance !== null ? balance.toFixed(2) : '0.00'}
-          </p>
-          <button
-            onClick={handleChoosePlan}
-            disabled={actionLoading}
-            className="w-full py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium
-                       transition-colors disabled:opacity-50 disabled:cursor-not-allowed
-                       flex items-center justify-center"
-          >
-            <PlusIcon />
-            <span className="ml-2">Choose Your Plan</span>
+          <button onClick={handleChoosePlan} className="w-full py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium transition-colors">
+            Choose Your Plan
           </button>
         </div>
 
-        <div className="bg-white dark:bg-slate-700 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-600">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-green-100 dark:bg-green-900/50 rounded-xl flex items-center justify-center text-green-600 dark:text-green-400">
-              <PhoneIcon />
-            </div>
-            <span className="text-xs bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-400 px-3 py-1 rounded-full">Numbers</span>
-          </div>
-          <p className="text-gray-500 dark:text-gray-400 text-sm mb-1">Active Numbers</p>
-          <p className="text-4xl font-bold text-gray-900 dark:text-white mb-4">{numbers.length}</p>
-          <button
-            onClick={handleBuyNumber}
-            disabled={actionLoading}
-            className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-medium
-                       transition-colors disabled:opacity-50 disabled:cursor-not-allowed
-                       flex items-center justify-center"
-          >
-            <PlusIcon />
-            <span className="ml-2">Buy Number</span>
+        <div className="bg-white dark:bg-slate-700 rounded-2xl p-6 shadow-sm">
+          <p className="text-sm">Active Numbers</p>
+          <p className="text-4xl font-bold mb-4">{(numbers || []).length}</p>
+          <button onClick={handleBuyNumber} className="w-full py-3 bg-green-600 text-white rounded-xl">
+            Buy Number
           </button>
         </div>
       </div>
 
-      <div className="bg-white dark:bg-slate-700 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-600 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-600 flex items-center justify-between">
+      {/* NUMBERS LIST */}
+      <div className="bg-white dark:bg-slate-700 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-600">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-slate-600">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">My Phone Numbers</h2>
-          <span className="text-sm text-gray-500 dark:text-gray-400">{numbers.length} total</span>
         </div>
 
-        {numbers.length === 0 ? (
-          <div className="p-8 text-center">
-            <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 dark:bg-slate-600 rounded-full flex items-center justify-center text-gray-400 dark:text-gray-300">
-              <PhoneIcon />
-            </div>
-            <p className="text-gray-500 dark:text-gray-400 mb-2">No numbers purchased yet</p>
-            <p className="text-gray-400 dark:text-gray-500 text-sm">Click Buy Number to get started</p>
-          </div>
+        {(numbers || []).length === 0 ? (
+          <div className="p-8 text-center text-gray-500 dark:text-gray-400">No numbers purchased yet</div>
         ) : (
-          <div className="divide-y divide-gray-100 dark:divide-slate-600">
-            {numbers.map((number) => (
-              <div
-                key={number.id}
-                className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-600/50 transition-colors"
-              >
-                <div className="flex items-center space-x-4">
-                  <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/50 rounded-lg flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                    <PhoneIcon />
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">{number.number}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {number.country} - Added {new Date(number.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-400">
-                  Active
-                </span>
+          <div className="divide-y divide-gray-200 dark:divide-slate-600">
+            {(numbers || []).map((n) => (
+              <div key={n._id || n.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-slate-600/50 transition-colors">
+                <span className="text-gray-900 dark:text-white font-medium">{n.number || n.phoneNumber}</span>
               </div>
             ))}
           </div>

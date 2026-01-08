@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getWallet, getTransactions, topup } from '../services/walletService';
 
 function Wallet() {
@@ -10,28 +10,44 @@ function Wallet() {
   const [topUpAmount, setTopUpAmount] = useState('');
   const [topUpLoading, setTopUpLoading] = useState(false);
   const [toast, setToast] = useState(null);
+  const isMountedRef = useRef(true);
 
   const fetchWalletData = async () => {
+    if (!isMountedRef.current) return;
+    
     try {
       // Fetch wallet balance
       const walletData = await getWallet();
-      setBalance(walletData.balance || 0);
+      
+      if (!isMountedRef.current) return;
+      setBalance(walletData?.balance || 0);
 
       // Fetch transactions
       const transactionsData = await getTransactions();
-      setTransactions(transactionsData);
+      
+      if (!isMountedRef.current) return;
+      setTransactions(Array.isArray(transactionsData) ? transactionsData : []);
 
       setError(null);
     } catch (err) {
-      setError(err.message || 'Failed to load wallet data');
+      if (!isMountedRef.current) return;
+      console.error('Failed to fetch wallet data:', err);
+      setError('Failed to load wallet data');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
+    isMountedRef.current = true;
     fetchWalletData();
+    
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   const handleRefresh = () => {
@@ -40,14 +56,19 @@ function Wallet() {
   };
 
   const showToast = (message, type = 'success') => {
+    if (!isMountedRef.current) return;
     setToast({ message, type });
     setTimeout(() => {
-      setToast(null);
+      if (isMountedRef.current) {
+        setToast(null);
+      }
     }, 3000);
   };
 
   const handleTopUp = async (e) => {
     e.preventDefault();
+    
+    if (!isMountedRef.current) return;
     
     const amount = parseFloat(topUpAmount);
     if (isNaN(amount) || amount <= 0) {
@@ -58,14 +79,20 @@ function Wallet() {
     setTopUpLoading(true);
     try {
       await topup(amount);
+      
+      if (!isMountedRef.current) return;
+      
       showToast(`Successfully topped up $${amount.toFixed(2)}`, 'success');
       setTopUpAmount('');
       // Refresh balance automatically
       await fetchWalletData();
     } catch (err) {
+      if (!isMountedRef.current) return;
       showToast(err.message || 'Failed to top up wallet', 'error');
     } finally {
-      setTopUpLoading(false);
+      if (isMountedRef.current) {
+        setTopUpLoading(false);
+      }
     }
   };
 
@@ -276,7 +303,7 @@ function Wallet() {
       <div>
         <h3 style={{ marginBottom: '1rem' }}>Transaction History</h3>
         
-        {transactions.length === 0 ? (
+        {(transactions || []).length === 0 ? (
           <div style={{
             padding: '3rem',
             textAlign: 'center',
@@ -346,7 +373,7 @@ function Wallet() {
                 </tr>
               </thead>
               <tbody>
-                {transactions.map((transaction, index) => (
+                {(transactions || []).map((transaction, index) => (
                   <tr
                     key={transaction.id || index}
                     style={{

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 
 function OAuthConsent() {
   const [searchParams] = useSearchParams();
@@ -36,14 +36,14 @@ function OAuthConsent() {
     setLoading(false);
   }, [searchParams]);
 
+  const { isAuthenticated } = useAuth();
+
   const handleAllow = async () => {
     setLoading(true);
     setError('');
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
+      if (!isAuthenticated) {
         // Redirect to login with return URL
         const returnUrl = encodeURIComponent(window.location.href);
         navigate(`/login?return=${returnUrl}`);
@@ -83,7 +83,7 @@ function OAuthConsent() {
       redirectUrl.searchParams.set('state', state || '');
       window.location.href = redirectUrl.toString();
     } else {
-      navigate('/dashboard');
+      navigate('/recents');
     }
   };
 
@@ -129,10 +129,10 @@ function OAuthConsent() {
                 </p>
               </div>
               <button
-                onClick={() => navigate('/dashboard')}
+                onClick={() => navigate('/recents')}
                 className="w-full py-3 px-4 bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white rounded-xl font-medium hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors"
               >
-                Return to Dashboard
+                Return to Recents
               </button>
             </>
           ) : (
