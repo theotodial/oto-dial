@@ -5,11 +5,12 @@ let telnyxInstance = null;
 export function getTelnyx() {
   if (!telnyxInstance) {
     if (!process.env.TELNYX_API_KEY) {
-      console.error("❌ TELNYX_API_KEY missing — Telnyx cannot start");
+      console.error("❌ TELNYX_API_KEY missing – Telnyx cannot start");
       return null;
     }
 
-    telnyxInstance = new Telnyx(process.env.TELNYX_API_KEY);
+    // Telnyx SDK v4 - call as function, not constructor
+    telnyxInstance = Telnyx(process.env.TELNYX_API_KEY);
     console.log("✅ Telnyx initialized");
   }
 
