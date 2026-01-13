@@ -154,8 +154,10 @@ function Chat() {
     setCallError('');
     setCallSuccess('');
 
-    const response = await API.post('/api/calls', {
-      phoneNumber: selectedChat.phoneNumber
+    // Use correct API endpoint and payload per backend contract
+    // POST /api/dialer/call with { to: destinationNumber }
+    const response = await API.post('/api/dialer/call', {
+      to: selectedChat.phoneNumber
     });
 
     if (response.error) {
@@ -360,8 +362,9 @@ function Chat() {
     }
 
     setSendError('');
+    // Use correct API payload per backend contract
+    // POST /api/sms/send with { to, text } - no 'from' needed
     const response = await API.post('/api/sms/send', {
-      from: fromNumber,
       to: selectedChat.phoneNumber,
       text: userMessageText
     });

@@ -417,9 +417,10 @@ function Recents() {
     setCalling(true);
     
     try {
-      const response = await API.post('/api/calls', {
-        from_number: userNumbers[0]?.number || userNumbers[0]?.phoneNumber,
-        to_number: targetNumber,
+      // Use correct API endpoint and payload per backend contract
+      // POST /api/dialer/call with { to: destinationNumber }
+      const response = await API.post('/api/dialer/call', {
+        to: targetNumber
       });
       
       if (!isMountedRef.current) return;

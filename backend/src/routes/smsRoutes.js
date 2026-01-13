@@ -2,6 +2,7 @@ import express from "express";
 import { getTelnyx } from "../../config/telnyx.js";
 import authenticateUser from "../middleware/authenticateUser.js";
 import usageGuard from "../middleware/usageGuard.js";
+import SMS from "../models/SMS.js";
 
 const router = express.Router();
 
@@ -21,10 +22,26 @@ router.post("/send", authenticateUser, usageGuard("sms"), async (req, res) => {
       return res.status(400).json({ error: "Missing to or text" });
     }
 
+    const numbers = req.subscription?.numbers || [];
+    if (!numbers.length) {
+      return res.status(400).json({ error: "No phone number assigned" });
+    }
+
+    const fromNumber = numbers[0].phoneNumber;
+
     const message = await telnyx.messages.create({
-      from: process.env.TELNYX_FROM_NUMBER,
+      from: fromNumber,
       to,
       text
+    });
+
+    await SMS.create({
+      user: req.userId,
+      to,
+      from: fromNumber,
+      body: text,
+      status: "sent",
+      telnyxMessageId: message.data.id
     });
 
     res.json({

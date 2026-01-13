@@ -217,6 +217,7 @@ function Dialer() {
     setSuccess('');
 
     try {
+      // Validate we have an active number (required for calls)
       const fromNumber = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
       if (!fromNumber) {
         if (!isMountedRef.current) return;
@@ -225,9 +226,10 @@ function Dialer() {
         return;
       }
 
-      const response = await API.post('/api/calls', {
-        from_number: fromNumber,
-        to_number: phoneNumber.trim(),
+      // Use correct API endpoint and payload per backend contract
+      // POST /api/dialer/call with { to: destinationNumber }
+      const response = await API.post('/api/dialer/call', {
+        to: phoneNumber.trim()
       });
 
       if (!isMountedRef.current) return;

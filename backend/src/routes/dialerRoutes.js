@@ -14,7 +14,6 @@ router.post("/call", async (req, res) => {
       return res.status(400).json({ error: "Destination number required" });
     }
 
-    // ✅ Unified subscription check
     if (!req.subscription || !req.subscription.active) {
       return res.status(403).json({ error: "Active subscription required" });
     }
@@ -28,7 +27,6 @@ router.post("/call", async (req, res) => {
       return res.status(503).json({ error: "Telnyx not configured" });
     }
 
-    // ✅ Use assigned number from subscription
     const numbers = req.subscription.numbers || [];
     if (!numbers.length) {
       return res.status(400).json({ error: "No phone number assigned" });

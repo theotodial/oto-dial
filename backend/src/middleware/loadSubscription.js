@@ -2,7 +2,7 @@ import { loadUserSubscription } from "../services/subscriptionService.js";
 
 export default async function loadSubscription(req, res, next) {
   try {
-    if (!req.user) {
+    if (!req.user || !req.user._id) {
       req.subscription = null;
       return next();
     }
@@ -15,4 +15,5 @@ export default async function loadSubscription(req, res, next) {
     next();
   }
 }
+
 

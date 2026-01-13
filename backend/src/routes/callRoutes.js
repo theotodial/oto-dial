@@ -9,7 +9,9 @@ const router = express.Router();
 router.use(authenticateUser);
 
 router.post("/", requireActiveSubscription, async (req, res) => {
-  if (!req.body.phoneNumber) {
+  const phoneNumber = req.body.phoneNumber || req.body.to;
+
+  if (!phoneNumber) {
     return res.status(400).json({
       success: false,
       error: "phoneNumber required"
@@ -18,7 +20,7 @@ router.post("/", requireActiveSubscription, async (req, res) => {
 
   const call = await Call.create({
     user: req.userId,
-    phoneNumber: req.body.phoneNumber,
+    phoneNumber,
     status: "queued"
   });
 
@@ -39,11 +41,18 @@ router.post("/:id/start", requireActiveSubscription, async (req, res) => {
       });
     }
 
+    const numbers = req.subscription?.numbers || [];
+    if (!numbers.length) {
+      return res.status(400).json({ error: "No phone number assigned" });
+    }
+
+    const fromNumber = numbers[0].phoneNumber;
+
     const response = await axios.post(
       "https://api.telnyx.com/v2/calls",
       {
         to: call.phoneNumber,
-        from: process.env.TELNYX_FROM_NUMBER,
+        from: fromNumber,
         connection_id: process.env.TELNYX_CONNECTION_ID
       },
       {
@@ -59,6 +68,7 @@ router.post("/:id/start", requireActiveSubscription, async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
+    console.error("CALL START ERROR:", err);
     res.status(500).json({
       success: false,
       error: "Failed to start call"
