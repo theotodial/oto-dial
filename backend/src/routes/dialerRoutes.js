@@ -1,10 +1,13 @@
 import express from "express";
 import { getTelnyx } from "../../config/telnyx.js";
+import Call from "../models/Call.js";
+import PhoneNumber from "../models/PhoneNumber.js";
 
 const router = express.Router();
 
 /**
  * POST /api/dialer/call
+ * body: { to }
  */
 router.post("/call", async (req, res) => {
   try {
@@ -27,22 +30,46 @@ router.post("/call", async (req, res) => {
       return res.status(503).json({ error: "Telnyx not configured" });
     }
 
-    const numbers = req.subscription.numbers || [];
+    // Get user's phone numbers
+    let numbers = req.subscription.numbers || [];
+    
+    // Fallback: query PhoneNumber directly
+    if (!numbers.length) {
+      const phoneNumbers = await PhoneNumber.find({
+        userId: req.userId,
+        status: "active"
+      }).lean();
+      numbers = phoneNumbers.map(n => ({ phoneNumber: n.phoneNumber }));
+    }
+
     if (!numbers.length) {
       return res.status(400).json({ error: "No phone number assigned" });
     }
 
     const fromNumber = numbers[0].phoneNumber;
 
-    const call = await telnyx.calls.create({
+    // Create call via Telnyx
+    const telnyxCall = await telnyx.calls.create({
       to,
       from: fromNumber,
       connection_id: process.env.TELNYX_CONNECTION_ID
     });
 
+    // Create call record in database
+    const callRecord = await Call.create({
+      user: req.userId,
+      phoneNumber: to,
+      fromNumber: fromNumber,
+      toNumber: to,
+      direction: "outbound",
+      status: "dialing",
+      telnyxCallControlId: telnyxCall.data.call_control_id
+    });
+
     res.json({
       success: true,
-      callControlId: call.data.call_control_id
+      callControlId: telnyxCall.data.call_control_id,
+      callId: callRecord._id
     });
   } catch (err) {
     console.error("DIALER ERROR:", err);

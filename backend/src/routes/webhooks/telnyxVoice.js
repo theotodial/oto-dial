@@ -1,17 +1,19 @@
 import express from "express";
 import Call from "../../models/Call.js";
 import Subscription from "../../models/Subscription.js";
-import User from "../../models/User.js";
+import PhoneNumber from "../../models/PhoneNumber.js";
 
 const router = express.Router();
 
 /**
  * TELNYX VOICE WEBHOOK
- * Handles answered + hangup events
+ * Handles call.initiated, call.answered, call.hangup events
  * Counts usage ONLY here (single source of truth)
  */
 router.post("/voice", async (req, res) => {
   try {
+    console.log("📞 VOICE WEBHOOK:", JSON.stringify(req.body, null, 2));
+    
     const payload = req.body?.data;
     if (!payload) {
       return res.sendStatus(200);
@@ -19,9 +21,37 @@ router.post("/voice", async (req, res) => {
 
     const event = payload.event_type;
     const callControlId = payload.payload?.call_control_id;
+    const callPayload = payload.payload || {};
 
     if (!callControlId) {
       return res.sendStatus(200);
+    }
+
+    // ===============================
+    // INBOUND CALL INITIATED
+    // ===============================
+    if (event === "call.initiated" && callPayload.direction === "incoming") {
+      const toNumber = callPayload.to;
+      const fromNumber = callPayload.from;
+
+      // Find user who owns this number
+      const phoneNumber = await PhoneNumber.findOne({
+        phoneNumber: toNumber,
+        status: "active"
+      });
+
+      if (phoneNumber) {
+        await Call.create({
+          telnyxCallControlId: callControlId,
+          user: phoneNumber.userId,
+          phoneNumber: fromNumber,
+          fromNumber: fromNumber,
+          toNumber: toNumber,
+          direction: "inbound",
+          status: "ringing"
+        });
+        console.log(`✅ Inbound call recorded: ${fromNumber} -> ${toNumber}`);
+      }
     }
 
     // ===============================
@@ -45,40 +75,55 @@ router.post("/voice", async (req, res) => {
         telnyxCallControlId: callControlId,
       });
 
-      if (!call || !call.callStartedAt) {
+      if (!call) {
         return res.sendStatus(200);
       }
 
       const endedAt = new Date();
-      const durationSeconds = Math.floor(
-        (endedAt - call.callStartedAt) / 1000
-      );
+      let durationSeconds = 0;
+      let minutes = 0;
+      let cost = 0;
 
-      const minutes = Math.max(1, Math.ceil(durationSeconds / 60));
-      const rate = Number(process.env.CALL_RATE_PER_MINUTE || 0.0065);
-      const cost = minutes * rate;
+      // Only calculate duration if call was answered
+      if (call.callStartedAt) {
+        durationSeconds = Math.floor((endedAt - call.callStartedAt) / 1000);
+        minutes = Math.max(1, Math.ceil(durationSeconds / 60));
+        const rate = Number(process.env.CALL_RATE_PER_MINUTE || 0.0065);
+        cost = minutes * rate;
+      }
+
+      // Determine final status
+      const hangupCause = callPayload.hangup_cause || "unknown";
+      let finalStatus = "completed";
+      
+      if (!call.callStartedAt) {
+        // Call was never answered
+        finalStatus = call.direction === "inbound" ? "missed" : "failed";
+      }
 
       // Update call record
       call.callEndedAt = endedAt;
       call.durationSeconds = durationSeconds;
       call.billedMinutes = minutes;
       call.cost = cost;
-      call.status = "completed";
-      call.hangupCause = payload.payload?.hangup_cause || "unknown";
+      call.status = finalStatus;
+      call.hangupCause = hangupCause;
 
       await call.save();
 
       // ===============================
       // UPDATE SUBSCRIPTION USAGE
       // ===============================
-      await Subscription.findOneAndUpdate(
-        { userId: call.user, status: "active" },
-        {
-          $inc: {
-            "usage.minutesUsed": minutes,
-          },
-        }
-      );
+      if (minutes > 0 && call.user) {
+        await Subscription.findOneAndUpdate(
+          { userId: call.user, status: "active" },
+          {
+            $inc: {
+              "usage.minutesUsed": minutes,
+            },
+          }
+        );
+      }
     }
 
     return res.sendStatus(200);

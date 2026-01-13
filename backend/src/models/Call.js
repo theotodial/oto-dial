@@ -10,7 +10,7 @@ const callSchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true
+      index: true
     },
 
     phoneNumber: {
@@ -18,9 +18,25 @@ const callSchema = new mongoose.Schema(
       required: true
     },
 
+    fromNumber: {
+      type: String,
+      default: null
+    },
+
+    toNumber: {
+      type: String,
+      default: null
+    },
+
+    direction: {
+      type: String,
+      enum: ["inbound", "outbound"],
+      default: "outbound"
+    },
+
     status: {
       type: String,
-      enum: ["queued", "dialing", "answered", "completed", "failed"],
+      enum: ["queued", "dialing", "ringing", "in-progress", "answered", "completed", "failed", "missed"],
       default: "queued"
     },
 
@@ -53,8 +69,6 @@ const callSchema = new mongoose.Schema(
       type: Number,
       default: 0
     }
-    
-    
   },
   {
     timestamps: true,

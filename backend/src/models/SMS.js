@@ -5,7 +5,6 @@ const smsSchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
       index: true
     },
 
@@ -26,8 +25,14 @@ const smsSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["queued", "sent", "failed"],
+      enum: ["queued", "sent", "delivered", "failed", "received"],
       default: "queued"
+    },
+
+    direction: {
+      type: String,
+      enum: ["inbound", "outbound"],
+      default: "outbound"
     },
 
     telnyxMessageId: String
