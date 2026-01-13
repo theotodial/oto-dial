@@ -1,33 +1,19 @@
 import express from "express";
-import authenticateUser from "../middleware/authenticateUser.js";
+import SMS from "../models/SMS.js";
 
 const router = express.Router();
 
 /**
  * GET /api/messages
- * Get all messages for the current user
- * Returns empty array if Message model doesn't exist (graceful degradation)
+ * Get all messages (SMS) for the current user
+ * Note: authenticateUser and loadSubscription are applied in index.js
  */
-router.get("/", authenticateUser, async (req, res) => {
+router.get("/", async (req, res) => {
   try {
-    let Message;
-    try {
-      Message = (await import("../models/Message.js")).default;
-    } catch (importErr) {
-      // Message model doesn't exist, return empty array
-      console.warn("Message model not found, returning empty array");
-      return res.json({
-        success: true,
-        messages: []
-      });
-    }
-
     const userId = req.userId;
     
-    // Fetch messages for this user
-    const messages = await Message.find({ 
-      user: userId 
-    })
+    // Fetch SMS messages for this user
+    const messages = await SMS.find({ user: userId })
       .sort({ createdAt: -1 })
       .limit(100);
 
@@ -35,16 +21,20 @@ router.get("/", authenticateUser, async (req, res) => {
       success: true,
       messages: messages.map(msg => ({
         id: msg._id,
-        phone_number: msg.phone_number || msg.to,
-        message: msg.message || msg.text,
-        created_at: msg.createdAt || msg.created_at,
-        timestamp: msg.createdAt || msg.created_at,
-        direction: msg.direction || 'outbound'
+        phone_number: msg.direction === 'inbound' ? msg.from : msg.to,
+        to: msg.to,
+        from: msg.from,
+        message: msg.body,
+        text: msg.body,
+        created_at: msg.createdAt,
+        timestamp: msg.createdAt,
+        direction: msg.direction || 'outbound',
+        status: msg.status,
+        sender: msg.direction === 'inbound' ? 'other' : 'user'
       }))
     });
   } catch (err) {
     console.error("Messages fetch error:", err);
-    // Return empty array on error instead of failing
     res.json({
       success: true,
       messages: []
