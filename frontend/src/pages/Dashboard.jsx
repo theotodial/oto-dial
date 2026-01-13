@@ -183,7 +183,7 @@ function Dashboard() {
       )}
 
       {/* PACKAGE + NUMBERS CARDS */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+      <div className={`grid grid-cols-1 ${(numbers || []).length === 0 ? 'md:grid-cols-2' : ''} gap-6 mb-8`}>
         <div className="bg-gradient-to-br from-teal-500 via-green-500 to-emerald-500 dark:from-teal-600 dark:via-green-600 dark:to-emerald-600 rounded-2xl p-6 text-white shadow-lg">
           <p className="text-sm opacity-90 mb-2">{packageDetails.planName}</p>
           <div className="space-y-3 mb-4">
@@ -196,18 +196,24 @@ function Dashboard() {
               <span className="text-2xl font-bold">{(packageDetails?.remainingSMS || 0).toLocaleString()}</span>
             </div>
           </div>
-          <button onClick={handleChoosePlan} className="w-full py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium transition-colors">
-            Choose Your Plan
-          </button>
+          {/* Only show Choose Plan button if no active subscription */}
+          {packageDetails.planName === 'No Plan' && (
+            <button onClick={handleChoosePlan} className="w-full py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium transition-colors">
+              Choose Your Plan
+            </button>
+          )}
         </div>
 
-        <div className="bg-white dark:bg-slate-700 rounded-2xl p-6 shadow-sm">
-          <p className="text-sm">Active Numbers</p>
-          <p className="text-4xl font-bold mb-4">{(numbers || []).length}</p>
-          <button onClick={handleBuyNumber} className="w-full py-3 bg-green-600 text-white rounded-xl">
-            Buy Number
-          </button>
-        </div>
+        {/* Only show Active Numbers section if user has no numbers yet (max 1 number) */}
+        {(numbers || []).length === 0 && (
+          <div className="bg-white dark:bg-slate-700 rounded-2xl p-6 shadow-sm">
+            <p className="text-sm text-gray-600 dark:text-gray-400">Active Numbers</p>
+            <p className="text-4xl font-bold text-gray-900 dark:text-white mb-4">{(numbers || []).length}</p>
+            <button onClick={handleBuyNumber} disabled={actionLoading} className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              {actionLoading ? 'Processing...' : 'Buy Number'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* NUMBERS LIST */}
@@ -221,8 +227,46 @@ function Dashboard() {
         ) : (
           <div className="divide-y divide-gray-200 dark:divide-slate-600">
             {(numbers || []).map((n) => (
-              <div key={n._id || n.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-slate-600/50 transition-colors">
-                <span className="text-gray-900 dark:text-white font-medium">{n.number || n.phoneNumber}</span>
+              <div key={n._id || n.id} className="px-6 py-5 hover:bg-gray-50 dark:hover:bg-slate-600/50 transition-colors">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  {/* Number and Status */}
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white">
+                      <PhoneIcon />
+                    </div>
+                    <div>
+                      <span className="text-lg font-semibold text-gray-900 dark:text-white block">{n.number || n.phoneNumber}</span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-400 mt-1">
+                        <span className="w-1.5 h-1.5 bg-green-500 rounded-full mr-1.5"></span>
+                        Active
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* Number Details */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                    <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
+                      <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">Country</p>
+                      <p className="text-gray-900 dark:text-white font-medium">{n.country || 'United States'}</p>
+                    </div>
+                    <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
+                      <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">State</p>
+                      <p className="text-gray-900 dark:text-white font-medium">{n.state || n.region || 'Michigan'}</p>
+                    </div>
+                    <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
+                      <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">City</p>
+                      <p className="text-gray-900 dark:text-white font-medium">{n.city || n.locality || 'Detroit'}</p>
+                    </div>
+                    <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
+                      <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">Activated</p>
+                      <p className="text-gray-900 dark:text-white font-medium">
+                        {n.createdAt || n.created_at 
+                          ? new Date(n.createdAt || n.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                          : 'Jan 13, 2026'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             ))}
           </div>

@@ -55,11 +55,11 @@ const subscriptionSchema = new mongoose.Schema(
     ratePerMinute: {
       type: Number,
       required: true,
-      default: 0.05
+      default: 0.0065
     },
     dailyMinutesLimit: {
       type: Number,
-      default: 200
+      default: 500
     },
     
     dailyMinutesUsed: {

@@ -35,8 +35,8 @@ function Wallet() {
       setError('Failed to load wallet data');
     } finally {
       if (isMountedRef.current) {
-        setLoading(false);
-        setRefreshing(false);
+      setLoading(false);
+      setRefreshing(false);
       }
     }
   };
@@ -60,7 +60,7 @@ function Wallet() {
     setToast({ message, type });
     setTimeout(() => {
       if (isMountedRef.current) {
-        setToast(null);
+      setToast(null);
       }
     }, 3000);
   };
@@ -91,7 +91,7 @@ function Wallet() {
       showToast(err.message || 'Failed to top up wallet', 'error');
     } finally {
       if (isMountedRef.current) {
-        setTopUpLoading(false);
+      setTopUpLoading(false);
       }
     }
   };

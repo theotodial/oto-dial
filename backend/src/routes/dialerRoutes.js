@@ -1,18 +1,26 @@
 import express from "express";
-import authenticateUser from "../middleware/authenticateUser.js";
 import { getTelnyx } from "../../config/telnyx.js";
-import User from "../models/User.js";
 
 const router = express.Router();
 
 /**
  * POST /api/dialer/call
  */
-router.post("/call", authenticateUser, async (req, res) => {
+router.post("/call", async (req, res) => {
   try {
     const { to } = req.body;
+
     if (!to) {
       return res.status(400).json({ error: "Destination number required" });
+    }
+
+    // ✅ Unified subscription check
+    if (!req.subscription || !req.subscription.active) {
+      return res.status(403).json({ error: "Active subscription required" });
+    }
+
+    if (req.subscription.minutesRemaining <= 0) {
+      return res.status(403).json({ error: "No minutes remaining" });
     }
 
     const telnyx = getTelnyx();
@@ -20,20 +28,17 @@ router.post("/call", authenticateUser, async (req, res) => {
       return res.status(503).json({ error: "Telnyx not configured" });
     }
 
-    const user = await User.findById(req.user.id);
-
-    if (!user.subscriptionActive) {
-      return res.status(403).json({ error: "Subscription required" });
-    }
-
-    if (!user.telnyxNumber) {
+    // ✅ Use assigned number from subscription
+    const numbers = req.subscription.numbers || [];
+    if (!numbers.length) {
       return res.status(400).json({ error: "No phone number assigned" });
     }
 
-    // 🔥 Place call
+    const fromNumber = numbers[0].phoneNumber;
+
     const call = await telnyx.calls.create({
       to,
-      from: user.telnyxNumber,
+      from: fromNumber,
       connection_id: process.env.TELNYX_CONNECTION_ID
     });
 

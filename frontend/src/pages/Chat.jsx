@@ -803,8 +803,8 @@ function Chat() {
             </div>
           </>
         ) : (
-          // No chat selected
-          <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-slate-800">
+          // No chat selected - Hidden on mobile, shown on desktop
+          <div className="hidden lg:flex flex-1 items-center justify-center bg-gray-50 dark:bg-slate-800">
             <div className="text-center max-w-md">
               <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-indigo-100 to-purple-100 dark:from-indigo-900/50 dark:to-purple-900/50 rounded-full flex items-center justify-center text-indigo-600 dark:text-indigo-400">
                 <ChatBubbleIcon />

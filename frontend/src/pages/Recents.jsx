@@ -45,6 +45,12 @@ const MoreIcon = () => (
   </svg>
 );
 
+const PlusIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+  </svg>
+);
+
 const PhoneIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
@@ -369,6 +375,30 @@ function Recents() {
 
   const handleBackspace = () => {
     setPhoneNumber(prev => prev.slice(0, -1));
+  };
+
+  // Handle long press on 0 to add +
+  const handleLongPress = (digit) => {
+    if (digit === '0') {
+      setPhoneNumber(prev => prev + '+');
+    }
+  };
+
+  // Handle paste event
+  const handlePaste = (e) => {
+    e.preventDefault();
+    const pastedText = e.clipboardData.getData('text');
+    // Clean the pasted text - allow digits, +, *, #
+    const cleanedText = pastedText.replace(/[^\d+*#]/g, '');
+    setPhoneNumber(prev => prev + cleanedText);
+  };
+
+  // Handle keyboard input for + sign
+  const handleKeyDown = (e) => {
+    if (e.key === '+') {
+      e.preventDefault();
+      setPhoneNumber(prev => prev + '+');
+    }
   };
 
   const handleCall = async (number = null) => {
@@ -919,18 +949,20 @@ function Recents() {
               <div className="flex items-center space-x-2">
                 <PhoneIcon className="w-5 h-5 text-gray-400 dark:text-gray-500" />
                 <div className="flex-1 text-left">
-                  {phoneNumber ? (
-                    <div className="text-lg font-semibold text-gray-900 dark:text-white">{phoneNumber}</div>
-                  ) : (
-                    <input
-                      type="text"
-                      placeholder="Enter a name or number"
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value)}
-                      className="w-full text-lg font-semibold text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 bg-transparent border-none outline-none focus:outline-none"
-                      autoFocus
-                    />
-                  )}
+                  <input
+                    type="text"
+                    placeholder="Enter a name or number"
+                    value={phoneNumber}
+                    onChange={(e) => {
+                      // Allow digits, +, *, #
+                      const cleaned = e.target.value.replace(/[^\d+*#]/g, '');
+                      setPhoneNumber(cleaned);
+                    }}
+                    onPaste={handlePaste}
+                    onKeyDown={handleKeyDown}
+                    className="w-full text-lg font-semibold text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 bg-transparent border-none outline-none focus:outline-none"
+                    disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                  />
                 </div>
               </div>
             </div>
@@ -961,21 +993,47 @@ function Recents() {
           {/* Compact Dialpad */}
           <div className="flex-1 overflow-y-auto p-4">
             <div className="grid grid-cols-3 gap-3">
-              {dialpadButtons.map((btn) => (
-                <button
-                  key={btn.digit}
-                  onClick={() => handleDialpadClick(btn.digit)}
-                  disabled={calling || !subscriptionActive || userNumbers.length === 0}
-                  className="aspect-square text-xl font-semibold bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 rounded-xl transition-all active:scale-95 text-gray-900 dark:text-white border border-gray-200 dark:border-slate-600 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center relative group"
-                >
-                  <span className="text-2xl font-medium">{btn.digit}</span>
-                  {btn.letters && (
-                    <span className="text-[9px] font-normal text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">{btn.letters}</span>
-                  )}
-                  {/* Hover indicator */}
-                  <div className="absolute inset-0 rounded-xl border-2 border-indigo-500 opacity-0 group-hover:opacity-20 transition-opacity pointer-events-none"></div>
-                </button>
-              ))}
+              {dialpadButtons.map((btn) => {
+                let pressTimer = null;
+                return (
+                  <button
+                    key={btn.digit}
+                    onClick={() => handleDialpadClick(btn.digit)}
+                    onMouseDown={() => {
+                      if (btn.digit === '0') {
+                        pressTimer = setTimeout(() => {
+                          handleLongPress('0');
+                        }, 500);
+                      }
+                    }}
+                    onMouseUp={() => {
+                      if (pressTimer) clearTimeout(pressTimer);
+                    }}
+                    onMouseLeave={() => {
+                      if (pressTimer) clearTimeout(pressTimer);
+                    }}
+                    onTouchStart={() => {
+                      if (btn.digit === '0') {
+                        pressTimer = setTimeout(() => {
+                          handleLongPress('0');
+                        }, 500);
+                      }
+                    }}
+                    onTouchEnd={() => {
+                      if (pressTimer) clearTimeout(pressTimer);
+                    }}
+                    disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                    className="aspect-square text-xl font-semibold bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 rounded-xl transition-all active:scale-95 text-gray-900 dark:text-white border border-gray-200 dark:border-slate-600 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center relative group"
+                  >
+                    <span className="text-2xl font-medium">{btn.digit}</span>
+                    {btn.letters && (
+                      <span className="text-[9px] font-normal text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">{btn.letters}</span>
+                    )}
+                    {/* Hover indicator */}
+                    <div className="absolute inset-0 rounded-xl border-2 border-indigo-500 opacity-0 group-hover:opacity-20 transition-opacity pointer-events-none"></div>
+                  </button>
+                );
+              })}
             </div>
 
             {/* Action Buttons */}
@@ -1019,12 +1077,25 @@ function Recents() {
           <h1 className="text-xl font-bold text-gray-900 dark:text-white">
             {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
           </h1>
-          <button 
-            onClick={() => setSearchQuery('')}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300"
-          >
-            <SearchIcon />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* New Chat Button - Only show on chats tab */}
+            {mobileTab === 'chats' && (
+              <button 
+                onClick={() => navigate('/chat')}
+                className="w-9 h-9 rounded-lg bg-indigo-600 text-white flex items-center justify-center
+                           hover:bg-indigo-700 transition-colors shadow-md"
+                title="New Chat"
+              >
+                <PlusIcon />
+              </button>
+            )}
+            <button 
+              onClick={() => setSearchQuery('')}
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300"
+            >
+              <SearchIcon />
+            </button>
+          </div>
         </div>
 
         {/* Mobile Tab Content */}
@@ -1153,33 +1224,70 @@ function Recents() {
 
               {/* Phone Number Display */}
               <div className="px-4 py-4 border-b border-gray-200 dark:border-slate-700 text-center">
-                <div className="text-2xl font-semibold text-gray-900 dark:text-white min-h-[32px] flex items-center justify-center">
-                  {phoneNumber || <span className="text-gray-400 dark:text-gray-400">Enter number</span>}
-                </div>
+                <input
+                  type="text"
+                  value={phoneNumber}
+                  onChange={(e) => {
+                    // Allow digits, +, *, #
+                    const cleaned = e.target.value.replace(/[^\d+*#]/g, '');
+                    setPhoneNumber(cleaned);
+                  }}
+                  onPaste={handlePaste}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Enter number"
+                  className="w-full text-2xl font-semibold text-gray-900 dark:text-white min-h-[32px] text-center bg-transparent border-none outline-none focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-400"
+                  disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                />
               </div>
 
               {/* Dialpad */}
               <div className="flex-1 flex items-center justify-center p-4">
                 <div className="w-full max-w-sm">
                   <div className="grid grid-cols-3 gap-3">
-                    {dialpadButtons.map((btn) => (
-                      <button
-                        key={btn.digit}
-                        onClick={() => handleDialpadClick(btn.digit)}
-                        disabled={calling || !subscriptionActive || userNumbers.length === 0}
-                        className="aspect-square w-full bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 
-                                   rounded-xl border border-gray-200 dark:border-slate-600 transition-all active:scale-95 
-                                   text-gray-900 dark:text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed 
-                                   flex flex-col items-center justify-center"
-                      >
-                        <span className="text-xl font-medium">{btn.digit}</span>
-                        {btn.letters && (
-                          <span className="text-[9px] font-normal text-gray-500 dark:text-gray-400 mt-0.5">
-                            {btn.letters}
-                          </span>
-                        )}
-                      </button>
-                    ))}
+                    {dialpadButtons.map((btn) => {
+                      let pressTimer = null;
+                      return (
+                        <button
+                          key={btn.digit}
+                          onClick={() => handleDialpadClick(btn.digit)}
+                          onMouseDown={() => {
+                            if (btn.digit === '0') {
+                              pressTimer = setTimeout(() => {
+                                handleLongPress('0');
+                              }, 500);
+                            }
+                          }}
+                          onMouseUp={() => {
+                            if (pressTimer) clearTimeout(pressTimer);
+                          }}
+                          onMouseLeave={() => {
+                            if (pressTimer) clearTimeout(pressTimer);
+                          }}
+                          onTouchStart={() => {
+                            if (btn.digit === '0') {
+                              pressTimer = setTimeout(() => {
+                                handleLongPress('0');
+                              }, 500);
+                            }
+                          }}
+                          onTouchEnd={() => {
+                            if (pressTimer) clearTimeout(pressTimer);
+                          }}
+                          disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                          className="aspect-square w-full bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 
+                                     rounded-xl border border-gray-200 dark:border-slate-600 transition-all active:scale-95 
+                                     text-gray-900 dark:text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed 
+                                     flex flex-col items-center justify-center"
+                        >
+                          <span className="text-xl font-medium">{btn.digit}</span>
+                          {btn.letters && (
+                            <span className="text-[9px] font-normal text-gray-500 dark:text-gray-400 mt-0.5">
+                              {btn.letters}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

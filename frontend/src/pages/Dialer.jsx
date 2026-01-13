@@ -79,6 +79,32 @@ function Dialer() {
     setError('');
   };
 
+  // Handle long press on 0 to add +
+  const handleLongPress = (digit) => {
+    if (digit === '0') {
+      setPhoneNumber(prev => prev + '+');
+      setError('');
+    }
+  };
+
+  // Handle paste event
+  const handlePaste = (e) => {
+    e.preventDefault();
+    const pastedText = e.clipboardData.getData('text');
+    // Clean the pasted text - allow digits, +, *, #
+    const cleanedText = pastedText.replace(/[^\d+*#]/g, '');
+    setPhoneNumber(prev => prev + cleanedText);
+    setError('');
+  };
+
+  // Handle keyboard input for + sign
+  const handleKeyDown = (e) => {
+    if (e.key === '+') {
+      e.preventDefault();
+      setPhoneNumber(prev => prev + '+');
+    }
+  };
+
   // Handle backspace
   const handleBackspace = () => {
     setPhoneNumber(prev => prev.slice(0, -1));
@@ -322,9 +348,21 @@ function Dialer() {
             {/* Phone Number Display */}
             <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 dark:border-slate-700 flex-shrink-0">
               <div className="text-center">
-                <div className="text-xl sm:text-2xl lg:text-3xl font-semibold text-gray-900 dark:text-white min-h-[36px] sm:min-h-[40px] flex items-center justify-center">
-                  {phoneNumber || <span className="text-gray-400 dark:text-gray-400 text-base sm:text-lg">Enter a name or number</span>}
-                </div>
+                <input
+                  type="text"
+                  value={phoneNumber}
+                  onChange={(e) => {
+                    // Allow digits, +, *, #
+                    const cleaned = e.target.value.replace(/[^\d+*#]/g, '');
+                    setPhoneNumber(cleaned);
+                    setError('');
+                  }}
+                  onPaste={handlePaste}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Enter a name or number"
+                  className="w-full text-xl sm:text-2xl lg:text-3xl font-semibold text-gray-900 dark:text-white min-h-[36px] sm:min-h-[40px] text-center bg-transparent border-none outline-none focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-400 placeholder:text-base sm:placeholder:text-lg"
+                  disabled={calling || userNumbers.length === 0 || !subscriptionActive}
+                />
               </div>
             </div>
 
@@ -332,28 +370,54 @@ function Dialer() {
             <div className="flex-1 flex items-center justify-center p-2 sm:p-3 lg:p-4 min-h-0 overflow-hidden">
               <div className="w-full h-full max-w-sm flex items-center justify-center p-2">
                 <div className="w-full h-full grid grid-cols-3 grid-rows-4 gap-2 sm:gap-3">
-                  {dialpadButtons.map((btn) => (
-                    <button
-                      key={btn.digit}
-                      onClick={() => handleDialpadClick(btn.digit)}
-                      disabled={calling || userNumbers.length === 0 || !subscriptionActive}
-                      className="w-full h-full bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 
-                                 rounded-lg sm:rounded-xl border border-gray-200 dark:border-slate-600 transition-all 
-                                 active:scale-95 text-gray-900 dark:text-white shadow-sm hover:shadow-md
-                                 disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center
-                                 group min-h-0"
-                      style={{
-                        fontSize: 'clamp(1rem, 4vw, 1.5rem)',
-                      }}
-                    >
-                      <span className="text-lg sm:text-xl lg:text-2xl font-medium leading-none">{btn.digit}</span>
-                      {btn.letters && (
-                        <span className="text-[8px] sm:text-[9px] lg:text-[10px] font-normal text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">
-                          {btn.letters}
-                        </span>
-                      )}
-                    </button>
-                  ))}
+                  {dialpadButtons.map((btn) => {
+                    let pressTimer = null;
+                    return (
+                      <button
+                        key={btn.digit}
+                        onClick={() => handleDialpadClick(btn.digit)}
+                        onMouseDown={() => {
+                          if (btn.digit === '0') {
+                            pressTimer = setTimeout(() => {
+                              handleLongPress('0');
+                            }, 500);
+                          }
+                        }}
+                        onMouseUp={() => {
+                          if (pressTimer) clearTimeout(pressTimer);
+                        }}
+                        onMouseLeave={() => {
+                          if (pressTimer) clearTimeout(pressTimer);
+                        }}
+                        onTouchStart={() => {
+                          if (btn.digit === '0') {
+                            pressTimer = setTimeout(() => {
+                              handleLongPress('0');
+                            }, 500);
+                          }
+                        }}
+                        onTouchEnd={() => {
+                          if (pressTimer) clearTimeout(pressTimer);
+                        }}
+                        disabled={calling || userNumbers.length === 0 || !subscriptionActive}
+                        className="w-full h-full bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 
+                                   rounded-lg sm:rounded-xl border border-gray-200 dark:border-slate-600 transition-all 
+                                   active:scale-95 text-gray-900 dark:text-white shadow-sm hover:shadow-md
+                                   disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center
+                                   group min-h-0"
+                        style={{
+                          fontSize: 'clamp(1rem, 4vw, 1.5rem)',
+                        }}
+                      >
+                        <span className="text-lg sm:text-xl lg:text-2xl font-medium leading-none">{btn.digit}</span>
+                        {btn.letters && (
+                          <span className="text-[8px] sm:text-[9px] lg:text-[10px] font-normal text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">
+                            {btn.letters}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
