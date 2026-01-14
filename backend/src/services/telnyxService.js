@@ -9,8 +9,7 @@ export default function getTelnyxClient() {
   }
 
   if (!telnyxClient) {
-    // Telnyx SDK v4 - call as function, not constructor
-    telnyxClient = Telnyx(process.env.TELNYX_API_KEY);
+    telnyxClient = new Telnyx(process.env.TELNYX_API_KEY);
   }
 
   return telnyxClient;

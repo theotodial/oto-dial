@@ -48,8 +48,8 @@ router.post("/call", async (req, res) => {
 
     const fromNumber = numbers[0].phoneNumber;
 
-    // Create call via Telnyx
-    const telnyxCall = await telnyx.calls.create({
+    // Telnyx SDK v4 uses calls.dial() not calls.create()
+    const telnyxCall = await telnyx.calls.dial({
       to,
       from: fromNumber,
       connection_id: process.env.TELNYX_CONNECTION_ID

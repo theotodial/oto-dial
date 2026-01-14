@@ -51,7 +51,8 @@ router.post("/send", async (req, res) => {
 
     const fromNumber = numbers[0].phoneNumber;
 
-    const message = await telnyx.messages.create({
+    // Telnyx SDK v4 uses messages.send() not messages.create()
+    const message = await telnyx.messages.send({
       from: fromNumber,
       to,
       text

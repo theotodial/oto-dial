@@ -9,8 +9,7 @@ export function getTelnyx() {
       return null;
     }
 
-    // Telnyx SDK v4 - call as function, not constructor
-    telnyxInstance = Telnyx(process.env.TELNYX_API_KEY);
+    telnyxInstance = new Telnyx(process.env.TELNYX_API_KEY);
     console.log("✅ Telnyx initialized");
   }
 
