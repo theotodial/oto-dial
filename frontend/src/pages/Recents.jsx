@@ -114,11 +114,20 @@ function Recents() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('all'); // 'all', 'missed', 'chats'
   const [selectedCall, setSelectedCall] = useState(null);
+  const [selectedChat, setSelectedChat] = useState(null); // For inline chat on mobile
   const [calls, setCalls] = useState([]);
   const [chats, setChats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const isMountedRef = useRef(true);
+  
+  // Inline chat state
+  const [chatMessages, setChatMessages] = useState([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
+  const [subscriptionData, setSubscriptionData] = useState({ remainingSMS: 0, planName: 'No Plan' });
+  const messagesEndRef = useRef(null);
   
   // Dialer state - MUST be declared before any conditional returns
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -128,6 +137,11 @@ function Recents() {
   
   // Mobile navigation state
   const [mobileTab, setMobileTab] = useState('chats'); // 'chats', 'recents', 'dialer'
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
   
   // Subscription check - redirect if no subscription (only after loading completes)
   useEffect(() => {
@@ -176,6 +190,10 @@ function Recents() {
         }
         if (!subRes.error && subRes.data?.planName !== "No Plan") {
           setSubscriptionActive(true);
+          setSubscriptionData({
+            remainingSMS: subRes.data?.remainingSMS || 0,
+            planName: subRes.data?.planName || 'No Plan'
+          });
         }
       } catch (err) {
         console.warn('Failed to fetch dialer data:', err);
@@ -185,6 +203,32 @@ function Recents() {
     };
     fetchDialerData();
   }, []);
+
+  // Fetch messages when selectedChat changes
+  useEffect(() => {
+    if (selectedChat) {
+      fetchChatMessages(selectedChat);
+    } else {
+      setChatMessages([]);
+    }
+  }, [selectedChat]);
+
+  // Hide sidebar button when chat is open (mobile only)
+  useEffect(() => {
+    const sidebarButton = document.getElementById('mobile-sidebar-button');
+    if (sidebarButton) {
+      if (selectedChat) {
+        sidebarButton.style.display = 'none';
+      } else {
+        sidebarButton.style.display = '';
+      }
+    }
+    return () => {
+      if (sidebarButton) {
+        sidebarButton.style.display = '';
+      }
+    };
+  }, [selectedChat]);
 
   const fetchRecents = async () => {
     if (!isMountedRef.current) return;
@@ -417,6 +461,19 @@ function Recents() {
     setCalling(true);
     
     try {
+      // Request microphone permission for browser-based calling
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Stop the stream immediately - we just needed permission
+        stream.getTracks().forEach(track => track.stop());
+        console.log('✅ Microphone permission granted');
+      } catch (micError) {
+        if (!isMountedRef.current) return;
+        alert('Microphone access is required to make calls. Please allow microphone access and try again.');
+        setCalling(false);
+        return;
+      }
+
       // Use correct API endpoint and payload per backend contract
       // POST /api/dialer/call with { to: destinationNumber }
       const response = await API.post('/api/dialer/call', {
@@ -445,7 +502,79 @@ function Recents() {
 
   const handleText = (phoneNumber) => {
     if (!phoneNumber) return;
-    navigate(`/chat?phone=${encodeURIComponent(phoneNumber)}`);
+    // On mobile, open inline chat instead of navigating
+    setSelectedChat(phoneNumber);
+    setMobileTab('chats');
+  };
+
+  // Normalize phone number for comparison
+  const normalizePhone = (num) => {
+    if (!num) return '';
+    return num.replace(/\D/g, ''); // Remove all non-digits
+  };
+
+  // Fetch messages for selected chat
+  const fetchChatMessages = async (phoneNumber) => {
+    if (!phoneNumber) return;
+    try {
+      const response = await API.get('/api/messages');
+      if (response.data?.messages) {
+        const normalizedSelected = normalizePhone(phoneNumber);
+        const filtered = response.data.messages.filter(msg => {
+          const msgPhone = msg.phone_number || msg.to || msg.from;
+          return normalizedSelected === normalizePhone(msgPhone);
+        }).sort((a, b) => {
+          const dateA = new Date(a.created_at || a.timestamp || a.createdAt || 0);
+          const dateB = new Date(b.created_at || b.timestamp || b.createdAt || 0);
+          return dateA - dateB;
+        });
+        setChatMessages(filtered);
+      }
+    } catch (err) {
+      console.error('Failed to fetch chat messages:', err);
+    }
+  };
+
+  // Send message inline
+  const handleSendMessage = async (e) => {
+    e?.preventDefault();
+    if (!inputMessage.trim() || sending || !selectedChat) return;
+
+    if (subscriptionData.remainingSMS <= 0) {
+      setSendError('SMS limit reached. Please upgrade your plan.');
+      return;
+    }
+
+    if (userNumbers.length === 0) {
+      setSendError('You need to purchase a number first.');
+      return;
+    }
+
+    const messageText = inputMessage.trim();
+    setInputMessage('');
+    setSending(true);
+    setSendError('');
+
+    try {
+      const response = await API.post('/api/sms/send', {
+        to: selectedChat,
+        text: messageText
+      });
+
+      if (response.error) {
+        setSendError(response.error);
+        setInputMessage(messageText);
+      } else {
+        // Refresh messages
+        await fetchChatMessages(selectedChat);
+        await fetchRecents();
+      }
+    } catch (err) {
+      setSendError('Failed to send message. Please try again.');
+      setInputMessage(messageText);
+    } finally {
+      setSending(false);
+    }
   };
 
   // Get contact name from phone number
@@ -468,36 +597,33 @@ function Recents() {
       <div className="grid grid-cols-3 h-16">
         <button
           onClick={() => setMobileTab('chats')}
-          className={`flex flex-col items-center justify-center gap-1 transition-colors ${
+          className={`flex items-center justify-center transition-colors ${
             mobileTab === 'chats'
               ? 'text-indigo-600 dark:text-indigo-400'
               : 'text-gray-500 dark:text-gray-400'
           }`}
         >
-          <MessageIcon className="w-6 h-6" />
-          <span className="text-xs font-medium">Chats</span>
+          <MessageIcon className="w-8 h-8" strokeWidth={mobileTab === 'chats' ? 2.5 : 2} />
         </button>
         <button
           onClick={() => setMobileTab('recents')}
-          className={`flex flex-col items-center justify-center gap-1 transition-colors ${
+          className={`flex items-center justify-center transition-colors ${
             mobileTab === 'recents'
               ? 'text-indigo-600 dark:text-indigo-400'
               : 'text-gray-500 dark:text-gray-400'
           }`}
         >
-          <PhoneIcon className="w-6 h-6" />
-          <span className="text-xs font-medium">Recents</span>
+          <PhoneIcon className="w-8 h-8" strokeWidth={mobileTab === 'recents' ? 2.5 : 2} />
         </button>
         <button
           onClick={() => setMobileTab('dialer')}
-          className={`flex flex-col items-center justify-center gap-1 transition-colors ${
+          className={`flex items-center justify-center transition-colors ${
             mobileTab === 'dialer'
               ? 'text-indigo-600 dark:text-indigo-400'
               : 'text-gray-500 dark:text-gray-400'
           }`}
         >
-          <DialpadIcon className="w-6 h-6" />
-          <span className="text-xs font-medium">Dialer</span>
+          <DialpadIcon className="w-8 h-8" strokeWidth={mobileTab === 'dialer' ? 2.5 : 2} />
         </button>
       </div>
     </div>
@@ -587,11 +713,11 @@ function Recents() {
                   return (
                     <div
                       key={chat.id}
-                      onClick={() => {
-                        if (phoneNumber) {
-                          navigate(`/chat?phone=${encodeURIComponent(phoneNumber)}`);
-                        }
-                      }}
+                        onClick={() => {
+                          if (phoneNumber) {
+                            handleText(phoneNumber);
+                          }
+                        }}
                       className={`p-3 border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors ${
                         isSelected ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
                       }`}
@@ -629,13 +755,13 @@ function Recents() {
                       className={`group p-3 border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors ${
                         isSelected ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
                       }`}
-                      onClick={() => {
-                        if (item.type === 'sms') {
-                          // Navigate to chat if SMS clicked
-                          if (phoneNumber) {
-                            navigate(`/chat?phone=${encodeURIComponent(phoneNumber)}`);
-                          }
-                        } else {
+                        onClick={() => {
+                          if (item.type === 'sms') {
+                            // Open inline chat if SMS clicked
+                            if (phoneNumber) {
+                              handleText(phoneNumber);
+                            }
+                          } else {
                           setSelectedCall(item.data);
                         }
                       }}
@@ -1074,34 +1200,111 @@ function Recents() {
       {/* Mobile View */}
       <div className="lg:hidden flex flex-col h-full pb-16">
         {/* Mobile Header */}
-        <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between sticky top-0 z-20">
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white">
-            {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
-          </h1>
-          <div className="flex items-center gap-2">
-            {/* New Chat Button - Only show on chats tab */}
-            {mobileTab === 'chats' && (
-              <button 
-                onClick={() => navigate('/chat')}
-                className="w-9 h-9 rounded-lg bg-indigo-600 text-white flex items-center justify-center
-                           hover:bg-indigo-700 transition-colors shadow-md"
-                title="New Chat"
+        <div className="px-4 py-0 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between sticky top-0 z-20 h-14">
+          {selectedChat ? (
+            <>
+              <button
+                onClick={() => setSelectedChat(null)}
+                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300"
               >
-                <PlusIcon />
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
               </button>
-            )}
-            <button 
-              onClick={() => setSearchQuery('')}
-              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300"
-            >
-              <SearchIcon />
-            </button>
-          </div>
+              <h1 className="text-xl font-bold text-gray-900 dark:text-white flex-1 text-center">
+                {getContactName(selectedChat) || selectedChat}
+              </h1>
+              <button
+                onClick={() => handleCall(selectedChat)}
+                disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Call"
+              >
+                <PhoneIcon className="w-6 h-6" />
+              </button>
+            </>
+          ) : (
+            <>
+              <h1 className="text-xl font-bold text-gray-900 dark:text-white flex-1 text-center">
+                {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
+              </h1>
+            </>
+          )}
         </div>
 
         {/* Mobile Tab Content */}
         <div className="flex-1 overflow-y-auto">
-          {mobileTab === 'chats' && (
+          {mobileTab === 'chats' && selectedChat ? (
+            // Inline Chat View - WhatsApp style
+            <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900">
+              {/* Messages Area */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {chatMessages.length === 0 ? (
+                  <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
+                    <MessageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
+                    <p>No messages yet</p>
+                    <p className="text-xs mt-2">Start a conversation</p>
+                  </div>
+                ) : (
+                  chatMessages.map((msg, idx) => {
+                    const isOutbound = msg.direction === 'outbound' || msg.sender === 'user';
+                    return (
+                      <div
+                        key={msg.id || idx}
+                        className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div
+                          className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                            isOutbound
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white'
+                          }`}
+                        >
+                          <p className="text-sm whitespace-pre-wrap break-words">{msg.message || msg.body || msg.text}</p>
+                          <p className={`text-xs mt-1 ${isOutbound ? 'text-indigo-100' : 'text-gray-500 dark:text-gray-400'}`}>
+                            {formatDate(msg.created_at || msg.timestamp || msg.createdAt)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+              
+              {/* Input Area */}
+              {sendError && (
+                <div className="px-4 py-2 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-sm">
+                  {sendError}
+                </div>
+              )}
+              <div className="border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
+                <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={inputMessage}
+                    onChange={(e) => setInputMessage(e.target.value)}
+                    placeholder="Type a message..."
+                    className="flex-1 px-4 py-2 bg-gray-100 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-full text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    disabled={sending}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!inputMessage.trim() || sending}
+                    className="w-10 h-10 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-full flex items-center justify-center transition-colors"
+                  >
+                    {sending ? (
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      </svg>
+                    )}
+                  </button>
+                </form>
+              </div>
+            </div>
+          ) : mobileTab === 'chats' && (
             <div className="divide-y divide-gray-100 dark:divide-slate-700">
               {filteredChats.length === 0 ? (
                 <div className="p-8 text-center text-gray-500 dark:text-gray-300">
@@ -1333,8 +1536,8 @@ function Recents() {
         </div>
       </div>
 
-      {/* Mobile Bottom Navigation */}
-      <MobileBottomNav />
+      {/* Mobile Bottom Navigation - Hidden when chat is open */}
+      {!selectedChat && <MobileBottomNav />}
     </div>
   );
 }

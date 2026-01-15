@@ -38,14 +38,12 @@ const userSchema = new mongoose.Schema(
       default: ""
     },
 
-    // 👇 ADD THIS
     role: {
       type: String,
       enum: ["user", "admin"],
       default: "user"
     },
 
-    // 👇 ADD THIS
     status: {
       type: String,
       enum: ["active", "suspended", "banned"],
@@ -59,14 +57,20 @@ const userSchema = new mongoose.Schema(
     subscriptionActive: { 
       type: Boolean, 
       default: false
-     },
+    },
      
     plan: { 
       type: String, 
       default: null
-     },
+    },
 
     telnyxNumber: {
+      type: String,
+      default: null
+    },
+
+    // ✅ REQUIRED FOR SMS
+    messagingProfileId: {
       type: String,
       default: null
     },
@@ -85,4 +89,3 @@ const userSchema = new mongoose.Schema(
 );
 
 export default mongoose.model("User", userSchema);
-

@@ -9,7 +9,6 @@ const router = express.Router();
 /**
  * POST /api/sms/send
  * body: { to, text }
- * Note: authenticateUser and loadSubscription are applied in index.js
  */
 router.post("/send", async (req, res) => {
   try {
@@ -23,91 +22,65 @@ router.post("/send", async (req, res) => {
       return res.status(400).json({ error: "Missing to or text" });
     }
 
-    // Check subscription is active
     if (!req.subscription || !req.subscription.active) {
       return res.status(403).json({ error: "No active subscription" });
     }
 
-    // Check SMS limits
     if (req.subscription.smsRemaining <= 0) {
       return res.status(403).json({ error: "SMS limit reached" });
     }
 
-    // Get user's phone numbers from subscription (loaded by loadSubscription middleware)
-    let numbers = req.subscription?.numbers || [];
-    
-    // Fallback: query PhoneNumber directly if not in subscription
-    if (!numbers.length) {
-      const phoneNumbers = await PhoneNumber.find({ 
-        userId: req.userId, 
-        status: "active" 
-      }).lean();
-      numbers = phoneNumbers.map(n => ({ phoneNumber: n.phoneNumber }));
-    }
+    // 🔒 SINGLE SOURCE OF TRUTH
+    const phone = await PhoneNumber.findOne({
+      userId: req.userId,
+      status: "active"
+    });
 
-    if (!numbers.length) {
+    if (!phone) {
       return res.status(400).json({ error: "No phone number assigned" });
     }
 
-    const fromNumber = numbers[0].phoneNumber;
+    if (!phone.messagingProfileId) {
+      return res.status(400).json({
+        error: "Messaging profile not configured for this number"
+      });
+    }
 
-    // Telnyx SDK v4 uses messages.send() not messages.create()
-    const message = await telnyx.messages.send({
-      from: fromNumber,
-      to,
+    const format = (n) => (n.startsWith("+") ? n : `+${n}`);
+
+    const from = format(phone.phoneNumber);
+    const toFormatted = format(to);
+
+    const response = await telnyx.messages.send({
+      messaging_profile_id: phone.messagingProfileId,
+      from,
+      to: toFormatted,
       text
     });
 
     await SMS.create({
       user: req.userId,
-      to,
-      from: fromNumber,
+      from,
+      to: toFormatted,
       body: text,
       status: "sent",
-      telnyxMessageId: message.data.id
+      direction: "outbound",
+      telnyxMessageId: response.data.id
     });
 
-    // Update SMS usage count
     await Subscription.updateOne(
       { _id: req.subscription.id },
       { $inc: { "usage.smsUsed": 1 } }
     );
 
-    res.json({
-      success: true,
-      messageId: message.data.id
-    });
+    res.json({ success: true });
   } catch (err) {
-    console.error("SMS send failed:", err);
-    res.status(500).json({ error: "Failed to send SMS" });
-  }
-});
-
-/**
- * GET /api/sms
- * Get SMS history for the current user
- */
-router.get("/", async (req, res) => {
-  try {
-    const messages = await SMS.find({ user: req.userId })
-      .sort({ createdAt: -1 })
-      .limit(100);
-
-    res.json({
-      success: true,
-      messages: messages.map(msg => ({
-        id: msg._id,
-        to: msg.to,
-        from: msg.from,
-        body: msg.body,
-        status: msg.status,
-        direction: msg.direction || "outbound",
-        createdAt: msg.createdAt
-      }))
+    console.error("SMS FAILED:", err.response?.data || err.message);
+    res.status(500).json({
+      error:
+        err.response?.data?.errors?.[0]?.detail ||
+        "Failed to send SMS"
     });
-  } catch (err) {
-    console.error("SMS fetch failed:", err);
-    res.status(500).json({ error: "Failed to fetch SMS" });
   }
 });
 

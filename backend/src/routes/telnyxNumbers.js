@@ -1,6 +1,7 @@
 import express from "express";
 import { getTelnyx } from "../../config/telnyx.js";
 import PhoneNumber from "../models/PhoneNumber.js";
+import User from "../models/User.js";
 
 const router = express.Router();
 
@@ -18,39 +19,49 @@ router.post("/buy", async (req, res) => {
     }
 
     const telnyx = getTelnyx();
-    if (!telnyx) {
-      return res.status(503).json({ error: "Telnyx not configured" });
+    const user = await User.findById(req.user._id);
+
+    // 1️⃣ Ensure messaging profile
+    if (!user.messagingProfileId) {
+      const profile = await telnyx.messaging.messagingProfiles.create({
+        name: `user-${user._id}`
+      });
+      user.messagingProfileId = profile.data.id;
+      await user.save();
     }
 
-    const numbers = await telnyx.availablePhoneNumbers.list({
-      filter: {
-        country_code: "US",
-        features: ["voice", "sms"]
-      },
+    // 2️⃣ Buy number
+    const available = await telnyx.availablePhoneNumbers.list({
+      filter: { country_code: "US", features: ["voice", "sms"] },
       page: { size: 1 }
     });
 
-    if (!numbers.data.length) {
+    if (!available.data.length) {
       return res.status(400).json({ error: "No numbers available" });
     }
 
-    const phoneNumber = numbers.data[0].phone_number;
+    const phoneNumber = available.data[0].phone_number;
 
     await telnyx.numberOrders.create({
       phone_numbers: [{ phone_number: phoneNumber }],
       connection_id: process.env.TELNYX_CONNECTION_ID
     });
 
+    // 3️⃣ Attach number to user profile
+    await telnyx.messaging.messagingProfiles.phoneNumbers.create(
+      user.messagingProfileId,
+      { phone_number: phoneNumber }
+    );
+
+    // 4️⃣ Save
     await PhoneNumber.create({
-      userId: req.user._id,
+      userId: user._id,
       phoneNumber,
-      status: "active"
+      status: "active",
+      inboundMessagingProfileId: user.messagingProfileId
     });
 
-    res.json({
-      success: true,
-      phoneNumber
-    });
+    res.json({ success: true, phoneNumber });
   } catch (err) {
     console.error("BUY NUMBER ERROR:", err);
     res.status(500).json({ error: "Failed to buy number" });

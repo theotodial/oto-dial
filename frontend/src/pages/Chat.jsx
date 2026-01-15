@@ -154,18 +154,36 @@ function Chat() {
     setCallError('');
     setCallSuccess('');
 
-    // Use correct API endpoint and payload per backend contract
-    // POST /api/dialer/call with { to: destinationNumber }
-    const response = await API.post('/api/dialer/call', {
-      to: selectedChat.phoneNumber
-    });
+    try {
+      // Request microphone permission for browser-based calling
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Stop the stream immediately - we just needed permission
+        stream.getTracks().forEach(track => track.stop());
+        console.log('✅ Microphone permission granted');
+      } catch (micError) {
+        setCallError('Microphone access is required to make calls. Please allow microphone access and try again.');
+        setTimeout(() => setCallError(''), 5000);
+        setCalling(false);
+        return;
+      }
 
-    if (response.error) {
-      setCallError(response.error);
+      // Use correct API endpoint and payload per backend contract
+      // POST /api/dialer/call with { to: destinationNumber }
+      const response = await API.post('/api/dialer/call', {
+        to: selectedChat.phoneNumber
+      });
+
+      if (response.error) {
+        setCallError(response.error);
+        setTimeout(() => setCallError(''), 5000);
+      } else {
+        setCallSuccess(`Calling ${selectedChat.phoneNumber}...`);
+        setTimeout(() => setCallSuccess(''), 5000);
+      }
+    } catch (err) {
+      setCallError('Failed to initiate call. Please try again.');
       setTimeout(() => setCallError(''), 5000);
-    } else {
-      setCallSuccess(`Calling ${selectedChat.phoneNumber}...`);
-      setTimeout(() => setCallSuccess(''), 5000);
     }
     setCalling(false);
   };

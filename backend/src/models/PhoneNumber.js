@@ -7,19 +7,28 @@ const phoneNumberSchema = new mongoose.Schema(
       ref: "User",
       required: true
     },
-    telnyxNumberId: String,
+
     phoneNumber: {
       type: String,
       required: true,
       unique: true
     },
+
     status: {
       type: String,
       enum: ["active", "released"],
       default: "active"
     },
-    inboundVoiceProfileId: String,
-    inboundMessagingProfileId: String
+
+    telnyxPhoneNumberId: {
+      type: String,
+      required: true
+    },
+
+    messagingProfileId: {
+      type: String,
+      default: null
+    }
   },
   { timestamps: true }
 );

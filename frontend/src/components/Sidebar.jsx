@@ -80,11 +80,11 @@ function Sidebar() {
 
   return (
     <>
-      {/* Mobile Hamburger Button - Positioned to not cover content */}
+      {/* Mobile Hamburger Button - Static position, doesn't scroll */}
       <button
+        id="mobile-sidebar-button"
         onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        className="lg:hidden fixed top-2 left-2 z-30 w-10 h-10 bg-indigo-600 text-white rounded-lg flex items-center justify-center shadow-lg hover:bg-indigo-700 transition-colors"
-        style={{ margin: '8px' }}
+        className="lg:hidden fixed top-2 left-2 z-50 w-10 h-10 bg-indigo-600 text-white rounded-lg flex items-center justify-center shadow-lg hover:bg-indigo-700 transition-colors"
       >
         {mobileMenuOpen ? <CloseIcon /> : <MenuIcon />}
       </button>
@@ -119,6 +119,9 @@ function Sidebar() {
       {/* Navigation Items */}
       <nav className="flex-1 flex flex-col items-center space-y-3 w-full px-3">
         {navItems.map((item) => {
+          // Hide Chat and Dialer on mobile, show only Dashboard and Recents
+          const isMobileHidden = (item.path === '/chat' || item.path === '/dialer');
+          
           const Icon = item.icon;
           const isActive = location.pathname === item.path;
           
@@ -130,6 +133,7 @@ function Sidebar() {
               className={`
                 w-16 h-16 rounded-xl flex flex-col items-center justify-center
                 transition-all duration-200 group relative
+                ${isMobileHidden ? 'hidden lg:flex' : 'flex'}
                 ${isActive 
                   ? 'bg-white/25 text-white shadow-lg scale-105' 
                   : 'text-white/70 hover:bg-white/15 hover:text-white hover:scale-105'

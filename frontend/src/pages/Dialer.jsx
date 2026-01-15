@@ -217,6 +217,19 @@ function Dialer() {
     setSuccess('');
 
     try {
+      // Request microphone permission for browser-based calling
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Stop the stream immediately - we just needed permission
+        stream.getTracks().forEach(track => track.stop());
+        console.log('✅ Microphone permission granted');
+      } catch (micError) {
+        if (!isMountedRef.current) return;
+        setError('Microphone access is required to make calls. Please allow microphone access and try again.');
+        setCalling(false);
+        return;
+      }
+
       // Validate we have an active number (required for calls)
       const fromNumber = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
       if (!fromNumber) {
