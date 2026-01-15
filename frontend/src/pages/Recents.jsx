@@ -137,6 +137,10 @@ function Recents() {
   
   // Mobile navigation state
   const [mobileTab, setMobileTab] = useState('chats'); // 'chats', 'recents', 'dialer'
+  
+  // New chat modal state
+  const [showNewChatModal, setShowNewChatModal] = useState(false);
+  const [newChatNumber, setNewChatNumber] = useState('');
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -508,13 +512,20 @@ function Recents() {
   };
 
   const handleNewChat = () => {
-    const phoneNumber = prompt('Enter phone number to start a new chat (e.g., +1234567890):');
-    if (phoneNumber && phoneNumber.trim()) {
-      // Normalize phone number
-      const normalizedNumber = phoneNumber.trim().replace(/\s+/g, '');
-      setSelectedChat(normalizedNumber);
-      setMobileTab('chats');
+    setShowNewChatModal(true);
+    setNewChatNumber('');
+  };
+
+  const handleStartNewChat = () => {
+    if (!newChatNumber || !newChatNumber.trim()) {
+      return;
     }
+    // Normalize phone number
+    const normalizedNumber = newChatNumber.trim().replace(/\s+/g, '');
+    setSelectedChat(normalizedNumber);
+    setMobileTab('chats');
+    setShowNewChatModal(false);
+    setNewChatNumber('');
   };
 
   // Normalize phone number for comparison
@@ -1594,6 +1605,70 @@ function Recents() {
 
       {/* Mobile Bottom Navigation - Hidden when chat is open or on dialer tab */}
       {!selectedChat && mobileTab !== 'dialer' && <MobileBottomNav />}
+
+      {/* New Chat Modal */}
+      {showNewChatModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowNewChatModal(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Start New Chat</h2>
+              <button
+                onClick={() => setShowNewChatModal(false)}
+                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-500 dark:text-gray-400 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Enter a phone number to start a new conversation
+            </p>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Phone Number
+                </label>
+                <input
+                  type="tel"
+                  value={newChatNumber}
+                  onChange={(e) => {
+                    // Allow digits, +, *, #
+                    const cleaned = e.target.value.replace(/[^\d+*#]/g, '');
+                    setNewChatNumber(cleaned);
+                  }}
+                  placeholder="+1 (555) 123-4567"
+                  className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border-2 border-gray-200 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800 transition-all"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newChatNumber.trim()) {
+                      handleStartNewChat();
+                    }
+                  }}
+                />
+              </div>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowNewChatModal(false)}
+                  className="flex-1 py-3 px-4 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-200 rounded-xl font-semibold transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleStartNewChat}
+                  disabled={!newChatNumber.trim()}
+                  className="flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-xl font-semibold transition-colors shadow-lg hover:shadow-xl disabled:shadow-none"
+                >
+                  Start Chat
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
