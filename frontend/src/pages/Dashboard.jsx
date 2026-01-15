@@ -138,9 +138,9 @@ function Dashboard() {
   /* ================= UI (UNCHANGED) ================= */
 
   return (
-    <div className="h-full overflow-auto p-6 max-w-7xl mx-auto">
-      {/* Header section - Hidden on mobile */}
-      <div className="mb-8 hidden lg:block">
+    <div className="h-full overflow-auto px-4 py-3 max-w-7xl mx-auto">
+      {/* Header section - Desktop */}
+      <div className="mb-6 hidden lg:block">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white tracking-tight">Dashboard</h1>
@@ -165,9 +165,20 @@ function Dashboard() {
         </div>
       </div>
       
-      {/* Mobile-only centered title */}
-      <div className="mb-8 lg:hidden">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight text-center">Dashboard</h1>
+      {/* Mobile header - Centered title with profile button */}
+      <div className="mb-6 lg:hidden flex items-center justify-between">
+        <div className="flex-1"></div>
+        <h1 className="flex-1 text-2xl font-bold text-gray-900 dark:text-white tracking-tight text-center">Dashboard</h1>
+        <div className="flex-1 flex justify-end">
+          <button
+            onClick={() => navigate('/profile')}
+            className="p-2 rounded-lg bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors"
+          >
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold text-sm">
+              {user?.email?.charAt(0).toUpperCase() || 'U'}
+            </div>
+          </button>
+        </div>
       </div>
 
       {actionLoading && (

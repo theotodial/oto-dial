@@ -36,6 +36,7 @@ import messageRoutes from "./src/routes/messageRoutes.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
 import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
+import telnyxWebhookRoutes from "./src/routes/webhooks/telnyx.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -73,7 +74,7 @@ app.use(express.json());
 // ========================
 app.use("/api/webhooks/telnyx/voice", telnyxVoiceWebhook);
 app.use("/api/webhooks/telnyx/sms", telnyxSmsWebhook);
-
+app.use("/webhooks/telnyx", telnyxWebhookRoutes);
 // ========================
 // PUBLIC ROUTES (NO AUTH)
 // ========================
