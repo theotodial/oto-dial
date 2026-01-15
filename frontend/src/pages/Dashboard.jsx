@@ -215,21 +215,21 @@ function Dashboard() {
           </div>
           {/* Only show Choose Plan button if no active subscription */}
           {packageDetails.planName === 'No Plan' && (
-            <button onClick={handleChoosePlan} className="w-full py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium transition-colors">
-              Choose Your Plan
-            </button>
+          <button onClick={handleChoosePlan} className="w-full py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium transition-colors">
+            Choose Your Plan
+          </button>
           )}
         </div>
 
         {/* Only show Active Numbers section if user has no numbers yet (max 1 number) */}
         {(numbers || []).length === 0 && (
-          <div className="bg-white dark:bg-slate-700 rounded-2xl p-6 shadow-sm">
+        <div className="bg-white dark:bg-slate-700 rounded-2xl p-6 shadow-sm">
             <p className="text-sm text-gray-600 dark:text-gray-400">Active Numbers</p>
             <p className="text-4xl font-bold text-gray-900 dark:text-white mb-4">{(numbers || []).length}</p>
             <button onClick={handleBuyNumber} disabled={actionLoading} className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
               {actionLoading ? 'Processing...' : 'Buy Number'}
-            </button>
-          </div>
+          </button>
+        </div>
         )}
       </div>
 

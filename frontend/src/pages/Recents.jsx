@@ -251,14 +251,12 @@ function Recents() {
       setCalls(callsResponse.data?.calls || callsResponse.data || []);
     }
 
-    // Process messages into chat sessions format
-    if (messagesResponse.error || !messagesResponse.data) {
-      console.warn('Failed to load messages:', messagesResponse.error);
-      setChats([]);
-    } else {
+    // Process messages and calls into chat sessions format (WhatsApp-style)
+    const chatMap = new Map();
+    
+    // First, process messages into chat sessions
+    if (!messagesResponse.error && messagesResponse.data) {
       const messages = messagesResponse.data?.messages || messagesResponse.data || [];
-      // Group messages by phone number to create chat sessions
-      const chatMap = new Map();
       messages.forEach(msg => {
         const phoneNumber = msg.phone_number || msg.to || msg.from || 'Unknown';
         if (!chatMap.has(phoneNumber)) {
@@ -267,7 +265,8 @@ function Recents() {
             phoneNumber,
             lastMessage: msg.message || msg.text || '',
             date: msg.created_at || msg.createdAt || msg.timestamp || new Date(),
-            message: msg.message || msg.text || ''
+            message: msg.message || msg.text || '',
+            type: 'sms'
           });
         } else {
           const existing = chatMap.get(phoneNumber);
@@ -279,8 +278,41 @@ function Recents() {
           }
         }
       });
-      setChats(Array.from(chatMap.values()));
     }
+    
+    // Then, process calls into chat sessions (create new chats for numbers with only calls)
+    const callsList = callsResponse.data?.calls || callsResponse.data || [];
+    callsList.forEach(call => {
+      const phoneNumber = call.to_number || call.toNumber || call.phoneNumber || 'Unknown';
+      const callDate = call.createdAt || call.created_at || call.timestamp || call.date || new Date();
+      
+      if (!chatMap.has(phoneNumber)) {
+        // Create new chat entry from call
+        chatMap.set(phoneNumber, {
+          id: phoneNumber,
+          phoneNumber,
+          lastMessage: `${call.direction === 'inbound' ? 'Inbound' : 'Outbound'} Call`,
+          date: callDate,
+          type: 'call',
+          direction: call.direction || 'outbound',
+          status: call.status || 'completed'
+        });
+      } else {
+        // Update existing chat if call is more recent
+        const existing = chatMap.get(phoneNumber);
+        const existingDate = new Date(existing.date || 0);
+        const callDateObj = new Date(callDate);
+        if (callDateObj > existingDate) {
+          // Update with call info, but keep message content if it's a message
+          if (existing.type === 'call' || !existing.lastMessage) {
+            existing.lastMessage = `${call.direction === 'inbound' ? 'Inbound' : 'Outbound'} Call`;
+          }
+          existing.date = callDate;
+        }
+      }
+    });
+    
+    setChats(Array.from(chatMap.values()));
 
     if (isMountedRef.current) {
       setLoading(false);
@@ -449,6 +481,17 @@ function Recents() {
     }
   };
 
+  // Format call duration from seconds to readable format
+  const formatCallDuration = (seconds) => {
+    if (!seconds || seconds === 0) return null;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (mins > 0) {
+      return secs > 0 ? `${mins} min ${secs} secs` : `${mins} min${mins > 1 ? 's' : ''}`;
+    }
+    return `${secs} sec${secs !== 1 ? 's' : ''}`;
+  };
+
   const handleCall = async (number = null) => {
     const targetNumber = number || phoneNumber.trim();
     if (!targetNumber || calling) return;
@@ -493,7 +536,22 @@ function Recents() {
         if (!number) setPhoneNumber(''); // Only clear if dialed
         setCalling(false);
         if (isMountedRef.current) {
-          fetchRecents();
+          // Refresh recents to show new chat if calling new number
+          await fetchRecents();
+          
+          // If chat is open for this number, refresh messages to show call
+          if (selectedChat && normalizePhone(selectedChat) === normalizePhone(targetNumber)) {
+            await fetchChatMessages(selectedChat);
+          }
+          
+          // If calling from dialer and no chat exists, open chat to show call history
+          // This creates a new chat entry in recents for the number
+          if (!selectedChat || normalizePhone(selectedChat) !== normalizePhone(targetNumber)) {
+            // Always open/create chat for the number that was called
+            setSelectedChat(targetNumber);
+            setMobileTab('chats');
+            await fetchChatMessages(targetNumber);
+          }
         }
       }
     } catch (err) {
@@ -534,23 +592,62 @@ function Recents() {
     return num.replace(/\D/g, ''); // Remove all non-digits
   };
 
-  // Fetch messages for selected chat
+  // Fetch messages and calls for selected chat (WhatsApp-style combined timeline)
   const fetchChatMessages = async (phoneNumber) => {
     if (!phoneNumber) return;
     try {
-      const response = await API.get('/api/messages');
-      if (response.data?.messages) {
-        const normalizedSelected = normalizePhone(phoneNumber);
-        const filtered = response.data.messages.filter(msg => {
+      const normalizedSelected = normalizePhone(phoneNumber);
+      
+      // Fetch both messages and calls
+      const [messagesResponse, callsResponse] = await Promise.all([
+        API.get('/api/messages').catch(() => ({ error: true, data: null })),
+        API.get('/api/calls').catch(() => ({ error: true, data: null }))
+      ]);
+
+      const allItems = [];
+
+      // Filter and format messages
+      if (messagesResponse.data?.messages) {
+        const filteredMessages = messagesResponse.data.messages.filter(msg => {
           const msgPhone = msg.phone_number || msg.to || msg.from;
           return normalizedSelected === normalizePhone(msgPhone);
-        }).sort((a, b) => {
-          const dateA = new Date(a.created_at || a.timestamp || a.createdAt || 0);
-          const dateB = new Date(b.created_at || b.timestamp || b.createdAt || 0);
-          return dateA - dateB;
-        });
-        setChatMessages(filtered);
+        }).map(msg => ({
+          ...msg,
+          type: 'message',
+          timestamp: msg.created_at || msg.timestamp || msg.createdAt
+        }));
+        allItems.push(...filteredMessages);
       }
+
+      // Filter and format calls for this number
+      if (callsResponse.data?.calls || callsResponse.data) {
+        const callsList = callsResponse.data?.calls || callsResponse.data || [];
+        const filteredCalls = callsList.filter(call => {
+          // Check both toNumber and fromNumber to match calls
+          const callToPhone = call.to_number || call.toNumber || call.phoneNumber;
+          const callFromPhone = call.from_number || call.fromNumber;
+          return normalizedSelected === normalizePhone(callToPhone) || 
+                 (callFromPhone && normalizedSelected === normalizePhone(callFromPhone));
+        }).map(call => ({
+          ...call,
+          type: 'call',
+          timestamp: call.createdAt || call.created_at || call.timestamp || call.date,
+          duration: call.durationSeconds || call.duration || call.call_duration || null,
+          status: call.status || 'completed',
+          // Ensure direction is set correctly
+          direction: call.direction || (call.from_number || call.fromNumber ? 'outbound' : 'inbound')
+        }));
+        allItems.push(...filteredCalls);
+      }
+
+      // Sort chronologically (oldest first)
+      allItems.sort((a, b) => {
+        const dateA = new Date(a.timestamp || 0);
+        const dateB = new Date(b.timestamp || 0);
+        return dateA - dateB;
+      });
+
+      setChatMessages(allItems);
     } catch (err) {
       console.error('Failed to fetch chat messages:', err);
     }
@@ -734,11 +831,11 @@ function Recents() {
                   return (
                     <div
                       key={chat.id}
-                        onClick={() => {
-                          if (phoneNumber) {
+                      onClick={() => {
+                        if (phoneNumber) {
                             handleText(phoneNumber);
-                          }
-                        }}
+                        }
+                      }}
                       className={`p-3 border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors ${
                         isSelected ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
                       }`}
@@ -776,13 +873,13 @@ function Recents() {
                       className={`group p-3 border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors ${
                         isSelected ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
                       }`}
-                        onClick={() => {
-                          if (item.type === 'sms') {
+                      onClick={() => {
+                        if (item.type === 'sms') {
                             // Open inline chat if SMS clicked
-                            if (phoneNumber) {
+                          if (phoneNumber) {
                               handleText(phoneNumber);
-                            }
-                          } else {
+                          }
+                        } else {
                           setSelectedCall(item.data);
                         }
                       }}
@@ -1097,10 +1194,10 @@ function Recents() {
               <div className="flex items-center space-x-2">
                 <PhoneIcon className="w-5 h-5 text-gray-400 dark:text-gray-500" />
                 <div className="flex-1 text-left">
-                  <input
-                    type="text"
-                    placeholder="Enter a name or number"
-                    value={phoneNumber}
+                    <input
+                      type="text"
+                      placeholder="Enter a name or number"
+                      value={phoneNumber}
                     onChange={(e) => {
                       // Allow digits, +, *, #
                       const cleaned = e.target.value.replace(/[^\d+*#]/g, '');
@@ -1108,9 +1205,9 @@ function Recents() {
                     }}
                     onPaste={handlePaste}
                     onKeyDown={handleKeyDown}
-                    className="w-full text-lg font-semibold text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 bg-transparent border-none outline-none focus:outline-none"
+                      className="w-full text-lg font-semibold text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 bg-transparent border-none outline-none focus:outline-none"
                     disabled={calling || !subscriptionActive || userNumbers.length === 0}
-                  />
+                    />
                 </div>
               </div>
             </div>
@@ -1144,9 +1241,9 @@ function Recents() {
               {dialpadButtons.map((btn) => {
                 let pressTimer = null;
                 return (
-                  <button
-                    key={btn.digit}
-                    onClick={() => handleDialpadClick(btn.digit)}
+                <button
+                  key={btn.digit}
+                  onClick={() => handleDialpadClick(btn.digit)}
                     onMouseDown={() => {
                       if (btn.digit === '0') {
                         pressTimer = setTimeout(() => {
@@ -1170,16 +1267,16 @@ function Recents() {
                     onTouchEnd={() => {
                       if (pressTimer) clearTimeout(pressTimer);
                     }}
-                    disabled={calling || !subscriptionActive || userNumbers.length === 0}
-                    className="aspect-square text-xl font-semibold bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 rounded-xl transition-all active:scale-95 text-gray-900 dark:text-white border border-gray-200 dark:border-slate-600 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center relative group"
-                  >
-                    <span className="text-2xl font-medium">{btn.digit}</span>
-                    {btn.letters && (
-                      <span className="text-[9px] font-normal text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">{btn.letters}</span>
-                    )}
-                    {/* Hover indicator */}
-                    <div className="absolute inset-0 rounded-xl border-2 border-indigo-500 opacity-0 group-hover:opacity-20 transition-opacity pointer-events-none"></div>
-                  </button>
+                  disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                  className="aspect-square text-xl font-semibold bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 rounded-xl transition-all active:scale-95 text-gray-900 dark:text-white border border-gray-200 dark:border-slate-600 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center relative group"
+                >
+                  <span className="text-2xl font-medium">{btn.digit}</span>
+                  {btn.letters && (
+                    <span className="text-[9px] font-normal text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">{btn.letters}</span>
+                  )}
+                  {/* Hover indicator */}
+                  <div className="absolute inset-0 rounded-xl border-2 border-indigo-500 opacity-0 group-hover:opacity-20 transition-opacity pointer-events-none"></div>
+                </button>
                 );
               })}
             </div>
@@ -1249,22 +1346,22 @@ function Recents() {
               <>
                 <div className="w-10"></div>
                 <h1 className="text-xl font-bold text-gray-900 dark:text-white flex-1 text-center">
-                  {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
-                </h1>
+            {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
+          </h1>
                 {mobileTab === 'chats' ? (
-                  <button
+          <button 
                     onClick={handleNewChat}
                     className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 transition-colors"
                     title="Start new chat"
-                  >
+          >
                     <PlusIcon className="w-6 h-6" />
-                  </button>
+          </button>
                 ) : (
                   <div className="w-10"></div>
                 )}
               </>
             )}
-          </div>
+        </div>
         )}
 
         {/* Mobile Tab Content */}
@@ -1273,39 +1370,77 @@ function Recents() {
             // Inline Chat View - WhatsApp style
             <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900">
               {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {chatMessages.length === 0 ? (
-                  <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
-                    <MessageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
-                    <p>No messages yet</p>
-                    <p className="text-xs mt-2">Start a conversation</p>
-                  </div>
-                ) : (
-                  chatMessages.map((msg, idx) => {
-                    const isOutbound = msg.direction === 'outbound' || msg.sender === 'user';
-                    return (
-                      <div
-                        key={msg.id || idx}
-                        className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
-                      >
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {chatMessages.length === 0 ? (
+                    <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
+                      <MessageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
+                      <p>No messages yet</p>
+                      <p className="text-xs mt-2">Start a conversation</p>
+                    </div>
+                  ) : (
+                    chatMessages.map((item, idx) => {
+                      // Handle calls
+                      if (item.type === 'call') {
+                        const isOutbound = item.direction === 'outbound';
+                        const callDuration = item.duration ? formatCallDuration(item.duration) : null;
+                        const callStatus = item.status || 'completed';
+                        
+                        return (
+                          <div
+                            key={`call-${item.id || item._id || idx}`}
+                            className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
+                          >
+                          <div
+                            className={`max-w-[75%] rounded-2xl px-4 py-2.5 flex items-center gap-2.5 ${
+                              isOutbound
+                                ? 'bg-green-500 text-white'
+                                : 'bg-gray-700 dark:bg-slate-600 text-white'
+                            }`}
+                          >
+                            {isOutbound ? (
+                              <PhoneOutIcon className="w-4 h-4 flex-shrink-0" />
+                            ) : (
+                              <PhoneInIcon className="w-4 h-4 flex-shrink-0" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium">Voice call</p>
+                              <p className="text-xs opacity-90">
+                                {callDuration || (callStatus === 'no-answer' || callStatus === 'busy' || callStatus === 'missed' ? 'No answer' : callStatus === 'completed' ? 'Completed' : callStatus)}
+                              </p>
+                            </div>
+                            <p className="text-xs opacity-90 flex-shrink-0 ml-1">
+                              {formatDate(item.timestamp)}
+                            </p>
+                          </div>
+                          </div>
+                        );
+                      }
+                      
+                      // Handle messages
+                      const isOutbound = item.direction === 'outbound' || item.sender === 'user';
+                      return (
                         <div
-                          className={`max-w-[75%] rounded-2xl px-4 py-2 ${
-                            isOutbound
-                              ? 'bg-indigo-600 text-white'
-                              : 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white'
-                          }`}
+                          key={`msg-${item.id || item._id || idx}`}
+                          className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
                         >
-                          <p className="text-sm whitespace-pre-wrap break-words">{msg.message || msg.body || msg.text}</p>
-                          <p className={`text-xs mt-1 ${isOutbound ? 'text-indigo-100' : 'text-gray-500 dark:text-gray-400'}`}>
-                            {formatDate(msg.created_at || msg.timestamp || msg.createdAt)}
-                          </p>
+                          <div
+                            className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                              isOutbound
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white'
+                            }`}
+                          >
+                            <p className="text-sm whitespace-pre-wrap break-words">{item.message || item.body || item.text}</p>
+                            <p className={`text-xs mt-1 ${isOutbound ? 'text-indigo-100' : 'text-gray-500 dark:text-gray-400'}`}>
+                              {formatDate(item.timestamp || item.created_at || item.createdAt)}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })
-                )}
-                <div ref={messagesEndRef} />
-              </div>
+                      );
+                    })
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
               
               {/* Input Area */}
               {sendError && (
@@ -1515,9 +1650,9 @@ function Recents() {
                     {dialpadButtons.map((btn) => {
                       let pressTimer = null;
                       return (
-                        <button
-                          key={btn.digit}
-                          onClick={() => handleDialpadClick(btn.digit)}
+                      <button
+                        key={btn.digit}
+                        onClick={() => handleDialpadClick(btn.digit)}
                           onMouseDown={() => {
                             if (btn.digit === '0') {
                               pressTimer = setTimeout(() => {
@@ -1541,7 +1676,7 @@ function Recents() {
                           onTouchEnd={() => {
                             if (pressTimer) clearTimeout(pressTimer);
                           }}
-                          disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                        disabled={calling || !subscriptionActive || userNumbers.length === 0}
                           className="aspect-square w-full bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 
                                      active:bg-indigo-100 dark:active:bg-slate-600 rounded-full border-2 border-gray-200 dark:border-slate-600 
                                      hover:border-indigo-300 dark:hover:border-indigo-500 transition-all active:scale-95 
@@ -1549,12 +1684,12 @@ function Recents() {
                                      flex flex-col items-center justify-center min-h-[50px]"
                         >
                           <span className="text-2xl font-bold leading-none text-gray-900 dark:text-white">{btn.digit}</span>
-                          {btn.letters && (
+                        {btn.letters && (
                             <span className="text-[7px] font-semibold text-gray-500 dark:text-gray-400 mt-0.5 leading-tight uppercase tracking-wider">
-                              {btn.letters}
-                            </span>
-                          )}
-                        </button>
+                            {btn.letters}
+                          </span>
+                        )}
+                      </button>
                       );
                     })}
                   </div>
