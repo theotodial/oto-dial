@@ -1198,7 +1198,7 @@ function Recents() {
       </div>
 
       {/* Mobile View */}
-      <div className="lg:hidden flex flex-col h-full pb-16">
+      <div className="lg:hidden flex flex-col h-full">
         {/* Mobile Header */}
         <div className="px-4 py-2 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between sticky top-0 z-20 h-14">
           {selectedChat ? (
