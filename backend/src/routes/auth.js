@@ -166,11 +166,54 @@ router.post("/login", async (req, res) => {
       });
     }
 
+    // Get device info
+    const userAgent = req.get('user-agent') || 'Unknown Device';
+    const ipAddress = req.ip || req.connection.remoteAddress || 'Unknown IP';
+    const deviceInfo = userAgent.includes('Mobile') ? 'Mobile Device' : 
+                      userAgent.includes('Tablet') ? 'Tablet' : 
+                      'Desktop/Web Browser';
+
+    // Check for existing active sessions
+    const existingSessions = user.sessions || [];
+    const activeSessions = existingSessions.filter(s => {
+      try {
+        const decoded = jwt.verify(s.token, process.env.JWT_SECRET);
+        return decoded.userId === user._id.toString();
+      } catch {
+        return false;
+      }
+    });
+
+    // Generate new token
     const token = jwt.sign(
       { userId: user._id },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
+
+    // Add new session
+    const newSession = {
+      deviceInfo,
+      userAgent,
+      ipAddress,
+      lastLogin: new Date(),
+      token
+    };
+
+    // Keep only last 5 sessions, remove expired ones
+    const validSessions = activeSessions.slice(-4); // Keep 4 previous + 1 new = 5 total
+    user.sessions = [...validSessions, newSession];
+    await user.save();
+
+    // Prepare response with existing session info if any
+    const existingSessionInfo = activeSessions.length > 0 ? {
+      message: "You are already logged in on another device",
+      existingSessions: activeSessions.map(s => ({
+        device: s.deviceInfo,
+        lastLogin: s.lastLogin,
+        ipAddress: s.ipAddress
+      }))
+    } : null;
 
     res.json({
       success: true,
@@ -179,7 +222,8 @@ router.post("/login", async (req, res) => {
         id: user._id,
         email: user.email,
         role: user.role
-      }
+      },
+      ...(existingSessionInfo && { sessionInfo: existingSessionInfo })
     });
   } catch (err) {
     console.error("LOGIN ERROR:", err);

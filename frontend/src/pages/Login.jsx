@@ -58,8 +58,18 @@ function Login() {
       const result = await login(formData.email, formData.password);
       if (!result.success) throw new Error(result.error);
 
-      setSuccess('Login successful! Redirecting...');
-      setTimeout(() => navigate(from, { replace: true }), 500);
+      // Check if there's session info (user logged in elsewhere)
+      if (result.sessionInfo) {
+        const { message, existingSessions } = result.sessionInfo;
+        const sessionDetails = existingSessions.map(s => 
+          `Device: ${s.device}, Last Login: ${new Date(s.lastLogin).toLocaleString()}, IP: ${s.ipAddress}`
+        ).join('\n');
+        setSuccess(`${message}\n\n${sessionDetails}\n\nYou can continue using this device.`);
+      } else {
+        setSuccess('Login successful! Redirecting...');
+      }
+      
+      setTimeout(() => navigate(from, { replace: true }), result.sessionInfo ? 3000 : 500);
     } catch (err) {
       setError(err.message || 'Login failed');
     } finally {
@@ -77,7 +87,11 @@ function Login() {
         <h2 className="text-2xl font-bold text-center text-gray-900 dark:text-white mb-6">Login</h2>
 
         {loading && <div className="p-3 mb-4 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-lg text-sm text-center">Loading...</div>}
-        {success && <div className="p-3 mb-4 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-lg text-sm">{success}</div>}
+        {success && (
+          <div className="p-3 mb-4 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-lg text-sm whitespace-pre-line">
+            {success}
+          </div>
+        )}
         {error && <div className="p-3 mb-4 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-sm">{error}</div>}
 
         {/* Google OAuth Button */}

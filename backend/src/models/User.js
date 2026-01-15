@@ -83,7 +83,16 @@ const userSchema = new mongoose.Schema(
     smsUsed: {
       type: Number,
       default: 0
-    }
+    },
+
+    // Track active sessions for multiple device login
+    sessions: [{
+      deviceInfo: String,
+      userAgent: String,
+      ipAddress: String,
+      lastLogin: { type: Date, default: Date.now },
+      token: String
+    }]
   },
   { timestamps: true }
 );

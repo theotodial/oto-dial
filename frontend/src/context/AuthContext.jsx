@@ -30,7 +30,10 @@ export function AuthProvider({ children }) {
       localStorage.setItem("token", response.data.token);
       setToken(response.data.token);
       setUser({ email });
-      return { success: true };
+      return { 
+        success: true,
+        sessionInfo: response.data?.sessionInfo || null
+      };
     }
 
     return { success: false, error: "No token received" };

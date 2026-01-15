@@ -278,9 +278,9 @@ function Profile() {
 
   return (
     <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900">
-      <div className="max-w-5xl mx-auto p-6 lg:p-8">
-        {/* Header */}
-        <div className="mb-8">
+      <div className="max-w-5xl mx-auto p-6 lg:p-8 pt-20 lg:pt-8">
+        {/* Header - Centered */}
+        <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
             Profile Settings
           </h1>
