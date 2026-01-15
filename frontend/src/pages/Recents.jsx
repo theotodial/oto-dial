@@ -507,6 +507,16 @@ function Recents() {
     setMobileTab('chats');
   };
 
+  const handleNewChat = () => {
+    const phoneNumber = prompt('Enter phone number to start a new chat (e.g., +1234567890):');
+    if (phoneNumber && phoneNumber.trim()) {
+      // Normalize phone number
+      const normalizedNumber = phoneNumber.trim().replace(/\s+/g, '');
+      setSelectedChat(normalizedNumber);
+      setMobileTab('chats');
+    }
+  };
+
   // Normalize phone number for comparison
   const normalizePhone = (num) => {
     if (!num) return '';
@@ -1226,9 +1236,21 @@ function Recents() {
               </>
             ) : (
               <>
+                <div className="w-10"></div> {/* Spacer for balance */}
                 <h1 className="text-xl font-bold text-gray-900 dark:text-white flex-1 text-center">
                   {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
                 </h1>
+                {mobileTab === 'chats' ? (
+                  <button
+                    onClick={handleNewChat}
+                    className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 transition-colors"
+                    title="Start new chat"
+                  >
+                    <PlusIcon className="w-6 h-6" />
+                  </button>
+                ) : (
+                  <div className="w-10"></div> {/* Spacer for balance */}
+                )}
               </>
             )}
           </div>
