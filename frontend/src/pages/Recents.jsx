@@ -1426,8 +1426,8 @@ function Recents() {
                 </div>
               </div>
 
-              {/* Phone Number Display */}
-              <div className="px-4 py-4 border-b border-gray-200 dark:border-slate-700 text-center">
+              {/* Phone Number Display - Compact */}
+              <div className="px-3 py-2 border-b border-gray-200 dark:border-slate-700 text-center">
                 <input
                   type="text"
                   value={phoneNumber}
@@ -1439,15 +1439,15 @@ function Recents() {
                   onPaste={handlePaste}
                   onKeyDown={handleKeyDown}
                   placeholder="Enter number"
-                  className="w-full text-2xl font-semibold text-gray-900 dark:text-white min-h-[32px] text-center bg-transparent border-none outline-none focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-400"
+                  className="w-full text-xl font-semibold text-gray-900 dark:text-white min-h-[28px] text-center bg-transparent border-none outline-none focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-400"
                   disabled={calling || !subscriptionActive || userNumbers.length === 0}
                 />
               </div>
 
-              {/* Dialpad */}
-              <div className="flex-1 flex items-center justify-center p-2">
-                <div className="w-full max-w-sm">
-                  <div className="grid grid-cols-3 gap-2">
+              {/* Dialpad - Compact */}
+              <div className="flex-1 flex items-center justify-center p-1.5 overflow-hidden">
+                <div className="w-full max-w-xs">
+                  <div className="grid grid-cols-3 gap-1.5">
                     {dialpadButtons.map((btn) => {
                       let pressTimer = null;
                       return (
@@ -1481,11 +1481,11 @@ function Recents() {
                           className="aspect-square w-full bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 
                                      rounded-full border border-gray-200 dark:border-slate-600 transition-all active:scale-95 
                                      text-gray-900 dark:text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed 
-                                     flex flex-col items-center justify-center"
+                                     flex flex-col items-center justify-center min-h-[50px]"
                         >
-                          <span className="text-lg font-medium">{btn.digit}</span>
+                          <span className="text-2xl font-semibold leading-none">{btn.digit}</span>
                           {btn.letters && (
-                            <span className="text-[8px] font-normal text-gray-500 dark:text-gray-400 mt-0.5">
+                            <span className="text-[7px] font-normal text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">
                               {btn.letters}
                             </span>
                           )}
@@ -1496,35 +1496,35 @@ function Recents() {
                 </div>
               </div>
 
-              {/* Call Buttons */}
-              <div className="px-4 py-4 border-t border-gray-200 dark:border-slate-700 space-y-2">
-                <div className="flex gap-2">
+              {/* Call Buttons - Compact */}
+              <div className="px-3 py-2 border-t border-gray-200 dark:border-slate-700">
+                <div className="flex gap-1.5">
                   <button
                     onClick={handleBackspace}
                     disabled={!phoneNumber || calling}
-                    className="flex-1 py-3 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 
-                               text-gray-700 dark:text-gray-200 rounded-lg flex items-center justify-center gap-2 
-                               font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    className="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 
+                               text-gray-700 dark:text-gray-200 rounded-lg flex items-center justify-center gap-1.5 
+                               font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
-                    <BackspaceIcon className="w-5 h-5" />
-                    <span>Delete</span>
+                    <BackspaceIcon className="w-4 h-4" />
+                    <span className="hidden sm:inline">Delete</span>
                   </button>
                   <button
                     onClick={handleCall}
                     disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
-                    className="flex-[2] py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg
-                               flex items-center justify-center gap-2 font-semibold shadow-md
+                    className="flex-[2] py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg
+                               flex items-center justify-center gap-1.5 font-semibold text-sm shadow-md
                                disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
                                transition-all active:scale-95"
                   >
                     {calling ? (
                       <>
-                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                         <span>Calling...</span>
                       </>
                     ) : (
                       <>
-                        <PhoneIcon className="w-5 h-5" />
+                        <PhoneIcon className="w-4 h-4" />
                         <span>Call</span>
                       </>
                     )}
