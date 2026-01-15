@@ -1199,41 +1199,43 @@ function Recents() {
 
       {/* Mobile View */}
       <div className="lg:hidden flex flex-col h-full">
-        {/* Mobile Header */}
-        <div className="px-4 py-2 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between sticky top-0 z-20 h-14">
-          {selectedChat ? (
-            <>
-              <button
-                onClick={() => setSelectedChat(null)}
-                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-              </button>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white flex-1 text-center">
-                {getContactName(selectedChat) || selectedChat}
-              </h1>
-              <button
-                onClick={() => handleCall(selectedChat)}
-                disabled={calling || !subscriptionActive || userNumbers.length === 0}
-                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Call"
-              >
-                <PhoneIcon className="w-6 h-6" />
-              </button>
-            </>
-          ) : (
-            <>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white flex-1 text-center">
-                {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
-              </h1>
-            </>
-          )}
-        </div>
+        {/* Mobile Header - Hidden on dialer tab */}
+        {mobileTab !== 'dialer' && (
+          <div className="px-4 py-2 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between sticky top-0 z-20 h-14">
+            {selectedChat ? (
+              <>
+                <button
+                  onClick={() => setSelectedChat(null)}
+                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <h1 className="text-xl font-bold text-gray-900 dark:text-white flex-1 text-center">
+                  {getContactName(selectedChat) || selectedChat}
+                </h1>
+                <button
+                  onClick={() => handleCall(selectedChat)}
+                  disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Call"
+                >
+                  <PhoneIcon className="w-6 h-6" />
+                </button>
+              </>
+            ) : (
+              <>
+                <h1 className="text-xl font-bold text-gray-900 dark:text-white flex-1 text-center">
+                  {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
+                </h1>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Mobile Tab Content */}
-        <div className="flex-1 overflow-y-auto">
+        <div className={`flex-1 ${mobileTab === 'dialer' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
           {mobileTab === 'chats' && selectedChat ? (
             // Inline Chat View - WhatsApp style
             <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900">
@@ -1426,8 +1428,17 @@ function Recents() {
                 </div>
               </div>
 
-              {/* Phone Number Display - Compact */}
-              <div className="px-3 py-2 border-b border-gray-200 dark:border-slate-700 text-center">
+              {/* Phone Number Display with Back Button */}
+              <div className="px-3 py-2 border-b border-gray-200 dark:border-slate-700 flex items-center gap-2">
+                <button
+                  onClick={() => setMobileTab('recents')}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 flex-shrink-0"
+                  title="Go back"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
                 <input
                   type="text"
                   value={phoneNumber}
@@ -1439,13 +1450,14 @@ function Recents() {
                   onPaste={handlePaste}
                   onKeyDown={handleKeyDown}
                   placeholder="Enter number"
-                  className="w-full text-xl font-semibold text-gray-900 dark:text-white min-h-[28px] text-center bg-transparent border-none outline-none focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-400"
+                  className="flex-1 text-xl font-semibold text-gray-900 dark:text-white min-h-[28px] text-center bg-transparent border-none outline-none focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-400"
                   disabled={calling || !subscriptionActive || userNumbers.length === 0}
                 />
+                <div className="w-8"></div> {/* Spacer for balance */}
               </div>
 
               {/* Dialpad - Compact */}
-              <div className="flex-1 flex items-center justify-center p-1.5 overflow-hidden">
+              <div className="flex-1 flex items-center justify-center p-1.5">
                 <div className="w-full max-w-xs">
                   <div className="grid grid-cols-3 gap-1.5">
                     {dialpadButtons.map((btn) => {
@@ -1496,23 +1508,23 @@ function Recents() {
                 </div>
               </div>
 
-              {/* Call Buttons - Compact */}
-              <div className="px-3 py-2 border-t border-gray-200 dark:border-slate-700">
+              {/* Call Buttons - Always visible at bottom */}
+              <div className="px-3 py-2 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
                 <div className="flex gap-1.5">
                   <button
                     onClick={handleBackspace}
                     disabled={!phoneNumber || calling}
-                    className="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 
+                    className="flex-1 py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 
                                text-gray-700 dark:text-gray-200 rounded-lg flex items-center justify-center gap-1.5 
                                font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     <BackspaceIcon className="w-4 h-4" />
-                    <span className="hidden sm:inline">Delete</span>
+                    <span>Delete</span>
                   </button>
                   <button
                     onClick={handleCall}
                     disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
-                    className="flex-[2] py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg
+                    className="flex-[2] py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg
                                flex items-center justify-center gap-1.5 font-semibold text-sm shadow-md
                                disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
                                transition-all active:scale-95"
@@ -1536,8 +1548,8 @@ function Recents() {
         </div>
       </div>
 
-      {/* Mobile Bottom Navigation - Hidden when chat is open */}
-      {!selectedChat && <MobileBottomNav />}
+      {/* Mobile Bottom Navigation - Hidden when chat is open or on dialer tab */}
+      {!selectedChat && mobileTab !== 'dialer' && <MobileBottomNav />}
     </div>
   );
 }
