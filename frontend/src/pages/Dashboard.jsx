@@ -251,8 +251,33 @@ function Dashboard() {
                     <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white">
                       <PhoneIcon />
                     </div>
-                    <div>
-                      <span className="text-lg font-semibold text-gray-900 dark:text-white block">{n.number || n.phoneNumber}</span>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg font-semibold text-gray-900 dark:text-white block">{n.number || n.phoneNumber}</span>
+                        <button
+                          onClick={async (e) => {
+                            const numberToCopy = n.number || n.phoneNumber;
+                            try {
+                              await navigator.clipboard.writeText(numberToCopy);
+                              // Show temporary success feedback
+                              const btn = e.currentTarget;
+                              const originalHTML = btn.innerHTML;
+                              btn.innerHTML = '<svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+                              setTimeout(() => {
+                                btn.innerHTML = originalHTML;
+                              }, 2000);
+                            } catch (err) {
+                              console.error('Failed to copy:', err);
+                            }
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                          title="Copy to clipboard"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                        </button>
+                      </div>
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-400 mt-1">
                         <span className="w-1.5 h-1.5 bg-green-500 rounded-full mr-1.5"></span>
                         Active

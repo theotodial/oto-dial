@@ -1418,8 +1418,8 @@ function Recents() {
 
           {mobileTab === 'dialer' && (
             <div className="flex flex-col h-full">
-              {/* Active Number */}
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              {/* Active Number - Hidden on mobile */}
+              <div className="hidden lg:block px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
                 <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase mb-1">Active Number</div>
                 <div className="text-sm font-medium text-gray-900 dark:text-white">
                   {userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || 'No number'}
@@ -1445,9 +1445,9 @@ function Recents() {
               </div>
 
               {/* Dialpad */}
-              <div className="flex-1 flex items-center justify-center p-4">
+              <div className="flex-1 flex items-center justify-center p-2">
                 <div className="w-full max-w-sm">
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-3 gap-2">
                     {dialpadButtons.map((btn) => {
                       let pressTimer = null;
                       return (
@@ -1479,13 +1479,13 @@ function Recents() {
                           }}
                           disabled={calling || !subscriptionActive || userNumbers.length === 0}
                           className="aspect-square w-full bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 
-                                     rounded-xl border border-gray-200 dark:border-slate-600 transition-all active:scale-95 
+                                     rounded-full border border-gray-200 dark:border-slate-600 transition-all active:scale-95 
                                      text-gray-900 dark:text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed 
                                      flex flex-col items-center justify-center"
                         >
-                          <span className="text-xl font-medium">{btn.digit}</span>
+                          <span className="text-lg font-medium">{btn.digit}</span>
                           {btn.letters && (
-                            <span className="text-[9px] font-normal text-gray-500 dark:text-gray-400 mt-0.5">
+                            <span className="text-[8px] font-normal text-gray-500 dark:text-gray-400 mt-0.5">
                               {btn.letters}
                             </span>
                           )}
