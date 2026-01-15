@@ -1428,35 +1428,19 @@ function Recents() {
                 </div>
               </div>
 
-              {/* Enhanced Header with Back Button and Status */}
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center gap-3">
-                <button
-                  onClick={() => setMobileTab('recents')}
-                  className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 flex-shrink-0 transition-colors"
-                  title="Go back to recents"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                </button>
-                <div className="flex-1">
-                  <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase mb-0.5">Dialer</div>
-                  {!subscriptionActive && (
-                    <div className="text-xs text-red-600 dark:text-red-400">Subscription required</div>
-                  )}
-                  {subscriptionActive && userNumbers.length === 0 && (
-                    <div className="text-xs text-amber-600 dark:text-amber-400">No phone number assigned</div>
-                  )}
-                  {subscriptionActive && userNumbers.length > 0 && (
-                    <div className="text-xs text-green-600 dark:text-green-400">Ready to call</div>
-                  )}
-                </div>
-              </div>
-
-              {/* Phone Number Display - Enhanced */}
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              {/* Phone Number Display with Back Button */}
+              <div className="px-4 py-2 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
                 <div className="flex items-center gap-2 mb-2">
-                  <PhoneIcon className="w-5 h-5 text-gray-400 dark:text-gray-500" />
+                  <button
+                    onClick={() => setMobileTab('recents')}
+                    className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 flex-shrink-0 transition-colors"
+                    title="Go back to recents"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <PhoneIcon className="w-4 h-4 text-gray-400 dark:text-gray-500" />
                   <span className="text-xs text-gray-500 dark:text-gray-400">Enter phone number</span>
                 </div>
                 <input
@@ -1475,15 +1459,15 @@ function Recents() {
                     }
                   }}
                   placeholder="+1 (555) 123-4567"
-                  className="w-full text-2xl font-bold text-gray-900 dark:text-white min-h-[40px] text-center bg-gray-50 dark:bg-slate-700 border-2 border-gray-200 dark:border-slate-600 rounded-xl focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full text-xl font-bold text-gray-900 dark:text-white min-h-[36px] text-center bg-gray-50 dark:bg-slate-700 border-2 border-gray-200 dark:border-slate-600 rounded-xl focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={calling || !subscriptionActive || userNumbers.length === 0}
                 />
                 {phoneNumber && (
                   <button
                     onClick={() => setPhoneNumber('')}
-                    className="mt-2 mx-auto flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    className="mt-1.5 mx-auto flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                     Clear
@@ -1491,10 +1475,10 @@ function Recents() {
                 )}
               </div>
 
-              {/* Dialpad - Enhanced with better styling */}
-              <div className="flex-1 flex items-center justify-center p-3 bg-gray-50 dark:bg-slate-900">
+              {/* Dialpad - Compact to fit everything */}
+              <div className="flex-1 flex items-center justify-center p-2 bg-gray-50 dark:bg-slate-900 overflow-hidden">
                 <div className="w-full max-w-xs">
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-1.5">
                     {dialpadButtons.map((btn) => {
                       let pressTimer = null;
                       return (
@@ -1529,11 +1513,11 @@ function Recents() {
                                      active:bg-indigo-100 dark:active:bg-slate-600 rounded-full border-2 border-gray-200 dark:border-slate-600 
                                      hover:border-indigo-300 dark:hover:border-indigo-500 transition-all active:scale-95 
                                      text-gray-900 dark:text-white shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed 
-                                     flex flex-col items-center justify-center min-h-[60px]"
+                                     flex flex-col items-center justify-center min-h-[50px]"
                         >
-                          <span className="text-3xl font-bold leading-none text-gray-900 dark:text-white">{btn.digit}</span>
+                          <span className="text-2xl font-bold leading-none text-gray-900 dark:text-white">{btn.digit}</span>
                           {btn.letters && (
-                            <span className="text-[8px] font-semibold text-gray-500 dark:text-gray-400 mt-1 leading-tight uppercase tracking-wider">
+                            <span className="text-[7px] font-semibold text-gray-500 dark:text-gray-400 mt-0.5 leading-tight uppercase tracking-wider">
                               {btn.letters}
                             </span>
                           )}
@@ -1544,51 +1528,42 @@ function Recents() {
                 </div>
               </div>
 
-              {/* Call Buttons - Enhanced with better styling */}
-              <div className="px-4 py-3 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg">
-                <div className="flex gap-2">
+              {/* Call Buttons - Always visible at bottom */}
+              <div className="px-3 py-2.5 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg">
+                <div className="flex gap-1.5">
                   <button
                     onClick={handleBackspace}
                     disabled={!phoneNumber || calling}
-                    className="flex-1 py-3 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 
-                               active:bg-gray-300 dark:active:bg-slate-500 text-gray-700 dark:text-gray-200 rounded-xl 
-                               flex items-center justify-center gap-2 font-semibold text-sm shadow-sm hover:shadow-md
+                    className="flex-1 py-2.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 
+                               active:bg-gray-300 dark:active:bg-slate-500 text-gray-700 dark:text-gray-200 rounded-lg 
+                               flex items-center justify-center gap-1.5 font-semibold text-sm shadow-sm hover:shadow-md
                                disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
                   >
-                    <BackspaceIcon className="w-5 h-5" />
+                    <BackspaceIcon className="w-4 h-4" />
                     <span>Delete</span>
                   </button>
                   <button
                     onClick={handleCall}
                     disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
-                    className="flex-[2] py-3 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 
-                               active:from-green-700 active:to-emerald-700 text-white rounded-xl
-                               flex items-center justify-center gap-2 font-bold text-base shadow-lg hover:shadow-xl
+                    className="flex-[2] py-2.5 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 
+                               active:from-green-700 active:to-emerald-700 text-white rounded-lg
+                               flex items-center justify-center gap-1.5 font-bold text-sm shadow-lg hover:shadow-xl
                                disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
                                transition-all active:scale-95"
                   >
                     {calling ? (
                       <>
-                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                         <span>Calling...</span>
                       </>
                     ) : (
                       <>
-                        <PhoneIcon className="w-5 h-5" />
+                        <PhoneIcon className="w-4 h-4" />
                         <span>Call</span>
                       </>
                     )}
                   </button>
                 </div>
-                {(!subscriptionActive || userNumbers.length === 0) && (
-                  <div className="mt-2 text-center">
-                    <p className="text-xs text-amber-600 dark:text-amber-400">
-                      {!subscriptionActive 
-                        ? 'Please activate your subscription to make calls'
-                        : 'Please purchase a phone number to make calls'}
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
           )}
