@@ -1236,7 +1236,7 @@ function Recents() {
               </>
             ) : (
               <>
-                <div className="w-10"></div> {/* Spacer for balance */}
+                <div className="w-10"></div>
                 <h1 className="text-xl font-bold text-gray-900 dark:text-white flex-1 text-center">
                   {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
                 </h1>
@@ -1249,7 +1249,7 @@ function Recents() {
                     <PlusIcon className="w-6 h-6" />
                   </button>
                 ) : (
-                  <div className="w-10"></div> {/* Spacer for balance */}
+                  <div className="w-10"></div>
                 )}
               </>
             )}
