@@ -1,52 +1,51 @@
 import express from "express";
 import Subscription from "../models/Subscription.js";
 import Plan from "../models/Plan.js";
-import authMiddleware from "../middleware/authenticateUser.js";
+import authenticateUser from "../middleware/authenticateUser.js";
 
 const router = express.Router();
 
 /**
  * GET /api/subscription
  */
-router.get("/", authMiddleware, async (req, res) => {
+router.get("/", authenticateUser, async (req, res) => {
   try {
-    const userId = req.userId;
+    const userId = req.user._id;
 
     const subscription = await Subscription.findOne({
       userId,
-      status: "active",
+      status: "active"
     }).populate("planId");
 
     if (!subscription) {
       return res.json({
         planName: "No Plan",
-        remainingMinutes: 0,
-        remainingSMS: 0,
+        minutesRemaining: 0,
+        smsRemaining: 0,
+        numbersRemaining: 0
       });
     }
 
-    const remainingMinutes = Math.max(
-      0,
-      (subscription.limits?.minutesTotal || 0) +
-        (subscription.addons?.minutes || 0) -
-        (subscription.usage?.minutesUsed || 0)
-    );
+    const minutesRemaining =
+      subscription.limits.minutesTotal -
+      subscription.usage.minutesUsed;
 
-    const remainingSMS = Math.max(
-      0,
-      (subscription.limits?.smsTotal || 0) +
-        (subscription.addons?.sms || 0) -
-        (subscription.usage?.smsUsed || 0)
-    );
+    const smsRemaining =
+      subscription.limits.smsTotal -
+      subscription.usage.smsUsed;
+
+    const numbersRemaining =
+      subscription.limits.numbersTotal;
 
     res.json({
       planName: subscription.planId?.name || "Active Plan",
-      remainingMinutes,
-      remainingSMS,
-      subscription,
+      minutesRemaining: Math.max(0, minutesRemaining),
+      smsRemaining: Math.max(0, smsRemaining),
+      numbersRemaining: Math.max(0, numbersRemaining),
+      subscription
     });
   } catch (err) {
-    console.error(err);
+    console.error("GET /subscription error:", err);
     res.status(500).json({ error: "Failed to fetch subscription" });
   }
 });
@@ -54,22 +53,18 @@ router.get("/", authMiddleware, async (req, res) => {
 /**
  * POST /api/subscription/buy
  */
-router.post("/buy", authMiddleware, async (req, res) => {
+router.post("/buy", authenticateUser, async (req, res) => {
   try {
-    const userId = req.userId;
+    const userId = req.user._id;
 
-    // ✅ Correct plan lookup (matches MongoDB exactly)
     const plan = await Plan.findOne({
-      name: "Basic",
-      active: true,
-    }).lean();
+      name: "basic",
+      status: "active"
+    });
 
     if (!plan) {
       return res.status(404).json({ message: "Plan not found" });
     }
-
-    // ✅ HARD GUARANTEE: prevent undefined crashes
-    const planLimits = plan.limits || {};
 
     const now = new Date();
     const periodEnd = new Date();
@@ -79,30 +74,26 @@ router.post("/buy", authMiddleware, async (req, res) => {
       userId,
       planId: plan._id,
       status: "active",
-
       periodStart: now,
       periodEnd,
-
       limits: {
-        minutesTotal: planLimits.minutes || 0,
-        smsTotal: planLimits.sms || 0,
-        numbersTotal: planLimits.numbers || 0,
+        minutesTotal: plan.limits.minutesTotal,
+        smsTotal: plan.limits.smsTotal,
+        numbersTotal: plan.limits.numbersTotal
       },
-
       usage: {
         minutesUsed: 0,
-        smsUsed: 0,
+        smsUsed: 0
       },
-
       addons: {
         minutes: 0,
-        sms: 0,
-      },
+        sms: 0
+      }
     });
 
     res.status(201).json({
       message: "Subscription activated",
-      subscription,
+      subscription
     });
   } catch (err) {
     console.error("SUBSCRIPTION BUY ERROR:", err);
@@ -111,4 +102,3 @@ router.post("/buy", authMiddleware, async (req, res) => {
 });
 
 export default router;
-

@@ -1597,54 +1597,56 @@ function Recents() {
               </div>
 
               {/* Phone Number Display with Back Button - Professional Header */}
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-gradient-to-r from-white to-gray-50 dark:from-slate-800 dark:to-slate-900">
+              <div className="px-5 py-4 bg-white dark:bg-slate-800 border-b border-gray-200/60 dark:border-slate-700/60 backdrop-blur-sm">
                 <div className="flex items-center gap-3 mb-3">
                   <button
                     onClick={() => setMobileTab('recents')}
-                    className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300 flex-shrink-0 transition-all active:scale-95 shadow-sm"
+                    className="p-2.5 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 flex-shrink-0 transition-all active:scale-90"
                     title="Go back to recents"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
                     </svg>
                   </button>
-                  <div className="flex items-center gap-2 flex-1">
-                    <div className="p-2 rounded-lg bg-indigo-100 dark:bg-indigo-900/30">
+                  <div className="flex items-center gap-2.5 flex-1">
+                    <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-900/40 shadow-sm">
                       <PhoneIcon className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                </div>
-                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">Dial Number</span>
+                    </div>
+                    <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 tracking-tight">Dial Number</span>
                   </div>
                 </div>
-                <input
-                  type="text"
-                  value={phoneNumber}
-                  onChange={(e) => {
-                    // Allow digits, +, *, #
-                    const cleaned = e.target.value.replace(/[^\d+*#]/g, '');
-                    setPhoneNumber(cleaned);
-                  }}
-                  onPaste={handlePaste}
-                  onKeyDown={(e) => {
-                    handleKeyDown(e);
-                    if (e.key === 'Enter' && phoneNumber.trim() && !calling && subscriptionActive && userNumbers.length > 0) {
-                      handleCall();
-                    }
-                  }}
-                  placeholder="Enter phone number"
-                  className="w-full text-2xl font-bold text-gray-900 dark:text-white min-h-[48px] text-center bg-white dark:bg-slate-800 border-2 border-gray-300 dark:border-slate-600 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 dark:focus:ring-indigo-900/50 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm focus:shadow-md"
-                  disabled={calling || !subscriptionActive || userNumbers.length === 0}
-                />
-                {phoneNumber && (
-                  <button
-                    onClick={() => setPhoneNumber('')}
-                    className="mt-1.5 mx-auto flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                    Clear
-                  </button>
-                )}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={phoneNumber}
+                    onChange={(e) => {
+                      // Allow digits, +, *, #
+                      const cleaned = e.target.value.replace(/[^\d+*#]/g, '');
+                      setPhoneNumber(cleaned);
+                    }}
+                    onPaste={handlePaste}
+                    onKeyDown={(e) => {
+                      handleKeyDown(e);
+                      if (e.key === 'Enter' && phoneNumber.trim() && !calling && subscriptionActive && userNumbers.length > 0) {
+                        handleCall();
+                      }
+                    }}
+                    placeholder="Enter phone number"
+                    className="w-full text-2xl font-semibold text-gray-900 dark:text-white min-h-[56px] px-6 py-3 text-center bg-gray-50 dark:bg-slate-700/50 border-2 border-gray-200 dark:border-slate-600 rounded-2xl focus:border-indigo-500 dark:focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm focus:shadow-lg"
+                    disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                  />
+                  {phoneNumber && (
+                    <button
+                      onClick={() => setPhoneNumber('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-all"
+                      aria-label="Clear number"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Dialpad - Compact to fit everything */}
@@ -1701,15 +1703,15 @@ function Recents() {
               </div>
 
               {/* Call Buttons - Professional Bottom Bar */}
-              <div className="px-4 py-4 border-t border-gray-200 dark:border-slate-700 bg-gradient-to-r from-white to-gray-50 dark:from-slate-800 dark:to-slate-900 shadow-2xl">
+              <div className="px-5 py-4 bg-white dark:bg-slate-800 border-t border-gray-200/60 dark:border-slate-700/60 backdrop-blur-sm shadow-[0_-4px_20px_rgba(0,0,0,0.05)] dark:shadow-[0_-4px_20px_rgba(0,0,0,0.3)]">
                 <div className="flex gap-3">
                   <button
                     onClick={handleBackspace}
                     disabled={!phoneNumber || calling}
-                    className="flex-1 py-3.5 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-600 
-                               active:bg-gray-100 dark:active:bg-slate-500 text-gray-700 dark:text-gray-200 rounded-xl 
-                               flex items-center justify-center gap-2 font-semibold text-base shadow-md hover:shadow-lg
-                               disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
+                    className="flex-1 py-4 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-50 dark:hover:bg-slate-600 
+                               active:bg-gray-100 dark:active:bg-slate-500 text-gray-700 dark:text-gray-200 rounded-2xl 
+                               flex items-center justify-center gap-2.5 font-semibold text-base shadow-sm hover:shadow-md
+                               disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95"
                   >
                     <BackspaceIcon className="w-5 h-5" />
                     <span>Delete</span>
@@ -1717,20 +1719,20 @@ function Recents() {
                   <button
                     onClick={handleCall}
                     disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
-                    className="flex-[2] py-3.5 bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 hover:from-green-600 hover:via-emerald-600 hover:to-green-700 
-                               active:from-green-700 active:via-emerald-700 active:to-green-800 text-white rounded-xl
-                               flex items-center justify-center gap-2 font-bold text-base shadow-xl hover:shadow-2xl
-                               disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-md
+                    className="flex-[2] py-4 bg-gradient-to-r from-green-500 via-green-600 to-emerald-600 hover:from-green-600 hover:via-green-700 hover:to-emerald-700 
+                               active:from-green-700 active:via-emerald-700 active:to-emerald-800 text-white rounded-2xl
+                               flex items-center justify-center gap-2.5 font-bold text-base shadow-lg hover:shadow-xl hover:shadow-green-500/30
+                               disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-sm
                                transition-all active:scale-95"
                   >
                     {calling ? (
                       <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <div className="w-5 h-5 border-2.5 border-white border-t-transparent rounded-full animate-spin"></div>
                         <span>Calling...</span>
                       </>
                     ) : (
                       <>
-                        <PhoneIcon className="w-4 h-4" />
+                        <PhoneIcon className="w-5 h-5" />
                         <span>Call</span>
                       </>
                     )}

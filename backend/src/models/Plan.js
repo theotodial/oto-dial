@@ -8,34 +8,35 @@ const planSchema = new mongoose.Schema(
       unique: true
     },
 
-    priceMonthly: {
+    price: {
       type: Number,
       required: true
     },
 
-    included: {
-      minutes: Number,
-      sms: Number,
-      numbers: Number
+    currency: {
+      type: String,
+      default: "USD"
     },
 
-    rates: {
-      perMinute: Number,
-      perSms: Number
+    limits: {
+      minutesTotal: {
+        type: Number,
+        required: true
+      },
+      smsTotal: {
+        type: Number,
+        required: true
+      },
+      numbersTotal: {
+        type: Number,
+        required: true
+      }
     },
 
-    addons: {
-      minutes1000: Number,
-      sms1000: Number
-    },
-
-    features: {
-      tollFreeAllowed: Boolean
-    },
-
-    isActive: {
-      type: Boolean,
-      default: true
+    status: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active"
     }
   },
   { timestamps: true }

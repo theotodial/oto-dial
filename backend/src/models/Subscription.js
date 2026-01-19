@@ -39,7 +39,8 @@ const subscriptionSchema = new mongoose.Schema(
 
     limits: {
       minutesTotal: { type: Number, required: true },
-      smsTotal: { type: Number, required: true }
+      smsTotal: { type: Number, required: true },
+      numbersTotal: { type: Number, required: true }
     },
 
     addons: {
@@ -80,4 +81,3 @@ const subscriptionSchema = new mongoose.Schema(
 const Subscription = mongoose.model("Subscription", subscriptionSchema);
 
 export default Subscription;
-

@@ -62,10 +62,11 @@ function Dashboard() {
     // Package details - handle gracefully
     if (!subscriptionRes.error && subscriptionRes.data) {
       setPackageDetails({
-        remainingMinutes: subscriptionRes.data.remainingMinutes || 0,
-        remainingSMS: subscriptionRes.data.remainingSMS || 0,
+        remainingMinutes: subscriptionRes.data.minutesRemaining || 0,
+        remainingSMS: subscriptionRes.data.smsRemaining || 0,
         planName: subscriptionRes.data.planName || 'No Plan'
       });
+      
     } else {
       // Default values if subscription endpoint doesn't exist
       setPackageDetails({
