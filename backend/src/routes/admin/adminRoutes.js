@@ -2,16 +2,15 @@ import express from "express";
 import User from "../../models/User.js";
 import Call from "../../models/Call.js";
 import requireAdmin from "../../middleware/requireAdmin.js";
-import callExportRoutes from "./callExport.js";
 import statsRoutes from "./statsRoutes.js";
 
 const router = express.Router();
 
+// Admin stats only
 router.use(statsRoutes);
-router.use(callExportRoutes);
+
 /**
  * GET /api/admin/users
- * Admin: View all users
  */
 router.get("/users", requireAdmin, async (req, res) => {
   try {
@@ -21,7 +20,7 @@ router.get("/users", requireAdmin, async (req, res) => {
       success: true,
       users
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
       error: "Failed to fetch users"
@@ -31,13 +30,11 @@ router.get("/users", requireAdmin, async (req, res) => {
 
 /**
  * PATCH /api/admin/users/:id/status
- * Admin: Suspend / Activate / Ban user
  */
 router.patch("/users/:id/status", requireAdmin, async (req, res) => {
   try {
     const { status } = req.body;
 
-    // Allowed statuses
     if (!["active", "suspended", "banned"].includes(status)) {
       return res.status(400).json({
         success: false,
@@ -63,7 +60,7 @@ router.patch("/users/:id/status", requireAdmin, async (req, res) => {
       message: `User status updated to ${status}`,
       user
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
       error: "Failed to update user status"
@@ -73,7 +70,6 @@ router.patch("/users/:id/status", requireAdmin, async (req, res) => {
 
 /**
  * GET /api/admin/calls
- * Admin: View all calls
  */
 router.get("/calls", requireAdmin, async (req, res) => {
   try {
@@ -85,7 +81,7 @@ router.get("/calls", requireAdmin, async (req, res) => {
       success: true,
       calls
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
       error: "Failed to fetch calls"
@@ -93,10 +89,8 @@ router.get("/calls", requireAdmin, async (req, res) => {
   }
 });
 
-
 /**
  * GET /api/admin/usage
- * Admin: Platform usage summary
  */
 router.get("/usage", requireAdmin, async (req, res) => {
   try {
@@ -118,7 +112,7 @@ router.get("/usage", requireAdmin, async (req, res) => {
         smsUsed: totalSms
       }
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
       error: "Failed to fetch usage data"

@@ -18,7 +18,7 @@ import loadSubscription from "./src/middleware/loadSubscription.js";
 validateEnv();
 
 // ========================
-// ROUTES IMPORT
+// ROUTES
 // ========================
 import authRoutes from "./src/routes/auth.js";
 import callRoutes from "./src/routes/callRoutes.js";
@@ -54,40 +54,39 @@ console.log("MONGODB_URI =", process.env.MONGODB_URI);
 getTelnyx();
 
 // ========================
-// GLOBAL MIDDLEWARE
+// MIDDLEWARE
 // ========================
 app.use(cors({ origin: true, credentials: true }));
 app.use(passport.initialize());
 
-// Stripe webhook MUST be raw
+// Stripe webhook must be raw
 app.use(
   "/api/webhooks/stripe",
   express.raw({ type: "application/json" }),
   stripeWebhookRoutes
 );
 
-// JSON parser AFTER Stripe webhook
 app.use(express.json());
 
 // ========================
-// PUBLIC WEBHOOKS (NO AUTH)
+// WEBHOOKS
 // ========================
 app.use("/api/webhooks/telnyx/voice", telnyxVoiceWebhook);
 app.use("/api/webhooks/telnyx/sms", telnyxSmsWebhook);
 app.use("/webhooks/telnyx", telnyxWebhookRoutes);
+
 // ========================
-// PUBLIC ROUTES (NO AUTH)
+// PUBLIC
 // ========================
 app.use("/api/auth", authRoutes);
 app.use("/api/contact", contactRoutes);
 
 // ========================
-// PROTECTED ROUTES (AUTH + SUBSCRIPTION)
+// PROTECTED
 // ========================
 app.use("/api/users", authenticateUser, loadSubscription, userRoutes);
 app.use("/api/subscription", authenticateUser, loadSubscription, subscriptionRoutes);
 app.use("/api/stripe", authenticateUser, stripeCheckoutRoutes);
-
 app.use("/api/dialer", authenticateUser, loadSubscription, dialerRoutes);
 app.use("/api/numbers", authenticateUser, loadSubscription, numberRoutes);
 app.use("/api/numbers", authenticateUser, loadSubscription, telnyxNumbersRoutes);
@@ -100,40 +99,15 @@ app.use("/api/admin", authenticateUser, loadSubscription, adminRoutes);
 // HEALTH
 // ========================
 app.get("/api/health", (req, res) => {
-  res.json({
-    success: true,
-    status: "ok",
-    time: new Date().toISOString()
-  });
+  res.json({ success: true, status: "ok", time: new Date().toISOString() });
 });
 
 app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    message: "OTO DIAL API"
-  });
+  res.json({ success: true, message: "OTO DIAL API" });
 });
 
 // ========================
-// ERROR HANDLING
-// ========================
-app.use((err, req, res, next) => {
-  console.error("Unhandled error:", err);
-  res.status(500).json({
-    success: false,
-    error: err.message || "Internal server error"
-  });
-});
-
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: "Route not found"
-  });
-});
-
-// ========================
-// START SERVER
+// START
 // ========================
 async function startServer() {
   try {
