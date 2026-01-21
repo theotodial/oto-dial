@@ -122,7 +122,7 @@ function Chat() {
     if (!isMountedRef.current) return;
     if (!response.error && response.data) {
       setSubscriptionData({
-        remainingSMS: response.data.remainingSMS || 0,
+        remainingSMS: response.data.smsRemaining || 0,
         planName: response.data.planName || 'No Plan'
       });
     }

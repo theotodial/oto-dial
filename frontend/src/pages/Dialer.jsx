@@ -65,6 +65,20 @@ function Dialer() {
   const [speakerOn, setSpeakerOn] = useState(false);
   const [showDialpad, setShowDialpad] = useState(false);
   const [subscriptionActive, setSubscriptionActive] = useState(false);
+  const [dialCountryCode, setDialCountryCode] = useState('+1');
+  const [showDialCountryDropdown, setShowDialCountryDropdown] = useState(false);
+  const dialCountries = [
+    { code: '+1', name: 'United States', flag: '🇺🇸' },
+    { code: '+44', name: 'United Kingdom', flag: '🇬🇧' },
+    { code: '+47', name: 'Norway', flag: '🇳🇴' },
+    { code: '+46', name: 'Sweden', flag: '🇸🇪' },
+    { code: '+45', name: 'Denmark', flag: '🇩🇰' },
+    { code: '+49', name: 'Germany', flag: '🇩🇪' },
+    { code: '+33', name: 'France', flag: '🇫🇷' },
+    { code: '+39', name: 'Italy', flag: '🇮🇹' },
+    { code: '+34', name: 'Spain', flag: '🇪🇸' },
+    { code: '+61', name: 'Australia', flag: '🇦🇺' }
+  ];
 
   // Recent contacts from call logs
   const recentContacts = (callLogs || []).slice(0, 2).map(call => ({
@@ -239,10 +253,15 @@ function Dialer() {
         return;
       }
 
+      // Build final destination number with country code if needed
+      const destination = phoneNumber.trim().startsWith('+')
+        ? phoneNumber.trim()
+        : `${dialCountryCode}${phoneNumber.trim()}`;
+
       // Use correct API endpoint and payload per backend contract
       // POST /api/dialer/call with { to: destinationNumber }
       const response = await API.post('/api/dialer/call', {
-        to: phoneNumber.trim()
+        to: destination
       });
 
       if (!isMountedRef.current) return;
@@ -360,9 +379,43 @@ function Dialer() {
         <div className="flex-1 flex overflow-hidden min-h-0">
           {/* Left Column - Dialer (60% on desktop) */}
           <div className="w-full lg:w-[60%] flex flex-col bg-white dark:bg-slate-800 border-r border-gray-200 dark:border-slate-700 min-h-0">
-            {/* Phone Number Display */}
+            {/* Phone Number Display with Country Code */}
             <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 dark:border-slate-700 flex-shrink-0">
-              <div className="text-center">
+              <div className="flex items-center justify-center gap-2">
+                {/* Country code selector */}
+                <button
+                  type="button"
+                  onClick={() => setShowDialCountryDropdown(!showDialCountryDropdown)}
+                  className="relative px-3 py-1.5 rounded-2xl border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 flex items-center gap-2 text-sm text-gray-900 dark:text-white"
+                >
+                  <span>{dialCountries.find(c => c.code === dialCountryCode)?.flag || '🌎'}</span>
+                  <span>{dialCountryCode}</span>
+                </button>
+                {showDialCountryDropdown && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-30"
+                      onClick={() => setShowDialCountryDropdown(false)}
+                    />
+                    <div className="absolute z-40 mt-24 w-44 max-h-64 overflow-y-auto bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-xl shadow-xl">
+                      {dialCountries.map(country => (
+                        <button
+                          key={country.code + country.name}
+                          type="button"
+                          onClick={() => {
+                            setDialCountryCode(country.code);
+                            setShowDialCountryDropdown(false);
+                          }}
+                          className="w-full px-3 py-2 text-left flex items-center gap-2 text-sm text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-slate-700"
+                        >
+                          <span>{country.flag}</span>
+                          <span className="truncate">{country.name}</span>
+                          <span className="ml-auto text-gray-400 dark:text-gray-500">{country.code}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
                 <input
                   type="text"
                   value={phoneNumber}
@@ -374,8 +427,8 @@ function Dialer() {
                   }}
                   onPaste={handlePaste}
                   onKeyDown={handleKeyDown}
-                  placeholder="Enter a name or number"
-                  className="w-full text-xl sm:text-2xl lg:text-3xl font-semibold text-gray-900 dark:text-white min-h-[36px] sm:min-h-[40px] text-center bg-transparent border-none outline-none focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-400 placeholder:text-base sm:placeholder:text-lg"
+                  placeholder="Enter phone number"
+                  className="flex-1 text-xl sm:text-2xl lg:text-3xl font-semibold text-gray-900 dark:text-white min-h-[36px] sm:min-h-[40px] text-center bg-transparent border-none outline-none focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-400 placeholder:text-base sm:placeholder:text-lg"
                   disabled={calling || userNumbers.length === 0 || !subscriptionActive}
                 />
               </div>

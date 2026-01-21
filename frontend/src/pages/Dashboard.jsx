@@ -66,7 +66,6 @@ function Dashboard() {
         remainingSMS: subscriptionRes.data.smsRemaining || 0,
         planName: subscriptionRes.data.planName || 'No Plan'
       });
-      
     } else {
       // Default values if subscription endpoint doesn't exist
       setPackageDetails({

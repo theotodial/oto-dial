@@ -33,9 +33,9 @@ const SearchIcon = () => (
   </svg>
 );
 
-const MessageIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+const MessageIcon = ({ className = 'w-5 h-5', strokeWidth = 2 }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={strokeWidth} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
   </svg>
 );
 
@@ -51,9 +51,27 @@ const PlusIcon = () => (
   </svg>
 );
 
-const PhoneIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+const PhoneIcon = ({ className = 'w-5 h-5', strokeWidth = 2 }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={strokeWidth} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+  </svg>
+);
+
+// Call history icon for recents (phone with clock)
+const HistoryIcon = ({ className = 'w-6 h-6', strokeWidth = 2 }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={strokeWidth}
+      d="M3 5a2 2 0 012-2h3.28a1 1 0 01.95.69l1.5 4.49a1 1 0 01-.51 1.21L8.96 10.5a11.05 11.05 0 005.54 5.54l1.35-2.26a1 1 0 011.21-.5l4.49 1.49a1 1 0 01.69.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z"
+    />
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={strokeWidth}
+      d="M12 5a5 5 0 015 5m-3-1h2.5a.5.5 0 01.5.5V12"
+    />
   </svg>
 );
 
@@ -63,9 +81,9 @@ const BackspaceIcon = () => (
   </svg>
 );
 
-const DialpadIcon = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+const DialpadIcon = ({ className = 'w-6 h-6', strokeWidth = 2 }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={strokeWidth} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
   </svg>
 );
 
@@ -134,6 +152,8 @@ function Recents() {
   const [userNumbers, setUserNumbers] = useState([]);
   const [subscriptionActive, setSubscriptionActive] = useState(false);
   const [calling, setCalling] = useState(false);
+  const [dialCountryCode, setDialCountryCode] = useState('+1');
+  const [showDialCountryDropdown, setShowDialCountryDropdown] = useState(false);
   
   // Mobile navigation state
   const [mobileTab, setMobileTab] = useState('chats'); // 'chats', 'recents', 'dialer'
@@ -141,6 +161,20 @@ function Recents() {
   // New chat modal state
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [newChatNumber, setNewChatNumber] = useState('');
+
+  // Simple dialer country list (shared for desktop + mobile)
+  const dialCountries = [
+    { code: '+1', name: 'United States', flag: '🇺🇸' },
+    { code: '+44', name: 'United Kingdom', flag: '🇬🇧' },
+    { code: '+47', name: 'Norway', flag: '🇳🇴' },
+    { code: '+46', name: 'Sweden', flag: '🇸🇪' },
+    { code: '+45', name: 'Denmark', flag: '🇩🇰' },
+    { code: '+49', name: 'Germany', flag: '🇩🇪' },
+    { code: '+33', name: 'France', flag: '🇫🇷' },
+    { code: '+39', name: 'Italy', flag: '🇮🇹' },
+    { code: '+34', name: 'Spain', flag: '🇪🇸' },
+    { code: '+61', name: 'Australia', flag: '🇦🇺' }
+  ];
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -493,8 +527,13 @@ function Recents() {
   };
 
   const handleCall = async (number = null) => {
-    const targetNumber = number || phoneNumber.trim();
-    if (!targetNumber || calling) return;
+    const rawNumber = number || phoneNumber.trim();
+    if (!rawNumber || calling) return;
+
+    // Automatically prefix selected country code if user didn't type + code
+    const targetNumber = rawNumber.startsWith('+')
+      ? rawNumber
+      : `${dialCountryCode}${rawNumber}`;
     if (!subscriptionActive) {
       alert('Active subscription required to make calls');
       return;
@@ -710,39 +749,87 @@ function Recents() {
 
   // Mobile Bottom Navigation Component
   const MobileBottomNav = () => (
-    <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700 
-                    safe-area-bottom z-40 shadow-lg">
-      <div className="grid grid-cols-3 h-16">
-        <button
-          onClick={() => setMobileTab('chats')}
-          className={`flex items-center justify-center transition-colors ${
-            mobileTab === 'chats'
-              ? 'text-indigo-600 dark:text-indigo-400'
-              : 'text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          <MessageIcon className="w-8 h-8" strokeWidth={mobileTab === 'chats' ? 2.5 : 2} />
-        </button>
-        <button
-          onClick={() => setMobileTab('recents')}
-          className={`flex items-center justify-center transition-colors ${
-            mobileTab === 'recents'
-              ? 'text-indigo-600 dark:text-indigo-400'
-              : 'text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          <PhoneIcon className="w-8 h-8" strokeWidth={mobileTab === 'recents' ? 2.5 : 2} />
-        </button>
-        <button
-          onClick={() => setMobileTab('dialer')}
-          className={`flex items-center justify-center transition-colors ${
-            mobileTab === 'dialer'
-              ? 'text-indigo-600 dark:text-indigo-400'
-              : 'text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          <DialpadIcon className="w-8 h-8" strokeWidth={mobileTab === 'dialer' ? 2.5 : 2} />
-        </button>
+    <div className="lg:hidden fixed bottom-0 left-0 right-0 safe-area-bottom z-40">
+      <div className="mx-3 mb-3 rounded-3xl bg-white/95 dark:bg-slate-900/95 border border-gray-200/80 dark:border-slate-700/80 shadow-[0_10px_30px_rgba(15,23,42,0.35)] backdrop-blur-xl">
+        <div className="grid grid-cols-3 h-16 px-4">
+          {/* Chats */}
+          <button
+            onClick={() => setMobileTab('chats')}
+            className="relative flex flex-col items-center justify-center gap-1"
+          >
+            <span
+              className={`flex items-center justify-center rounded-2xl transition-all duration-200
+                ${mobileTab === 'chats'
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/40 scale-105'
+                  : 'text-gray-500 dark:text-gray-400'
+                } w-11 h-11`}
+            >
+              <MessageIcon
+                className="w-6 h-6"
+                strokeWidth={mobileTab === 'chats' ? 2.4 : 2}
+              />
+            </span>
+            <span
+              className={`h-1 w-1.5 rounded-full transition-opacity ${
+                mobileTab === 'chats'
+                  ? 'bg-indigo-500 opacity-100'
+                  : 'opacity-0'
+              }`}
+            />
+          </button>
+
+          {/* Recents / Call History */}
+          <button
+            onClick={() => setMobileTab('recents')}
+            className="relative flex flex-col items-center justify-center gap-1"
+          >
+            <span
+              className={`flex items-center justify-center rounded-2xl transition-all duration-200
+                ${mobileTab === 'recents'
+                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-lg shadow-slate-700/40 scale-105'
+                  : 'text-gray-500 dark:text-gray-400'
+                } w-11 h-11`}
+            >
+              <HistoryIcon
+                className="w-6 h-6"
+                strokeWidth={mobileTab === 'recents' ? 2.4 : 2}
+              />
+            </span>
+            <span
+              className={`h-1 w-1.5 rounded-full transition-opacity ${
+                mobileTab === 'recents'
+                  ? 'bg-slate-900 dark:bg-slate-100 opacity-100'
+                  : 'opacity-0'
+              }`}
+            />
+          </button>
+
+          {/* Dialer */}
+          <button
+            onClick={() => setMobileTab('dialer')}
+            className="relative flex flex-col items-center justify-center gap-1"
+          >
+            <span
+              className={`flex items-center justify-center rounded-2xl transition-all duration-200
+                ${mobileTab === 'dialer'
+                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/40 scale-105'
+                  : 'text-gray-500 dark:text-gray-400'
+                } w-11 h-11`}
+            >
+              <DialpadIcon
+                className="w-6 h-6"
+                strokeWidth={mobileTab === 'dialer' ? 2.4 : 2}
+              />
+            </span>
+            <span
+              className={`h-1 w-1.5 rounded-full transition-opacity ${
+                mobileTab === 'dialer'
+                  ? 'bg-emerald-500 opacity-100'
+                  : 'opacity-0'
+              }`}
+            />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1349,13 +1436,13 @@ function Recents() {
             {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
           </h1>
                 {mobileTab === 'chats' ? (
-          <button 
+                  <button 
                     onClick={handleNewChat}
-                    className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 transition-colors"
+                    className="p-2.5 rounded-full bg-indigo-600 text-white shadow-md hover:shadow-lg hover:bg-indigo-700 active:scale-95 transition-all"
                     title="Start new chat"
-          >
-                    <PlusIcon className="w-6 h-6" />
-          </button>
+                  >
+                    <PlusIcon className="w-4 h-4" />
+                  </button>
                 ) : (
                   <div className="w-10"></div>
                 )}
@@ -1491,7 +1578,7 @@ function Recents() {
                     <div
                       key={chat.id}
                       onClick={() => handleText(phoneNumber)}
-                      className="p-4 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700/50 active:bg-gray-100 dark:active:bg-slate-700 transition-colors"
+                      className="p-4 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700/50 active:bg-gray-100 dark:active:bg-slate-700 transition-all duration-150 active:scale-[0.98]"
                     >
                       <div className="flex items-center space-x-3">
                         <Avatar name={displayName} phoneNumber={phoneNumber} size="w-12 h-12" />
@@ -1526,7 +1613,7 @@ function Recents() {
                   return (
                     <div
                       key={call.id || call._id}
-                      className="p-4 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700/50 active:bg-gray-100 dark:active:bg-slate-700 transition-colors"
+                      className="p-4 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700/50 active:bg-gray-100 dark:active:bg-slate-700 transition-all duration-150 active:scale-[0.98]"
                     >
                       <div className="flex items-center space-x-3 mb-3">
                         <div className="relative">
@@ -1598,7 +1685,7 @@ function Recents() {
 
               {/* Phone Number Display with Back Button - Professional Header */}
               <div className="px-5 py-4 bg-white dark:bg-slate-800 border-b border-gray-200/60 dark:border-slate-700/60 backdrop-blur-sm">
-                <div className="flex items-center gap-3 mb-3">
+                <div className="flex items-center justify-between mb-3">
                   <button
                     onClick={() => setMobileTab('recents')}
                     className="p-2.5 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 flex-shrink-0 transition-all active:scale-90"
@@ -1608,44 +1695,79 @@ function Recents() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
                     </svg>
                   </button>
-                  <div className="flex items-center gap-2.5 flex-1">
-                    <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-900/40 shadow-sm">
-                      <PhoneIcon className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                    </div>
-                    <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 tracking-tight">Dial Number</span>
-                  </div>
+                  <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 tracking-tight">Dial Number</span>
+                  <div className="w-10" />
                 </div>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={phoneNumber}
-                    onChange={(e) => {
-                      // Allow digits, +, *, #
-                      const cleaned = e.target.value.replace(/[^\d+*#]/g, '');
-                      setPhoneNumber(cleaned);
-                    }}
-                    onPaste={handlePaste}
-                    onKeyDown={(e) => {
-                      handleKeyDown(e);
-                      if (e.key === 'Enter' && phoneNumber.trim() && !calling && subscriptionActive && userNumbers.length > 0) {
-                        handleCall();
-                      }
-                    }}
-                    placeholder="Enter phone number"
-                    className="w-full text-2xl font-semibold text-gray-900 dark:text-white min-h-[56px] px-6 py-3 text-center bg-gray-50 dark:bg-slate-700/50 border-2 border-gray-200 dark:border-slate-600 rounded-2xl focus:border-indigo-500 dark:focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm focus:shadow-lg"
-                    disabled={calling || !subscriptionActive || userNumbers.length === 0}
-                  />
-                  {phoneNumber && (
+                <div className="flex items-center gap-2">
+                  {/* Country code picker */}
+                  <div className="relative">
                     <button
-                      onClick={() => setPhoneNumber('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-all"
-                      aria-label="Clear number"
+                      type="button"
+                      onClick={() => setShowDialCountryDropdown(!showDialCountryDropdown)}
+                      className="px-3 py-2 rounded-2xl border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 flex items-center gap-2 text-sm text-gray-900 dark:text-white"
                     >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
+                      <span>{dialCountries.find(c => c.code === dialCountryCode)?.flag || '🇺🇸'}</span>
+                      <span>{dialCountryCode}</span>
                     </button>
-                  )}
+                    {showDialCountryDropdown && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-30"
+                          onClick={() => setShowDialCountryDropdown(false)}
+                        />
+                        <div className="absolute z-40 mt-2 w-40 max-h-64 overflow-y-auto bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-xl shadow-xl">
+                          {dialCountries.map(country => (
+                            <button
+                              key={country.code + country.name}
+                              type="button"
+                              onClick={() => {
+                                setDialCountryCode(country.code);
+                                setShowDialCountryDropdown(false);
+                              }}
+                              className="w-full px-3 py-2 text-left flex items-center gap-2 text-sm text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-slate-700"
+                            >
+                              <span>{country.flag}</span>
+                              <span className="truncate">{country.name}</span>
+                              <span className="ml-auto text-gray-400 dark:text-gray-500">{country.code}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  {/* Number input */}
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      value={phoneNumber}
+                      onChange={(e) => {
+                        // Allow digits, +, *, #
+                        const cleaned = e.target.value.replace(/[^\d+*#]/g, '');
+                        setPhoneNumber(cleaned);
+                      }}
+                      onPaste={handlePaste}
+                      onKeyDown={(e) => {
+                        handleKeyDown(e);
+                        if (e.key === 'Enter' && phoneNumber.trim() && !calling && subscriptionActive && userNumbers.length > 0) {
+                          handleCall();
+                        }
+                      }}
+                      placeholder="Enter phone number"
+                      className="w-full text-2xl font-semibold text-gray-900 dark:text-white min-h-[56px] px-6 py-3 text-center bg-gray-50 dark:bg-slate-700/50 border-2 border-gray-200 dark:border-slate-600 rounded-2xl focus:border-indigo-500 dark:focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm focus:shadow-lg"
+                      disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                    />
+                    {phoneNumber && (
+                      <button
+                        onClick={() => setPhoneNumber('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-all"
+                        aria-label="Clear number"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 

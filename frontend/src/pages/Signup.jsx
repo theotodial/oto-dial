@@ -24,28 +24,76 @@ const EyeOffIcon = () => (
   </svg>
 );
 
-// Country codes with flags (emoji)
+// Country codes with flags (emoji) - extended global & European coverage
 const countries = [
+  // North America
   { code: '+1', name: 'United States', flag: '🇺🇸' },
+  { code: '+1', name: 'Canada', flag: '🇨🇦' },
+  { code: '+52', name: 'Mexico', flag: '🇲🇽' },
+
+  // Western Europe
   { code: '+44', name: 'United Kingdom', flag: '🇬🇧' },
+  { code: '+353', name: 'Ireland', flag: '🇮🇪' },
+  { code: '+33', name: 'France', flag: '🇫🇷' },
+  { code: '+49', name: 'Germany', flag: '🇩🇪' },
+  { code: '+39', name: 'Italy', flag: '🇮🇹' },
+  { code: '+34', name: 'Spain', flag: '🇪🇸' },
+  { code: '+31', name: 'Netherlands', flag: '🇳🇱' },
+  { code: '+32', name: 'Belgium', flag: '🇧🇪' },
+  { code: '+41', name: 'Switzerland', flag: '🇨🇭' },
+  { code: '+43', name: 'Austria', flag: '🇦🇹' },
+  { code: '+352', name: 'Luxembourg', flag: '🇱🇺' },
+  { code: '+353', name: 'Ireland', flag: '🇮🇪' },
+  { code: '+356', name: 'Malta', flag: '🇲🇹' },
+
+  // Northern Europe & Nordics
+  { code: '+47', name: 'Norway', flag: '🇳🇴' },
+  { code: '+46', name: 'Sweden', flag: '🇸🇪' },
+  { code: '+45', name: 'Denmark', flag: '🇩🇰' },
+  { code: '+358', name: 'Finland', flag: '🇫🇮' },
+  { code: '+354', name: 'Iceland', flag: '🇮🇸' },
+
+  // Southern Europe
+  { code: '+351', name: 'Portugal', flag: '🇵🇹' },
+  { code: '+30', name: 'Greece', flag: '🇬🇷' },
+  { code: '+357', name: 'Cyprus', flag: '🇨🇾' },
+
+  // Central & Eastern Europe
+  { code: '+48', name: 'Poland', flag: '🇵🇱' },
+  { code: '+420', name: 'Czech Republic', flag: '🇨🇿' },
+  { code: '+421', name: 'Slovakia', flag: '🇸🇰' },
+  { code: '+36', name: 'Hungary', flag: '🇭🇺' },
+  { code: '+40', name: 'Romania', flag: '🇷🇴' },
+  { code: '+359', name: 'Bulgaria', flag: '🇧🇬' },
+  { code: '+385', name: 'Croatia', flag: '🇭🇷' },
+  { code: '+386', name: 'Slovenia', flag: '🇸🇮' },
+  { code: '+372', name: 'Estonia', flag: '🇪🇪' },
+  { code: '+371', name: 'Latvia', flag: '🇱🇻' },
+  { code: '+370', name: 'Lithuania', flag: '🇱🇹' },
+
+  // Other Europe / nearby
+  { code: '+7', name: 'Russia', flag: '🇷🇺' },
+  { code: '+90', name: 'Turkey', flag: '🇹🇷' },
+  { code: '+380', name: 'Ukraine', flag: '🇺🇦' },
+
+  // Asia
   { code: '+91', name: 'India', flag: '🇮🇳' },
   { code: '+86', name: 'China', flag: '🇨🇳' },
   { code: '+81', name: 'Japan', flag: '🇯🇵' },
-  { code: '+49', name: 'Germany', flag: '🇩🇪' },
-  { code: '+33', name: 'France', flag: '🇫🇷' },
-  { code: '+39', name: 'Italy', flag: '🇮🇹' },
-  { code: '+34', name: 'Spain', flag: '🇪🇸' },
-  { code: '+61', name: 'Australia', flag: '🇦🇺' },
-  { code: '+55', name: 'Brazil', flag: '🇧🇷' },
-  { code: '+7', name: 'Russia', flag: '🇷🇺' },
   { code: '+82', name: 'South Korea', flag: '🇰🇷' },
   { code: '+65', name: 'Singapore', flag: '🇸🇬' },
+  { code: '+60', name: 'Malaysia', flag: '🇲🇾' },
   { code: '+971', name: 'UAE', flag: '🇦🇪' },
   { code: '+977', name: 'Nepal', flag: '🇳🇵' },
   { code: '+92', name: 'Pakistan', flag: '🇵🇰' },
   { code: '+880', name: 'Bangladesh', flag: '🇧🇩' },
   { code: '+94', name: 'Sri Lanka', flag: '🇱🇰' },
-  { code: '+60', name: 'Malaysia', flag: '🇲🇾' },
+
+  // Oceania & Latin America
+  { code: '+61', name: 'Australia', flag: '🇦🇺' },
+  { code: '+64', name: 'New Zealand', flag: '🇳🇿' },
+  { code: '+55', name: 'Brazil', flag: '🇧🇷' },
+  { code: '+54', name: 'Argentina', flag: '🇦🇷' },
 ];
 
 function Signup() {
@@ -121,7 +169,7 @@ function Signup() {
 
   return (
     <div className="min-h-screen pt-24 pb-12 px-4 bg-gray-50 dark:bg-slate-900">
-      <div className="max-w-md mx-auto p-8 border border-gray-200 dark:border-slate-700 rounded-2xl bg-white dark:bg-slate-800 shadow-lg">
+      <div className="max-w-md mx-auto p-8 border border-gray-200 dark:border-slate-700 rounded-2xl bg-white dark:bg-slate-800 shadow-lg transition-all duration-300 hover:shadow-2xl hover:-translate-y-0.5">
         <h2 className="text-2xl font-bold text-center mb-6 text-gray-900 dark:text-white">Sign Up</h2>
 
         {error && (
@@ -132,7 +180,7 @@ function Signup() {
 
         <button 
           onClick={handleGoogleSignup} 
-          className="w-full mb-6 p-3 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors font-medium flex items-center justify-center gap-3"
+          className="w-full mb-6 p-3 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-600 transition-all duration-200 active:scale-[0.97] font-medium flex items-center justify-center gap-3"
         >
           <GoogleIcon />
           <span>Continue with Google</span>
@@ -208,7 +256,7 @@ function Signup() {
                 <button
                   type="button"
                   onClick={() => setShowCountryDropdown(!showCountryDropdown)}
-                  className="px-3 py-3 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors flex items-center gap-2 min-w-[100px]"
+                  className="px-3 py-3 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-slate-600 transition-all duration-200 active:scale-[0.97] flex items-center gap-2 min-w-[100px]"
                 >
                   <span className="text-lg">{countries.find(c => c.code === formData.countryCode)?.flag || '🇺🇸'}</span>
                   <span className="text-sm">{formData.countryCode}</span>
@@ -232,7 +280,7 @@ function Signup() {
                             setFormData({ ...formData, countryCode: country.code });
                             setShowCountryDropdown(false);
                           }}
-                          className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-slate-600 flex items-center gap-3 text-gray-900 dark:text-white"
+                          className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-slate-600 flex items-center gap-3 text-gray-900 dark:text-white transition-colors"
                         >
                           <span className="text-lg">{country.flag}</span>
                           <span className="flex-1">{country.name}</span>
@@ -321,7 +369,7 @@ function Signup() {
           <button
             type="submit"
             disabled={loading}
-            className={`w-full p-3 rounded-lg font-medium transition-all ${
+            className={`w-full p-3 rounded-lg font-medium transition-all duration-200 active:scale-[0.97] ${
               loading
                 ? 'bg-gray-400 dark:bg-gray-600 text-gray-200 cursor-not-allowed'
                 : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg hover:shadow-xl'
