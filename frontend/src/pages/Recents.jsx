@@ -1823,30 +1823,30 @@ function Recents() {
                     })}
                   </div>
                   
-                  {/* Delete and Call buttons - Compact round buttons */}
-                  <div className="grid grid-cols-2 gap-2">
+                  {/* Delete and Call buttons - Small compact round buttons */}
+                  <div className="flex items-center justify-center gap-3">
                     <button
                       onClick={handleBackspace}
                       disabled={!phoneNumber || calling}
-                      className="aspect-square w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 
+                      className="w-12 h-12 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 
                                  hover:bg-gray-50 dark:hover:bg-slate-700 active:bg-gray-100 dark:active:bg-slate-600 
                                  text-gray-700 dark:text-gray-200 rounded-full flex items-center justify-center 
                                  disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.96]"
                     >
-                      <BackspaceIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+                      <BackspaceIcon className="w-4 h-4" />
                     </button>
                     <button
                       onClick={handleCall}
                       disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
-                      className="aspect-square w-full bg-green-500 hover:bg-green-600 active:bg-green-700 
+                      className="w-12 h-12 bg-green-500 hover:bg-green-600 active:bg-green-700 
                                  text-white rounded-full flex items-center justify-center 
                                  disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.96]
                                  shadow-sm hover:shadow-md"
                     >
                       {calling ? (
-                        <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                       ) : (
-                        <PhoneIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+                        <PhoneIcon className="w-4 h-4" />
                       )}
                     </button>
                   </div>
