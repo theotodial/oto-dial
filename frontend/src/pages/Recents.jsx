@@ -1683,20 +1683,20 @@ function Recents() {
                 </div>
               </div>
 
-              {/* Phone Number Display with Back Button - Professional Header */}
-              <div className="px-5 py-4 bg-white dark:bg-slate-800 border-b border-gray-200/60 dark:border-slate-700/60 backdrop-blur-sm">
-                <div className="flex items-center justify-between mb-3">
+              {/* Phone Number Display with Back Button - Compact Professional Header */}
+              <div className="px-4 py-3 bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
+                <div className="flex items-center justify-between mb-2">
                   <button
                     onClick={() => setMobileTab('recents')}
-                    className="p-2.5 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 flex-shrink-0 transition-all active:scale-90"
+                    className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 flex-shrink-0 transition-all active:scale-90"
                     title="Go back to recents"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                     </svg>
                   </button>
-                  <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 tracking-tight">Dial Number</span>
-                  <div className="w-10" />
+                  <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">Dial Number</span>
+                  <div className="w-9" />
                 </div>
                 <div className="flex items-center gap-2">
                   {/* Country code picker */}
@@ -1704,9 +1704,9 @@ function Recents() {
                     <button
                       type="button"
                       onClick={() => setShowDialCountryDropdown(!showDialCountryDropdown)}
-                      className="px-3 py-2 rounded-2xl border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 flex items-center gap-2 text-sm text-gray-900 dark:text-white"
+                      className="px-2.5 py-1.5 rounded-xl border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 flex items-center gap-1.5 text-xs font-medium text-gray-900 dark:text-white"
                     >
-                      <span>{dialCountries.find(c => c.code === dialCountryCode)?.flag || '🇺🇸'}</span>
+                      <span className="text-sm">{dialCountries.find(c => c.code === dialCountryCode)?.flag || '🇺🇸'}</span>
                       <span>{dialCountryCode}</span>
                     </button>
                     {showDialCountryDropdown && (
@@ -1753,17 +1753,17 @@ function Recents() {
                         }
                       }}
                       placeholder="Enter phone number"
-                      className="w-full text-2xl font-semibold text-gray-900 dark:text-white min-h-[56px] px-6 py-3 text-center bg-gray-50 dark:bg-slate-700/50 border-2 border-gray-200 dark:border-slate-600 rounded-2xl focus:border-indigo-500 dark:focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 dark:focus:ring-indigo-900/30 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm focus:shadow-lg"
+                      className="w-full text-lg font-semibold text-gray-900 dark:text-white h-12 px-4 text-center bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl focus:border-indigo-500 dark:focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
                       disabled={calling || !subscriptionActive || userNumbers.length === 0}
                     />
                     {phoneNumber && (
                       <button
                         onClick={() => setPhoneNumber('')}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-all"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-500 dark:text-gray-400 transition-all"
                         aria-label="Clear number"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                         </svg>
                       </button>
                     )}
@@ -1771,10 +1771,11 @@ function Recents() {
                 </div>
               </div>
 
-              {/* Dialpad - Compact to fit everything */}
-              <div className="flex-1 flex items-center justify-center p-2 bg-gray-50 dark:bg-slate-900 overflow-hidden">
-                <div className="w-full max-w-xs">
-                  <div className="grid grid-cols-3 gap-1.5">
+              {/* Dialpad - Professional Mobile Design */}
+              <div className="flex-1 flex flex-col justify-center px-3 py-3 bg-gray-50 dark:bg-slate-900 overflow-hidden min-h-0">
+                <div className="w-full max-w-xs mx-auto">
+                  {/* Keypad Grid - Compact buttons with large numbers */}
+                  <div className="grid grid-cols-3 gap-2 mb-2.5">
                     {dialpadButtons.map((btn) => {
                       let pressTimer = null;
                       return (
@@ -1805,15 +1806,15 @@ function Recents() {
                             if (pressTimer) clearTimeout(pressTimer);
                           }}
                         disabled={calling || !subscriptionActive || userNumbers.length === 0}
-                          className="aspect-square w-full bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 
-                                     active:bg-indigo-100 dark:active:bg-slate-600 rounded-full border-2 border-gray-200 dark:border-slate-600 
-                                     hover:border-indigo-300 dark:hover:border-indigo-500 transition-all active:scale-95 
-                                     text-gray-900 dark:text-white shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed 
-                                     flex flex-col items-center justify-center min-h-[50px]"
+                          className="aspect-square w-full bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 
+                                     active:bg-gray-100 dark:active:bg-slate-600 rounded-full border border-gray-200 dark:border-slate-700 
+                                     transition-all duration-150 active:scale-[0.96] 
+                                     text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed 
+                                     flex flex-col items-center justify-center"
                         >
-                          <span className="text-2xl font-bold leading-none text-gray-900 dark:text-white">{btn.digit}</span>
+                          <span className="text-2xl sm:text-3xl font-bold leading-none text-gray-900 dark:text-white">{btn.digit}</span>
                         {btn.letters && (
-                            <span className="text-[7px] font-semibold text-gray-500 dark:text-gray-400 mt-0.5 leading-tight uppercase tracking-wider">
+                            <span className="text-[7px] sm:text-[8px] font-medium text-gray-500 dark:text-gray-400 mt-0.5 leading-tight uppercase tracking-wide">
                             {btn.letters}
                           </span>
                         )}
@@ -1821,44 +1822,34 @@ function Recents() {
                       );
                     })}
                   </div>
-                </div>
-              </div>
-
-              {/* Call Buttons - Professional Bottom Bar */}
-              <div className="px-5 py-4 bg-white dark:bg-slate-800 border-t border-gray-200/60 dark:border-slate-700/60 backdrop-blur-sm shadow-[0_-4px_20px_rgba(0,0,0,0.05)] dark:shadow-[0_-4px_20px_rgba(0,0,0,0.3)]">
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleBackspace}
-                    disabled={!phoneNumber || calling}
-                    className="flex-1 py-4 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-50 dark:hover:bg-slate-600 
-                               active:bg-gray-100 dark:active:bg-slate-500 text-gray-700 dark:text-gray-200 rounded-2xl 
-                               flex items-center justify-center gap-2.5 font-semibold text-base shadow-sm hover:shadow-md
-                               disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95"
-                  >
-                    <BackspaceIcon className="w-5 h-5" />
-                    <span>Delete</span>
-                  </button>
-                  <button
-                    onClick={handleCall}
-                    disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
-                    className="flex-[2] py-4 bg-gradient-to-r from-green-500 via-green-600 to-emerald-600 hover:from-green-600 hover:via-green-700 hover:to-emerald-700 
-                               active:from-green-700 active:via-emerald-700 active:to-emerald-800 text-white rounded-2xl
-                               flex items-center justify-center gap-2.5 font-bold text-base shadow-lg hover:shadow-xl hover:shadow-green-500/30
-                               disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-sm
-                               transition-all active:scale-95"
-                  >
-                    {calling ? (
-                      <>
-                        <div className="w-5 h-5 border-2.5 border-white border-t-transparent rounded-full animate-spin"></div>
-                        <span>Calling...</span>
-                      </>
-                    ) : (
-                      <>
-                        <PhoneIcon className="w-5 h-5" />
-                        <span>Call</span>
-                      </>
-                    )}
-                  </button>
+                  
+                  {/* Delete and Call buttons - Compact round buttons */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={handleBackspace}
+                      disabled={!phoneNumber || calling}
+                      className="aspect-square w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 
+                                 hover:bg-gray-50 dark:hover:bg-slate-700 active:bg-gray-100 dark:active:bg-slate-600 
+                                 text-gray-700 dark:text-gray-200 rounded-full flex items-center justify-center 
+                                 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.96]"
+                    >
+                      <BackspaceIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                    <button
+                      onClick={handleCall}
+                      disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
+                      className="aspect-square w-full bg-green-500 hover:bg-green-600 active:bg-green-700 
+                                 text-white rounded-full flex items-center justify-center 
+                                 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.96]
+                                 shadow-sm hover:shadow-md"
+                    >
+                      {calling ? (
+                        <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      ) : (
+                        <PhoneIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
