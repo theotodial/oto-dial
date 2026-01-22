@@ -30,27 +30,59 @@ router.post("/voice", async (req, res) => {
     // ===============================
     // INBOUND CALL INITIATED
     // ===============================
-    if (event === "call.initiated" && callPayload.direction === "incoming") {
+    if (event === "call.initiated") {
       const toNumber = callPayload.to;
       const fromNumber = callPayload.from;
+      const direction = callPayload.direction;
 
-      // Find user who owns this number
-      const phoneNumber = await PhoneNumber.findOne({
-        phoneNumber: toNumber,
-        status: "active"
-      });
-
-      if (phoneNumber) {
-        await Call.create({
-          telnyxCallControlId: callControlId,
-          user: phoneNumber.userId,
-          phoneNumber: fromNumber,
-          fromNumber: fromNumber,
-          toNumber: toNumber,
-          direction: "inbound",
-          status: "ringing"
+      if (direction === "incoming") {
+        // Find user who owns this number
+        const phoneNumber = await PhoneNumber.findOne({
+          phoneNumber: toNumber,
+          status: "active"
         });
-        console.log(`✅ Inbound call recorded: ${fromNumber} -> ${toNumber}`);
+
+        if (phoneNumber) {
+          await Call.create({
+            telnyxCallControlId: callControlId,
+            user: phoneNumber.userId,
+            phoneNumber: fromNumber,
+            fromNumber: fromNumber,
+            toNumber: toNumber,
+            direction: "inbound",
+            status: "ringing"
+          });
+          console.log(`✅ Inbound call recorded: ${fromNumber} -> ${toNumber}`);
+        }
+      } else {
+        const updated = await Call.findOneAndUpdate(
+          { telnyxCallControlId: callControlId },
+          {
+            status: "ringing",
+            fromNumber: fromNumber,
+            toNumber: toNumber,
+            direction: "outbound"
+          }
+        );
+
+        if (!updated && fromNumber) {
+          const phoneNumber = await PhoneNumber.findOne({
+            phoneNumber: fromNumber,
+            status: "active"
+          });
+
+          if (phoneNumber) {
+            await Call.create({
+              telnyxCallControlId: callControlId,
+              user: phoneNumber.userId,
+              phoneNumber: toNumber,
+              fromNumber: fromNumber,
+              toNumber: toNumber,
+              direction: "outbound",
+              status: "ringing"
+            });
+          }
+        }
       }
     }
 

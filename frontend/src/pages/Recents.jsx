@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { useAuth } from '../context/AuthContext';
+import { useCall } from '../context/CallContext';
 
 const ClockIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -151,12 +152,14 @@ function Recents() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [userNumbers, setUserNumbers] = useState([]);
   const [subscriptionActive, setSubscriptionActive] = useState(false);
-  const [calling, setCalling] = useState(false);
   const [dialCountryCode, setDialCountryCode] = useState('+1');
   const [showDialCountryDropdown, setShowDialCountryDropdown] = useState(false);
   
   // Mobile navigation state
   const [mobileTab, setMobileTab] = useState('chats'); // 'chats', 'recents', 'dialer'
+
+  const { isActive, isPlacingCall, startCall } = useCall();
+  const isCallBusy = isActive || isPlacingCall;
   
   // New chat modal state
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -528,7 +531,7 @@ function Recents() {
 
   const handleCall = async (number = null) => {
     const rawNumber = number || phoneNumber.trim();
-    if (!rawNumber || calling) return;
+    if (!rawNumber || isCallBusy) return;
 
     // Automatically prefix selected country code if user didn't type + code
     const targetNumber = rawNumber.startsWith('+')
@@ -544,49 +547,23 @@ function Recents() {
     }
 
     if (!isMountedRef.current) return;
-    setCalling(true);
     
     try {
-      // Request microphone permission for browser-based calling
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Stop the stream immediately - we just needed permission
-        stream.getTracks().forEach(track => track.stop());
-        console.log('✅ Microphone permission granted');
-      } catch (micError) {
-        if (!isMountedRef.current) return;
-        alert('Microphone access is required to make calls. Please allow microphone access and try again.');
-        setCalling(false);
-        return;
-      }
-
-      // Use correct API endpoint and payload per backend contract
-      // POST /api/dialer/call with { to: destinationNumber }
-      const response = await API.post('/api/dialer/call', {
-        to: targetNumber
-      });
-      
+      const result = await startCall(targetNumber);
       if (!isMountedRef.current) return;
-      
-      if (response.error) {
-        alert(response.error);
-        setCalling(false);
+
+      if (!result.success) {
+        alert(result.error || 'Failed to make call. Please try again.');
       } else {
         if (!number) setPhoneNumber(''); // Only clear if dialed
-        setCalling(false);
         if (isMountedRef.current) {
-          // Refresh recents to show new chat if calling new number
           await fetchRecents();
-          
-          // If chat is open for this number, refresh messages to show call
+
           if (selectedChat && normalizePhone(selectedChat) === normalizePhone(targetNumber)) {
             await fetchChatMessages(selectedChat);
           }
-          
-          // If calling from dialer and no chat exists, open chat to show call history
-          // This creates a new chat entry in recents for the number
+
           if (!selectedChat || normalizePhone(selectedChat) !== normalizePhone(targetNumber)) {
-            // Always open/create chat for the number that was called
             setSelectedChat(targetNumber);
             setMobileTab('chats');
             await fetchChatMessages(targetNumber);
@@ -595,7 +572,6 @@ function Recents() {
       }
     } catch (err) {
       if (isMountedRef.current) {
-        setCalling(false);
         alert('Failed to make call. Please try again.');
       }
     }
@@ -1021,7 +997,7 @@ function Recents() {
                               e.stopPropagation();
                               handleCall(phoneNumber);
                             }}
-                            disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                            disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                             className="flex-1 py-1.5 px-3 bg-green-500 hover:bg-green-600 text-white rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                           >
                             <PhoneIcon className="w-3.5 h-3.5" />
@@ -1098,7 +1074,7 @@ function Recents() {
                             e.stopPropagation();
                             handleCall(phoneNumber);
                           }}
-                          disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                          disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                           className="flex-1 py-1.5 px-3 bg-green-500 hover:bg-green-600 text-white rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                         >
                           <PhoneIcon className="w-3.5 h-3.5" />
@@ -1148,7 +1124,7 @@ function Recents() {
                       const phoneNumber = selectedCall?.phoneNumber || selectedCall?.to_number || selectedCall?.toNumber || '';
                       if (phoneNumber) handleCall(phoneNumber);
                     }}
-                    disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                    disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                     className="flex-1 py-2.5 px-4 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <PhoneIcon className="w-5 h-5" />
@@ -1293,7 +1269,7 @@ function Recents() {
                     onPaste={handlePaste}
                     onKeyDown={handleKeyDown}
                       className="w-full text-lg font-semibold text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 bg-transparent border-none outline-none focus:outline-none"
-                    disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                    disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                     />
                 </div>
               </div>
@@ -1354,7 +1330,7 @@ function Recents() {
                     onTouchEnd={() => {
                       if (pressTimer) clearTimeout(pressTimer);
                     }}
-                  disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                  disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                   className="aspect-square text-xl font-semibold bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 rounded-xl transition-all active:scale-95 text-gray-900 dark:text-white border border-gray-200 dark:border-slate-600 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center relative group"
                 >
                   <span className="text-2xl font-medium">{btn.digit}</span>
@@ -1372,7 +1348,7 @@ function Recents() {
             <div className="mt-4 flex gap-2">
               <button
                 onClick={handleBackspace}
-                disabled={!phoneNumber || calling}
+                disabled={!phoneNumber || isCallBusy}
                 className="flex-1 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-200 rounded-lg flex items-center justify-center font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1381,10 +1357,10 @@ function Recents() {
               </button>
               <button
                 onClick={handleCall}
-                disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
+                disabled={!phoneNumber.trim() || isCallBusy || userNumbers.length === 0 || !subscriptionActive}
                 className="flex-[2] py-2 bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600 text-white rounded-lg flex items-center justify-center gap-2 font-medium shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all disabled:shadow-none"
               >
-                {calling ? (
+                {isPlacingCall ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                     Calling...
@@ -1422,7 +1398,7 @@ function Recents() {
                 </h1>
                 <button
                   onClick={() => handleCall(selectedChat)}
-                  disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                  disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                   className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Call"
                 >
@@ -1649,7 +1625,7 @@ function Recents() {
                             e.stopPropagation();
                             handleCall(phoneNumber);
                           }}
-                          disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                          disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                           className="flex-1 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg flex items-center justify-center gap-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
                         >
                           <PhoneIcon className="w-4 h-4" />
@@ -1748,13 +1724,13 @@ function Recents() {
                       onPaste={handlePaste}
                       onKeyDown={(e) => {
                         handleKeyDown(e);
-                        if (e.key === 'Enter' && phoneNumber.trim() && !calling && subscriptionActive && userNumbers.length > 0) {
+                        if (e.key === 'Enter' && phoneNumber.trim() && !isCallBusy && subscriptionActive && userNumbers.length > 0) {
                           handleCall();
                         }
                       }}
                       placeholder="Enter phone number"
                       className="w-full text-lg font-semibold text-gray-900 dark:text-white h-12 px-4 text-center bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl focus:border-indigo-500 dark:focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                      disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                     />
                     {phoneNumber && (
                       <button
@@ -1805,7 +1781,7 @@ function Recents() {
                           onTouchEnd={() => {
                             if (pressTimer) clearTimeout(pressTimer);
                           }}
-                        disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                        disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                           className="aspect-square w-full bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 
                                      active:bg-gray-100 dark:active:bg-slate-600 rounded-full border border-gray-200 dark:border-slate-700 
                                      transition-all duration-150 active:scale-[0.96] 
@@ -1827,7 +1803,7 @@ function Recents() {
                   <div className="flex items-center justify-center gap-3">
                     <button
                       onClick={handleBackspace}
-                      disabled={!phoneNumber || calling}
+                      disabled={!phoneNumber || isCallBusy}
                       className="w-12 h-12 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 
                                  hover:bg-gray-50 dark:hover:bg-slate-700 active:bg-gray-100 dark:active:bg-slate-600 
                                  text-gray-700 dark:text-gray-200 rounded-full flex items-center justify-center 
@@ -1837,13 +1813,13 @@ function Recents() {
                     </button>
                     <button
                       onClick={handleCall}
-                      disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
+                      disabled={!phoneNumber.trim() || isCallBusy || userNumbers.length === 0 || !subscriptionActive}
                       className="w-12 h-12 bg-green-500 hover:bg-green-600 active:bg-green-700 
                                  text-white rounded-full flex items-center justify-center 
                                  disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.96]
                                  shadow-sm hover:shadow-md"
                     >
-                      {calling ? (
+                      {isPlacingCall ? (
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                       ) : (
                         <PhoneIcon className="w-4 h-4" />

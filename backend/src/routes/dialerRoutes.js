@@ -4,6 +4,7 @@ import Call from "../models/Call.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 
 const router = express.Router();
+const ACTIVE_STATUSES = ["queued", "dialing", "ringing", "in-progress", "answered"];
 
 /**
  * POST /api/dialer/call
@@ -74,6 +75,105 @@ router.post("/call", async (req, res) => {
   } catch (err) {
     console.error("DIALER ERROR:", err);
     res.status(500).json({ error: "Call failed" });
+  }
+});
+
+/**
+ * GET /api/dialer/active
+ * Returns most recent active call for user
+ */
+router.get("/active", async (req, res) => {
+  try {
+    const activeCall = await Call.findOne({
+      user: req.userId,
+      status: { $in: ACTIVE_STATUSES }
+    }).sort({ createdAt: -1 });
+
+    return res.json({ success: true, call: activeCall || null });
+  } catch (err) {
+    console.error("DIALER ACTIVE CALL ERROR:", err);
+    return res.status(500).json({ error: "Failed to fetch active call" });
+  }
+});
+
+/**
+ * GET /api/dialer/calls/:id
+ * Lookup call by database ID or call control ID
+ */
+router.get("/calls/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const call = await Call.findOne({
+      user: req.userId,
+      $or: [{ _id: id }, { telnyxCallControlId: id }]
+    });
+
+    if (!call) {
+      return res.status(404).json({ error: "Call not found" });
+    }
+
+    return res.json({ success: true, call });
+  } catch (err) {
+    console.error("DIALER CALL LOOKUP ERROR:", err);
+    return res.status(500).json({ error: "Failed to fetch call" });
+  }
+});
+
+/**
+ * POST /api/dialer/call/:callControlId/answer
+ * Answers an inbound call
+ */
+router.post("/call/:callControlId/answer", async (req, res) => {
+  try {
+    const { callControlId } = req.params;
+    const telnyx = getTelnyx();
+    if (!telnyx) {
+      return res.status(503).json({ error: "Telnyx not configured" });
+    }
+
+    await telnyx.calls.answer(callControlId);
+
+    await Call.findOneAndUpdate(
+      { telnyxCallControlId: callControlId, user: req.userId },
+      { status: "in-progress", callStartedAt: new Date() }
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("DIALER ANSWER ERROR:", err);
+    return res.status(500).json({ error: "Failed to answer call" });
+  }
+});
+
+/**
+ * POST /api/dialer/call/:callControlId/hangup
+ * Ends an active call
+ */
+router.post("/call/:callControlId/hangup", async (req, res) => {
+  try {
+    const { callControlId } = req.params;
+    const telnyx = getTelnyx();
+    if (!telnyx) {
+      return res.status(503).json({ error: "Telnyx not configured" });
+    }
+
+    await telnyx.calls.hangup(callControlId);
+
+    const call = await Call.findOne({
+      telnyxCallControlId: callControlId,
+      user: req.userId
+    });
+
+    if (call) {
+      call.callEndedAt = new Date();
+      call.status = call.callStartedAt ? "completed" : "failed";
+      await call.save();
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("DIALER HANGUP ERROR:", err);
+    return res.status(500).json({ error: "Failed to hang up call" });
   }
 });
 

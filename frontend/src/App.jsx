@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
+import { CallProvider } from './context/CallContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Navbar from './components/Navbar';
 import DashboardLayout from './components/DashboardLayout';
@@ -26,7 +27,8 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider>
         <AuthProvider>
-          <BrowserRouter>
+          <CallProvider>
+            <BrowserRouter>
       <Routes>
             {/* Public Routes - Accessible to everyone, redirects if authenticated */}
         <Route
@@ -173,6 +175,7 @@ function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
       </BrowserRouter>
+      </CallProvider>
       </AuthProvider>
     </ThemeProvider>
     </ErrorBoundary>

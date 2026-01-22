@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Sidebar from './Sidebar';
+import CallOverlay from './CallOverlay';
 
 const MenuIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -33,6 +34,7 @@ function DashboardLayout({ children }) {
       <div className="flex-1 overflow-auto bg-gray-50 dark:bg-slate-800 lg:ml-0 pt-0">
         {children}
       </div>
+      <CallOverlay />
     </div>
   );
 }
