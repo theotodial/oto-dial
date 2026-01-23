@@ -34,6 +34,8 @@ function DashboardLayout({ children }) {
       <div className="flex-1 overflow-auto bg-gray-50 dark:bg-slate-800 lg:ml-0 pt-0">
         {children}
       </div>
+      <audio id="telnyx-remote-audio" autoPlay playsInline className="hidden" />
+      <audio id="telnyx-local-audio" autoPlay playsInline muted className="hidden" />
       <CallOverlay />
     </div>
   );

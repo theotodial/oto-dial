@@ -34,6 +34,11 @@ const optionalEnvVars = {
   EMAIL_PORT: '587',
   EMAIL_USER: '',
   EMAIL_PASS: '',
+  TELNYX_WEBRTC_CONNECTION_ID: '',
+  TELNYX_WEBRTC_TOKEN_URL: '',
+  WEB_PUSH_PUBLIC_KEY: '',
+  WEB_PUSH_PRIVATE_KEY: '',
+  WEB_PUSH_SUBJECT: '',
 };
 
 export function validateEnv() {

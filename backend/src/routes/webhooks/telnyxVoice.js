@@ -2,6 +2,7 @@ import express from "express";
 import Call from "../../models/Call.js";
 import Subscription from "../../models/Subscription.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
+import { sendPushToUser } from "../../services/pushService.js";
 
 const router = express.Router();
 
@@ -43,7 +44,7 @@ router.post("/voice", async (req, res) => {
         });
 
         if (phoneNumber) {
-          await Call.create({
+          const callRecord = await Call.create({
             telnyxCallControlId: callControlId,
             user: phoneNumber.userId,
             phoneNumber: fromNumber,
@@ -53,6 +54,19 @@ router.post("/voice", async (req, res) => {
             status: "ringing"
           });
           console.log(`✅ Inbound call recorded: ${fromNumber} -> ${toNumber}`);
+
+          sendPushToUser(phoneNumber.userId, {
+            type: "incoming_call",
+            title: "Incoming call",
+            body: `Call from ${fromNumber}`,
+            callId: callRecord._id,
+            callControlId,
+            fromNumber,
+            toNumber,
+            url: "/recents"
+          }).catch((err) => {
+            console.warn("Push notification failed:", err?.message || err);
+          });
         }
       } else {
         const updated = await Call.findOneAndUpdate(

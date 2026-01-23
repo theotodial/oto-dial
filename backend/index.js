@@ -33,6 +33,7 @@ import adminRoutes from "./src/routes/admin/adminRoutes.js";
 import contactRoutes from "./src/routes/contactRoutes.js";
 import userRoutes from "./src/routes/userRoutes.js";
 import messageRoutes from "./src/routes/messageRoutes.js";
+import notificationsRoutes from "./src/routes/notifications.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
 import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
@@ -94,6 +95,7 @@ app.use("/api/calls", authenticateUser, loadSubscription, callRoutes);
 app.use("/api/sms", authenticateUser, loadSubscription, smsRoutes);
 app.use("/api/messages", authenticateUser, loadSubscription, messageRoutes);
 app.use("/api/admin", authenticateUser, loadSubscription, adminRoutes);
+app.use("/api/notifications", authenticateUser, loadSubscription, notificationsRoutes);
 
 // ========================
 // HEALTH
