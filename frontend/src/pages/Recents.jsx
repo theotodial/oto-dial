@@ -557,8 +557,8 @@ function Recents() {
       return;
     }
     
-    if (calling) {
-      console.log('📞 Recents: Already calling');
+    if (calling || isInCall) {
+      console.log('📞 Recents: Already in a call');
       return;
     }
 
@@ -594,16 +594,23 @@ function Recents() {
       
       if (!isMountedRef.current) return;
       
-      if (!success) {
-        setCalling(false);
-        const errorMsg = callError || 'Failed to place call';
-        console.log('📞 Recents: Call failed:', errorMsg);
-        alert(errorMsg);
-      } else {
-        // Clear phone number on success
-        if (!number) setPhoneNumber('');
-        // Reset calling state - GlobalCallOverlay handles the call UI now
-        setCalling(false);
+      // Clear phone number on success
+      if (success && !number) {
+        setPhoneNumber('');
+      }
+      
+      // Always reset calling state - GlobalCallOverlay handles the call UI now
+      setCalling(false);
+      
+      // Only show error if call truly failed (success is false AND we're not in a call)
+      if (!success && !isInCall) {
+        // Wait a moment to check if call actually started
+        setTimeout(() => {
+          if (!callContext?.isInCall) {
+            console.log('📞 Recents: Call failed');
+            // Don't show alert - error is already in context
+          }
+        }, 500);
       }
     } catch (err) {
       console.error('📞 Recents: Call error:', err);

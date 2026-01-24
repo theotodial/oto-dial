@@ -149,6 +149,11 @@ function Dialer() {
       return;
     }
 
+    if (isInCall) {
+      setError('Already in a call');
+      return;
+    }
+
     if (!subscriptionActive) {
       setError('Active subscription required to make calls');
       return;
@@ -178,10 +183,9 @@ function Dialer() {
       
       if (callSuccess) {
         setPhoneNumber('');
-      } else {
-        // Get the latest error from context
-        setError(callError || 'Failed to place call. Check console for details.');
+        setSuccess('Call initiated');
       }
+      // Don't show error immediately - the GlobalCallOverlay will show if call is connecting
     } catch (err) {
       console.error('📞 Dialer: Call exception:', err);
       setError(err.message || 'Failed to place call');

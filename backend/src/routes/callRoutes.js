@@ -81,4 +81,39 @@ router.get("/", async (req, res) => {
   res.json({ success: true, calls });
 });
 
+// Update a call record
+router.patch("/:id", async (req, res) => {
+  try {
+    const { status, durationSeconds, callEndedAt, callStartedAt } = req.body;
+    
+    const call = await Call.findOne({
+      _id: req.params.id,
+      user: req.userId
+    });
+
+    if (!call) {
+      return res.status(404).json({
+        success: false,
+        error: "Call not found"
+      });
+    }
+
+    // Update allowed fields
+    if (status) call.status = status;
+    if (durationSeconds !== undefined) call.durationSeconds = durationSeconds;
+    if (callEndedAt) call.callEndedAt = new Date(callEndedAt);
+    if (callStartedAt) call.callStartedAt = new Date(callStartedAt);
+
+    await call.save();
+
+    res.json({ success: true, call });
+  } catch (err) {
+    console.error("CALL UPDATE ERROR:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to update call"
+    });
+  }
+});
+
 export default router;

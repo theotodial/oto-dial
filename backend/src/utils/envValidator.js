@@ -11,6 +11,7 @@ const requiredEnvVars = {
   PORT: 'Server port',
   NODE_ENV: 'Node environment',
   FRONTEND_URL: 'Frontend URL',
+  BACKEND_URL: 'Backend URL for webhooks (e.g., https://api.yourdomain.com)',
   
   // Security
   JWT_SECRET: 'JWT secret key',

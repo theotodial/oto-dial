@@ -118,10 +118,25 @@ export const CallProvider = ({ children }) => {
   }, []);
 
   // Handle call end
-  const handleCallEnd = useCallback(() => {
+  const handleCallEnd = useCallback(async () => {
     console.log('📱 Call ended, cleaning up...');
     soundManager.stopAll();
     soundManager.playEnded();
+
+    // Update call record in database
+    if (currentCallRef.current?._dbCallId) {
+      const duration = durationIntervalRef.current ? callDuration : 0;
+      try {
+        await API.patch(`/api/calls/${currentCallRef.current._dbCallId}`, {
+          status: 'completed',
+          durationSeconds: duration,
+          callEndedAt: new Date().toISOString()
+        });
+        console.log('📱 Call record updated with completion status');
+      } catch (err) {
+        console.warn('📱 Failed to update call record on end:', err);
+      }
+    }
 
     if (durationIntervalRef.current) {
       clearInterval(durationIntervalRef.current);
@@ -141,10 +156,10 @@ export const CallProvider = ({ children }) => {
     setError(null);
     setIncomingCall(null);
     setIsMinimized(false);
-  }, []);
+  }, [callDuration]);
 
   // Handle call state updates from Telnyx
-  const handleCallStateChange = useCallback((call) => {
+  const handleCallStateChange = useCallback(async (call) => {
     if (!call) return;
     
     console.log('📱 Call state changed:', call.state);
@@ -169,6 +184,12 @@ export const CallProvider = ({ children }) => {
       case 'early':
         setCallState(CALL_STATES.RINGING);
         soundManager.startRingback();
+        // Update call record to ringing
+        if (call._dbCallId) {
+          try {
+            await API.patch(`/api/calls/${call._dbCallId}`, { status: 'ringing' });
+          } catch (e) {}
+        }
         break;
       case 'active':
         setCallState(CALL_STATES.ACTIVE);
@@ -176,6 +197,15 @@ export const CallProvider = ({ children }) => {
         soundManager.stopRingtone();
         soundManager.playConnected();
         startDurationTimer();
+        // Update call record to in-progress
+        if (call._dbCallId) {
+          try {
+            await API.patch(`/api/calls/${call._dbCallId}`, { 
+              status: 'in-progress',
+              callStartedAt: new Date().toISOString()
+            });
+          } catch (e) {}
+        }
         break;
       case 'held':
         setCallState(CALL_STATES.HELD);
@@ -362,6 +392,39 @@ export const CallProvider = ({ children }) => {
     return initializationPromiseRef.current;
   }, [handleCallStateChange, handleIncomingCallEvent]);
 
+  // Save call record to database
+  const saveCallRecord = useCallback(async (toNumber, fromNumber, direction = 'outbound', status = 'dialing') => {
+    try {
+      const response = await API.post('/api/calls', {
+        phoneNumber: toNumber,
+        fromNumber: fromNumber,
+        toNumber: toNumber,
+        direction: direction,
+        status: status
+      });
+      
+      if (response.data?.call?._id) {
+        console.log('📱 Call record saved:', response.data.call._id);
+        return response.data.call._id;
+      }
+      return null;
+    } catch (err) {
+      console.warn('📱 Failed to save call record:', err);
+      return null;
+    }
+  }, []);
+
+  // Update call record in database
+  const updateCallRecord = useCallback(async (callId, updates) => {
+    if (!callId) return;
+    try {
+      await API.patch(`/api/calls/${callId}`, updates);
+      console.log('📱 Call record updated:', callId, updates);
+    } catch (err) {
+      console.warn('📱 Failed to update call record:', err);
+    }
+  }, []);
+
   // Make outbound call
   const makeCall = useCallback(async (destinationNumber, callerIdNumber) => {
     console.log('📱 makeCall called with:', { destinationNumber, callerIdNumber });
@@ -417,6 +480,9 @@ export const CallProvider = ({ children }) => {
 
       console.log('📱 Placing call from:', callerId, 'to:', destinationNumber);
 
+      // Save call record to database BEFORE making the call
+      const callRecordId = await saveCallRecord(destinationNumber, callerId, 'outbound', 'dialing');
+
       // Make the call
       const call = telnyxClientRef.current.newCall({
         destinationNumber: destinationNumber,
@@ -430,10 +496,16 @@ export const CallProvider = ({ children }) => {
       if (!call) {
         setError('Failed to create call');
         setCallState(CALL_STATES.IDLE);
+        // Update call record as failed
+        if (callRecordId) {
+          updateCallRecord(callRecordId, { status: 'failed' });
+        }
         return false;
       }
 
       currentCallRef.current = call;
+      // Store call record ID on the call object for later updates
+      call._dbCallId = callRecordId;
 
       // Listen for state changes on this call
       call.on('stateChange', () => {
@@ -449,7 +521,7 @@ export const CallProvider = ({ children }) => {
       setCallState(CALL_STATES.IDLE);
       return false;
     }
-  }, [initializeClient, isClientReady, credentials, handleCallStateChange]);
+  }, [initializeClient, isClientReady, credentials, handleCallStateChange, saveCallRecord, updateCallRecord]);
 
   // Answer incoming call
   const answerCall = useCallback(() => {
