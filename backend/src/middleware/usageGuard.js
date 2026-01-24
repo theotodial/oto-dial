@@ -1,40 +1,45 @@
-import Subscription from "../models/Subscription.js";
+// backend/src/middleware/usageGuard.js
 
-const usageGuard = (type) => {
-  return async (req, res, next) => {
+/**
+ * CANONICAL USAGE GUARD
+ * --------------------
+ * Subscription collection is the single source of truth.
+ * If subscription is ACTIVE, usage is allowed.
+ * No legacy usage counters or usageLog checks are permitted.
+ */
+
+module.exports = function usageGuard(feature) {
+  return async function (req, res, next) {
     try {
-      const subscription = await Subscription.findOne({
-        userId: req.userId,
-        status: "active"
-      });
+      const subscription = req.subscription;
 
       if (!subscription) {
         return res.status(403).json({
-          error: "No active subscription"
+          success: false,
+          message: "No active subscription found"
         });
       }
 
-      const { usage, limits, hardStop } = subscription;
-
-      if (type === "call" && hardStop && usage.minutesUsed >= limits.minutesTotal) {
+      if (subscription.status !== "active") {
         return res.status(403).json({
-          error: "Call minutes limit reached"
+          success: false,
+          message: "Subscription is not active"
         });
       }
 
-      if (type === "sms" && hardStop && usage.smsUsed >= limits.smsTotal) {
-        return res.status(403).json({
-          error: "SMS limit reached"
-        });
-      }
+      /**
+       * IMPORTANT:
+       * We DO NOT block based on usage numbers here.
+       * Usage tracking is informational only.
+       */
+      return next();
 
-      req.subscription = subscription;
-      next();
-    } catch (err) {
-      console.error("USAGE GUARD ERROR:", err);
-      res.status(500).json({ error: "Usage validation failed" });
+    } catch (error) {
+      console.error("UsageGuard Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Usage validation failed"
+      });
     }
   };
 };
-
-export default usageGuard;

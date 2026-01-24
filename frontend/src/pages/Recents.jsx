@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { useAuth } from '../context/AuthContext';
+import { useCall, CALL_STATES } from '../context/CallContext';
+import CallWindow from '../components/CallWindow';
 
 const ClockIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -130,6 +132,17 @@ const Avatar = ({ name, phoneNumber, size = 'w-10 h-10', className = '' }) => {
 function Recents() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  
+  // WebRTC call context
+  const { 
+    callState, 
+    isInCall, 
+    makeCall: webrtcMakeCall, 
+    initializeClient,
+    error: callError,
+    remoteNumber: callRemoteNumber
+  } = useCall();
+
   const [activeTab, setActiveTab] = useState('all'); // 'all', 'missed', 'chats'
   const [selectedCall, setSelectedCall] = useState(null);
   const [selectedChat, setSelectedChat] = useState(null); // For inline chat on mobile
@@ -232,6 +245,8 @@ function Recents() {
             remainingSMS: subRes.data?.remainingSMS || 0,
             planName: subRes.data?.planName || 'No Plan'
           });
+          // Initialize WebRTC client when subscription is active
+          initializeClient();
         }
       } catch (err) {
         console.warn('Failed to fetch dialer data:', err);
@@ -240,7 +255,7 @@ function Recents() {
       }
     };
     fetchDialerData();
-  }, []);
+  }, [initializeClient]);
 
   // Fetch messages when selectedChat changes
   useEffect(() => {
@@ -461,8 +476,25 @@ function Recents() {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
-          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-500 dark:text-gray-300">Loading recents...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show call window when in a call (replaces main content)
+  if (isInCall) {
+    return (
+      <div className="h-screen flex flex-col bg-gray-50 dark:bg-slate-900 overflow-hidden">
+        {/* Call Window - Full screen on mobile, centered on desktop */}
+        <div className="flex-1 lg:flex lg:items-center lg:justify-center lg:p-6">
+          <div className="h-full lg:h-auto lg:w-[400px] lg:max-h-[700px] lg:rounded-3xl lg:overflow-hidden lg:shadow-2xl">
+            <CallWindow 
+              contactName={getContactName(callRemoteNumber)} 
+              contactAvatar={null}
+            />
+          </div>
         </div>
       </div>
     );
@@ -546,58 +578,22 @@ function Recents() {
     if (!isMountedRef.current) return;
     setCalling(true);
     
-    try {
-      // Request microphone permission for browser-based calling
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Stop the stream immediately - we just needed permission
-        stream.getTracks().forEach(track => track.stop());
-        console.log('✅ Microphone permission granted');
-      } catch (micError) {
-        if (!isMountedRef.current) return;
-        alert('Microphone access is required to make calls. Please allow microphone access and try again.');
-        setCalling(false);
-        return;
-      }
+    // Get caller ID
+    const callerId = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
 
-      // Use correct API endpoint and payload per backend contract
-      // POST /api/dialer/call with { to: destinationNumber }
-      const response = await API.post('/api/dialer/call', {
-        to: targetNumber
-      });
-      
-      if (!isMountedRef.current) return;
-      
-      if (response.error) {
-        alert(response.error);
-        setCalling(false);
-      } else {
-        if (!number) setPhoneNumber(''); // Only clear if dialed
-        setCalling(false);
-        if (isMountedRef.current) {
-          // Refresh recents to show new chat if calling new number
-          await fetchRecents();
-          
-          // If chat is open for this number, refresh messages to show call
-          if (selectedChat && normalizePhone(selectedChat) === normalizePhone(targetNumber)) {
-            await fetchChatMessages(selectedChat);
-          }
-          
-          // If calling from dialer and no chat exists, open chat to show call history
-          // This creates a new chat entry in recents for the number
-          if (!selectedChat || normalizePhone(selectedChat) !== normalizePhone(targetNumber)) {
-            // Always open/create chat for the number that was called
-            setSelectedChat(targetNumber);
-            setMobileTab('chats');
-            await fetchChatMessages(targetNumber);
-          }
-        }
+    // Make WebRTC call
+    const success = await webrtcMakeCall(targetNumber, callerId);
+    
+    if (!isMountedRef.current) return;
+    
+    if (!success) {
+      setCalling(false);
+      if (callError) {
+        alert(callError);
       }
-    } catch (err) {
-      if (isMountedRef.current) {
-        setCalling(false);
-        alert('Failed to make call. Please try again.');
-      }
+    } else {
+      if (!number) setPhoneNumber(''); // Only clear if dialed
+      setCalling(false);
     }
   };
 
@@ -697,10 +693,8 @@ function Recents() {
     e?.preventDefault();
     if (!inputMessage.trim() || sending || !selectedChat) return;
 
-    if (subscriptionData.remainingSMS <= 0) {
-      setSendError('SMS limit reached. Please upgrade your plan.');
-      return;
-    }
+    // Note: SMS limits are tracked but not enforced
+    // Usage is informational only
 
     if (userNumbers.length === 0) {
       setSendError('You need to purchase a number first.');

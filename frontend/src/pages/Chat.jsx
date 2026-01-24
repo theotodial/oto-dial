@@ -341,11 +341,8 @@ function Chat() {
 
     if (!inputMessage.trim() || sending) return;
 
-    // Check SMS limit
-    if (subscriptionData.remainingSMS <= 0) {
-      setSendError('SMS limit reached. Please upgrade your plan or wait for the next billing cycle.');
-      return;
-    }
+    // Note: SMS limits are tracked but not enforced
+    // Usage is informational only
 
     if (!selectedChat?.phoneNumber) {
       setSendError('Please select a chat or enter a phone number');

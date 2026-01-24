@@ -22,15 +22,27 @@ router.post("/send", async (req, res) => {
       return res.status(400).json({ error: "Missing to or text" });
     }
 
-    if (!req.subscription || !req.subscription.active) {
+    // Check subscription exists
+    if (!req.subscription) {
       return res.status(403).json({ error: "No active subscription" });
     }
 
-    if (req.subscription.smsRemaining <= 0) {
-      return res.status(403).json({ error: "SMS limit reached" });
+    // Debug subscription data
+    console.log("📱 SMS Send - Subscription check:", {
+      userId: req.userId,
+      active: req.subscription.active,
+      subscriptionId: req.subscription.id
+    });
+
+    // 🔒 SINGLE SOURCE OF TRUTH
+    if (!req.subscription.active) {
+      return res.status(403).json({ error: "Subscription is not active" });
     }
 
     // 🔒 SINGLE SOURCE OF TRUTH
+    // ❌ NO smsRemaining enforcement here
+    // Usage limits are informational only
+
     const phone = await PhoneNumber.findOne({
       userId: req.userId,
       status: "active"
@@ -68,19 +80,36 @@ router.post("/send", async (req, res) => {
       telnyxMessageId: response.data.id
     });
 
-    await Subscription.updateOne(
-      { _id: req.subscription.id },
-      { $inc: { "usage.smsUsed": 1 } }
-    );
+    // ✅ Usage tracking ONLY (no enforcement)
+    if (req.subscription.id) {
+      await Subscription.updateOne(
+        { _id: req.subscription.id },
+        { $inc: { "usage.smsUsed": 1 } }
+      );
+    }
 
-    res.json({ success: true });
+    console.log(`✅ SMS sent from ${from} to ${toFormatted}`);
+    res.json({ success: true, messageId: response.data.id });
+
   } catch (err) {
     console.error("SMS FAILED:", err.response?.data || err.message);
-    res.status(500).json({
-      error:
-        err.response?.data?.errors?.[0]?.detail ||
-        "Failed to send SMS"
-    });
+    
+    // Extract Telnyx error details
+    const telnyxError = err.response?.data?.errors?.[0];
+    let errorMessage = "Failed to send SMS";
+    
+    if (telnyxError) {
+      // Provide more helpful error messages
+      if (telnyxError.code === "40021") {
+        errorMessage = "Cannot send SMS to this number - it appears to be a landline or VoIP number, not a mobile phone.";
+      } else if (telnyxError.detail) {
+        errorMessage = telnyxError.detail;
+      } else if (telnyxError.title) {
+        errorMessage = telnyxError.title;
+      }
+    }
+    
+    res.status(500).json({ error: errorMessage });
   }
 });
 

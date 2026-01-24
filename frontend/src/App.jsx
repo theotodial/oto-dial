@@ -1,11 +1,13 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
+import { CallProvider } from './context/CallContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Navbar from './components/Navbar';
 import DashboardLayout from './components/DashboardLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
+import IncomingCallNotification from './components/IncomingCallNotification';
 import Home from './pages/Home';
 import Signup from './pages/Signup';
 import Login from './pages/Login';
@@ -26,7 +28,10 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider>
         <AuthProvider>
+          <CallProvider>
           <BrowserRouter>
+            {/* Global Incoming Call Notification */}
+            <IncomingCallNotification />
       <Routes>
             {/* Public Routes - Accessible to everyone, redirects if authenticated */}
         <Route
@@ -173,6 +178,7 @@ function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
       </BrowserRouter>
+          </CallProvider>
       </AuthProvider>
     </ThemeProvider>
     </ErrorBoundary>
