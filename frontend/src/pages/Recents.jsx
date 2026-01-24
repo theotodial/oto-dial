@@ -575,12 +575,13 @@ function Recents() {
 
   const handleCall = async (number = null) => {
     const rawNumber = number || phoneNumber.trim();
-    if (!rawNumber || calling) return;
+    if (!rawNumber || calling || isInCall) return;
 
     // Automatically prefix selected country code if user didn't type + code
     const targetNumber = rawNumber.startsWith('+')
       ? rawNumber
       : `${dialCountryCode}${rawNumber}`;
+      
     if (!subscriptionActive) {
       alert('Active subscription required to make calls');
       return;
@@ -596,19 +597,28 @@ function Recents() {
     // Get caller ID
     const callerId = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
 
-    // Make WebRTC call
-    const success = await webrtcMakeCall(targetNumber, callerId);
-    
-    if (!isMountedRef.current) return;
-    
-    if (!success) {
-      setCalling(false);
-      if (callError) {
-        alert(callError);
+    console.log('📞 Recents: Making call to', targetNumber, 'from', callerId);
+
+    try {
+      // Make WebRTC call
+      const success = await webrtcMakeCall(targetNumber, callerId);
+      
+      if (!isMountedRef.current) return;
+      
+      if (!success) {
+        setCalling(false);
+        if (callError) {
+          alert(callError);
+        }
+      } else {
+        // Clear phone number on success
+        if (!number) setPhoneNumber('');
+        // Keep calling true - will be reset when call ends
       }
-    } else {
-      if (!number) setPhoneNumber(''); // Only clear if dialed
+    } catch (err) {
+      console.error('📞 Recents: Call error:', err);
       setCalling(false);
+      alert(err.message || 'Failed to place call');
     }
   };
 

@@ -31,12 +31,11 @@ function Dialer() {
   const callContext = useCall();
   const callState = callContext?.callState || 'idle';
   const isInCall = callContext?.isInCall || false;
-  const makeCall = callContext?.makeCall || (async () => false);
+  const webrtcMakeCall = callContext?.makeCall || (async () => false);
   const initializeClient = callContext?.initializeClient || (async () => false);
   const callError = callContext?.error || null;
-
-  // Debug logging
-  console.log('🔵 Dialer render - callState:', callState, 'isInCall:', isInCall, 'isPlacingCall:', isPlacingCall);
+  const isClientReady = callContext?.isClientReady || false;
+  const remoteNumber = callContext?.remoteNumber || '';
 
   const dialCountries = [
     { code: '+1', name: 'United States', flag: '🇺🇸' },
@@ -175,16 +174,23 @@ function Dialer() {
     // Get caller ID
     const callerId = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
 
-    // Make call through context
-    console.log('📞 Calling makeCall with:', destination);
-    const callSuccess = await makeCall(destination, callerId);
-    console.log('📞 makeCall returned:', callSuccess);
+    console.log('📞 Calling webrtcMakeCall with:', destination, 'from:', callerId);
     
-    if (!callSuccess) {
-      setIsPlacingCall(false);
-      if (callError) {
-        setError(callError);
+    try {
+      const callSuccess = await webrtcMakeCall(destination, callerId);
+      console.log('📞 webrtcMakeCall returned:', callSuccess);
+      
+      if (!callSuccess) {
+        setIsPlacingCall(false);
+        setError(callError || 'Failed to place call');
+      } else {
+        // Clear phone number on success
+        setPhoneNumber('');
       }
+    } catch (err) {
+      console.error('📞 Call error:', err);
+      setIsPlacingCall(false);
+      setError(err.message || 'Failed to place call');
     }
   };
 
@@ -215,20 +221,26 @@ function Dialer() {
   }
 
   // Show call window when in a call (replaces keypad)
-  // Use either context isInCall OR local isPlacingCall state
   const showCallWindow = isInCall || isPlacingCall;
   
+  // Handle call end - reset local state
+  const handleCallEnd = () => {
+    console.log('📞 Call ended, resetting dialer state');
+    setIsPlacingCall(false);
+    setPhoneNumber('');
+  };
+  
   if (showCallWindow) {
-    console.log('🟢 Showing call window');
+    console.log('🟢 Showing call window, remoteNumber:', remoteNumber);
     return (
       <div className="h-screen flex flex-col bg-gray-50 dark:bg-slate-900 overflow-hidden">
         {/* Call Window - Full screen on mobile, centered on desktop */}
         <div className="flex-1 lg:flex lg:items-center lg:justify-center lg:p-6">
           <div className="h-full lg:h-auto lg:w-[400px] lg:max-h-[700px] lg:rounded-3xl lg:overflow-hidden lg:shadow-2xl">
             <CallWindow 
-              contactName={null} 
+              contactName={remoteNumber || phoneNumber} 
               contactAvatar={null}
-              onCallEnd={() => setIsPlacingCall(false)}
+              onCallEnd={handleCallEnd}
             />
           </div>
         </div>
