@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import API from '../api';
-import { useCall, CALL_STATES } from '../context/CallContext';
-import CallWindow from '../components/CallWindow';
+import { useCall } from '../context/CallContext';
 
 const PhoneIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -25,17 +24,17 @@ function Dialer() {
   const [subscriptionActive, setSubscriptionActive] = useState(false);
   const [dialCountryCode, setDialCountryCode] = useState('+1');
   const [showDialCountryDropdown, setShowDialCountryDropdown] = useState(false);
-  const [isPlacingCall, setIsPlacingCall] = useState(false);
   
-  // WebRTC call context - with safe defaults
-  const callContext = useCall();
-  const callState = callContext?.callState || 'idle';
-  const isInCall = callContext?.isInCall || false;
-  const webrtcMakeCall = callContext?.makeCall || (async () => false);
-  const initializeClient = callContext?.initializeClient || (async () => false);
-  const callError = callContext?.error || null;
-  const isClientReady = callContext?.isClientReady || false;
-  const remoteNumber = callContext?.remoteNumber || '';
+  // WebRTC call context
+  const {
+    callState,
+    isInCall,
+    makeCall,
+    error: callError,
+    isClientReady,
+    isMinimized,
+    isInitializing
+  } = useCall();
 
   const dialCountries = [
     { code: '+1', name: 'United States', flag: '🇺🇸' },
@@ -47,7 +46,9 @@ function Dialer() {
     { code: '+33', name: 'France', flag: '🇫🇷' },
     { code: '+39', name: 'Italy', flag: '🇮🇹' },
     { code: '+34', name: 'Spain', flag: '🇪🇸' },
-    { code: '+61', name: 'Australia', flag: '🇦🇺' }
+    { code: '+61', name: 'Australia', flag: '🇦🇺' },
+    { code: '+92', name: 'Pakistan', flag: '🇵🇰' },
+    { code: '+91', name: 'India', flag: '🇮🇳' },
   ];
 
   // Handle dialpad button clicks
@@ -114,8 +115,6 @@ function Dialer() {
 
       if (!subscriptionResponse.error && subscriptionResponse.data?.planName !== "No Plan") {
         setSubscriptionActive(true);
-        // Initialize WebRTC client when subscription is active
-        initializeClient();
       } else {
         setSubscriptionActive(false);
       }
@@ -150,7 +149,7 @@ function Dialer() {
     }
 
     if (!subscriptionActive) {
-      setError('Active subscription required to make calls. Please subscribe first.');
+      setError('Active subscription required to make calls');
       return;
     }
 
@@ -161,10 +160,6 @@ function Dialer() {
 
     setError('');
     setSuccess('');
-    
-    // Show call window immediately
-    setIsPlacingCall(true);
-    console.log('📞 Setting isPlacingCall to true');
 
     // Build final destination number with country code if needed
     const destination = phoneNumber.trim().startsWith('+')
@@ -174,23 +169,14 @@ function Dialer() {
     // Get caller ID
     const callerId = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
 
-    console.log('📞 Calling webrtcMakeCall with:', destination, 'from:', callerId);
+    console.log('📞 Calling:', destination, 'from:', callerId);
     
-    try {
-      const callSuccess = await webrtcMakeCall(destination, callerId);
-      console.log('📞 webrtcMakeCall returned:', callSuccess);
-      
-      if (!callSuccess) {
-        setIsPlacingCall(false);
-        setError(callError || 'Failed to place call');
-      } else {
-        // Clear phone number on success
-        setPhoneNumber('');
-      }
-    } catch (err) {
-      console.error('📞 Call error:', err);
-      setIsPlacingCall(false);
-      setError(err.message || 'Failed to place call');
+    const callSuccess = await makeCall(destination, callerId);
+    
+    if (callSuccess) {
+      setPhoneNumber('');
+    } else if (callError) {
+      setError(callError);
     }
   };
 
@@ -220,36 +206,18 @@ function Dialer() {
     );
   }
 
-  // Show call window when in a call (replaces keypad)
-  const showCallWindow = isInCall || isPlacingCall;
-  
-  // Handle call end - reset local state
-  const handleCallEnd = () => {
-    console.log('📞 Call ended, resetting dialer state');
-    setIsPlacingCall(false);
-    setPhoneNumber('');
-  };
-  
-  if (showCallWindow) {
-    console.log('🟢 Showing call window, remoteNumber:', remoteNumber);
-    return (
-      <div className="h-screen flex flex-col bg-gray-50 dark:bg-slate-900 overflow-hidden">
-        {/* Call Window - Full screen on mobile, centered on desktop */}
-        <div className="flex-1 lg:flex lg:items-center lg:justify-center lg:p-6">
-          <div className="h-full lg:h-auto lg:w-[400px] lg:max-h-[700px] lg:rounded-3xl lg:overflow-hidden lg:shadow-2xl">
-            <CallWindow 
-              contactName={remoteNumber || phoneNumber} 
-              contactAvatar={null}
-              onCallEnd={handleCallEnd}
-            />
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Refresh call logs when call ends
+  useEffect(() => {
+    if (!isInCall && callState === 'idle') {
+      fetchData(isMountedRef);
+    }
+  }, [isInCall]);
+
+  // Determine if dialer should be disabled (when in active call)
+  const dialerDisabled = isInCall && !isMinimized;
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 dark:bg-slate-900 overflow-hidden">
+    <div className={`h-screen flex flex-col bg-gray-50 dark:bg-slate-900 overflow-hidden ${isInCall && isMinimized ? 'pt-12' : ''}`}>
       {/* Active Number Display */}
       <div className="px-4 sm:px-6 py-2 sm:py-3 bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 flex-shrink-0">
         <div className="flex items-center justify-between flex-wrap gap-2">
@@ -266,11 +234,22 @@ function Dialer() {
               <span className="text-sm text-red-600 dark:text-red-400 font-medium">No number purchased</span>
             )}
           </div>
-          {!subscriptionActive && (
-            <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/30 px-2 py-1 rounded">
-              Subscription Required
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {isClientReady && (
+              <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                Ready
+              </span>
+            )}
+            {isInitializing && (
+              <span className="text-xs text-yellow-600 dark:text-yellow-400">Connecting...</span>
+            )}
+            {!subscriptionActive && (
+              <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/30 px-2 py-1 rounded">
+                Subscription Required
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -340,7 +319,12 @@ function Dialer() {
                   setError('');
                 }}
                 onPaste={handlePaste}
-                onKeyDown={handleKeyDown}
+                onKeyDown={(e) => {
+                  handleKeyDown(e);
+                  if (e.key === 'Enter' && phoneNumber.trim()) {
+                    handleCall();
+                  }
+                }}
                 placeholder="Enter phone number"
                 className="flex-1 text-xl sm:text-2xl lg:text-3xl font-semibold text-gray-900 dark:text-white min-h-[36px] sm:min-h-[40px] text-center bg-transparent border-none outline-none focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-400 placeholder:text-base sm:placeholder:text-lg"
                 disabled={userNumbers.length === 0 || !subscriptionActive}
@@ -360,36 +344,23 @@ function Dialer() {
                       onClick={() => handleDialpadClick(btn.digit)}
                       onMouseDown={() => {
                         if (btn.digit === '0') {
-                          pressTimer = setTimeout(() => {
-                            handleLongPress('0');
-                          }, 500);
+                          pressTimer = setTimeout(() => handleLongPress('0'), 500);
                         }
                       }}
-                      onMouseUp={() => {
-                        if (pressTimer) clearTimeout(pressTimer);
-                      }}
-                      onMouseLeave={() => {
-                        if (pressTimer) clearTimeout(pressTimer);
-                      }}
+                      onMouseUp={() => pressTimer && clearTimeout(pressTimer)}
+                      onMouseLeave={() => pressTimer && clearTimeout(pressTimer)}
                       onTouchStart={() => {
                         if (btn.digit === '0') {
-                          pressTimer = setTimeout(() => {
-                            handleLongPress('0');
-                          }, 500);
+                          pressTimer = setTimeout(() => handleLongPress('0'), 500);
                         }
                       }}
-                      onTouchEnd={() => {
-                        if (pressTimer) clearTimeout(pressTimer);
-                      }}
+                      onTouchEnd={() => pressTimer && clearTimeout(pressTimer)}
                       disabled={userNumbers.length === 0 || !subscriptionActive}
                       className="w-full h-full bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 
                                  rounded-lg sm:rounded-xl border border-gray-200 dark:border-slate-600 transition-all 
                                  active:scale-95 text-gray-900 dark:text-white shadow-sm hover:shadow-md
                                  disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center
                                  group min-h-0"
-                      style={{
-                        fontSize: 'clamp(1rem, 4vw, 1.5rem)',
-                      }}
                     >
                       <span className="text-lg sm:text-xl lg:text-2xl font-medium leading-none">{btn.digit}</span>
                       {btn.letters && (
@@ -419,7 +390,7 @@ function Dialer() {
               </button>
               <button
                 onClick={handleCall}
-                disabled={!phoneNumber.trim() || userNumbers.length === 0 || !subscriptionActive}
+                disabled={!phoneNumber.trim() || userNumbers.length === 0 || !subscriptionActive || isInCall}
                 className="flex-[2] py-2 sm:py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg
                            flex items-center justify-center gap-2 font-semibold shadow-md
                            disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
@@ -450,15 +421,15 @@ function Dialer() {
                 {(callLogs || []).slice(0, 20).map((call) => (
                   <button
                     key={call.id || call._id}
-                    onClick={() => setPhoneNumber(call.to_number || call.toNumber || '')}
+                    onClick={() => setPhoneNumber(call.to_number || call.toNumber || call.phoneNumber || '')}
                     className="w-full px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors"
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-medium text-gray-900 dark:text-white text-sm">
-                        {call.to_number || call.toNumber || 'Unknown'}
+                        {call.to_number || call.toNumber || call.phoneNumber || 'Unknown'}
                       </span>
                       <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {call.created_at ? new Date(call.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                        {call.created_at || call.createdAt ? new Date(call.created_at || call.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                       </span>
                     </div>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
@@ -483,15 +454,15 @@ function Dialer() {
               {(callLogs || []).slice(0, 5).map((call) => (
                 <button
                   key={call.id || call._id}
-                  onClick={() => setPhoneNumber(call.to_number || call.toNumber || '')}
+                  onClick={() => setPhoneNumber(call.to_number || call.toNumber || call.phoneNumber || '')}
                   className="w-full px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors"
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-medium text-gray-900 dark:text-white text-sm">
-                      {call.to_number || call.toNumber || 'Unknown'}
+                      {call.to_number || call.toNumber || call.phoneNumber || 'Unknown'}
                     </span>
                     <span className="text-xs text-gray-500 dark:text-gray-400">
-                      {call.created_at ? new Date(call.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                      {call.created_at || call.createdAt ? new Date(call.created_at || call.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                     </span>
                   </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400">

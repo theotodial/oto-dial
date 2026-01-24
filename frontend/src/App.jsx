@@ -8,6 +8,7 @@ import DashboardLayout from './components/DashboardLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import IncomingCallNotification from './components/IncomingCallNotification';
+import GlobalCallOverlay from './components/GlobalCallOverlay';
 import Home from './pages/Home';
 import Signup from './pages/Signup';
 import Login from './pages/Login';
@@ -30,8 +31,12 @@ function App() {
         <AuthProvider>
           <CallProvider>
           <BrowserRouter>
-            {/* Global Incoming Call Notification */}
+            {/* Global Incoming Call Notification - shows when call is incoming */}
             <IncomingCallNotification />
+            
+            {/* Global Call Overlay - shows floating banner when call is minimized */}
+            <GlobalCallOverlay />
+            
       <Routes>
             {/* Public Routes - Accessible to everyone, redirects if authenticated */}
         <Route

@@ -29,6 +29,7 @@ export const useCall = () => {
       remoteNumber: '',
       incomingCall: null,
       error: null,
+      isMinimized: false,
       initializeClient: async () => false,
       makeCall: async () => false,
       answerCall: () => {},
@@ -39,6 +40,8 @@ export const useCall = () => {
       toggleSpeaker: () => {},
       sendDTMF: () => {},
       formatDuration: () => '00:00',
+      minimizeCall: () => {},
+      expandCall: () => {},
       CALL_STATES,
       isInCall: false,
       isRinging: false,
@@ -63,6 +66,7 @@ export const CallProvider = ({ children }) => {
   const [isClientReady, setIsClientReady] = useState(false);
   const [credentials, setCredentials] = useState(null);
   const [isInitializing, setIsInitializing] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
 
   // Refs
   const telnyxClientRef = useRef(null);
@@ -71,6 +75,7 @@ export const CallProvider = ({ children }) => {
   const callStateRef = useRef(callState);
   const remoteAudioRef = useRef(null);
   const initializationPromiseRef = useRef(null);
+  const isInitializedRef = useRef(false);
   
   // Keep refs in sync with state
   useEffect(() => {
@@ -101,6 +106,41 @@ export const CallProvider = ({ children }) => {
         remoteAudioRef.current = null;
       }
     };
+  }, []);
+
+  // Start call duration timer
+  const startDurationTimer = useCallback(() => {
+    setCallDuration(0);
+    if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
+    durationIntervalRef.current = setInterval(() => {
+      setCallDuration((prev) => prev + 1);
+    }, 1000);
+  }, []);
+
+  // Handle call end
+  const handleCallEnd = useCallback(() => {
+    console.log('📱 Call ended, cleaning up...');
+    soundManager.stopAll();
+    soundManager.playEnded();
+
+    if (durationIntervalRef.current) {
+      clearInterval(durationIntervalRef.current);
+      durationIntervalRef.current = null;
+    }
+
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+    }
+
+    currentCallRef.current = null;
+    setCallState(CALL_STATES.IDLE);
+    setCallDuration(0);
+    setIsMuted(false);
+    setIsOnHold(false);
+    setRemoteNumber('');
+    setError(null);
+    setIncomingCall(null);
+    setIsMinimized(false);
   }, []);
 
   // Handle call state updates from Telnyx
@@ -147,7 +187,7 @@ export const CallProvider = ({ children }) => {
         handleCallEnd();
         break;
     }
-  }, []);
+  }, [startDurationTimer, handleCallEnd]);
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
@@ -162,6 +202,7 @@ export const CallProvider = ({ children }) => {
     setRemoteNumber(callerNumber);
     setCallState(CALL_STATES.INCOMING);
     setIncomingCall(call);
+    setIsMinimized(false);
     
     // Start ringtone
     soundManager.startRingtone();
@@ -172,93 +213,63 @@ export const CallProvider = ({ children }) => {
         body: `Call from ${callerNumber}`,
         icon: '/logo.svg',
         tag: 'incoming-call',
-        requireInteraction: true,
-        vibrate: [200, 100, 200]
+        requireInteraction: true
       });
     }
 
     // Listen for call state changes on this call
-    call.on('stateChange', (state) => {
-      console.log('📱 Incoming call state change:', state);
+    call.on('stateChange', () => {
       handleCallStateChange(call);
     });
   }, [handleCallStateChange]);
 
-  // Handle call end
-  const handleCallEnd = useCallback(() => {
-    console.log('📱 Call ended, cleaning up...');
-    soundManager.stopAll();
-    soundManager.playEnded();
-
-    if (durationIntervalRef.current) {
-      clearInterval(durationIntervalRef.current);
-      durationIntervalRef.current = null;
-    }
-
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = null;
-    }
-
-    currentCallRef.current = null;
-    setCallState(CALL_STATES.IDLE);
-    setCallDuration(0);
-    setIsMuted(false);
-    setIsOnHold(false);
-    setRemoteNumber('');
-    setError(null);
-    setIncomingCall(null);
-  }, []);
-
-  // Start call duration timer
-  const startDurationTimer = useCallback(() => {
-    setCallDuration(0);
-    if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
-    durationIntervalRef.current = setInterval(() => {
-      setCallDuration((prev) => prev + 1);
-    }, 1000);
-  }, []);
-
   // Initialize Telnyx WebRTC client
   const initializeClient = useCallback(async () => {
-    // If already initializing, wait for that to complete
+    // Prevent multiple initializations
     if (initializationPromiseRef.current) {
       console.log('📱 Already initializing, waiting...');
       return initializationPromiseRef.current;
     }
 
-    // If already connected, return true
-    if (telnyxClientRef.current && isClientReady) {
+    // If already connected and ready, return true
+    if (telnyxClientRef.current && isClientReady && isInitializedRef.current) {
       console.log('📱 Client already ready');
       return true;
     }
 
     setIsInitializing(true);
+    setError(null);
     
     initializationPromiseRef.current = (async () => {
       try {
         console.log('📱 Initializing Telnyx WebRTC client...');
         
         // Get credentials from backend
-        let creds = credentials;
-        if (!creds) {
-          const response = await API.get('/api/webrtc/token');
-          if (response.data?.credentials) {
-            creds = response.data.credentials;
-            setCredentials(creds);
-          }
-        }
+        const response = await API.get('/api/webrtc/token');
         
-        if (!creds) {
-          console.error('Failed to get WebRTC credentials');
-          setError('Failed to get calling credentials');
+        if (response.error) {
+          console.error('Failed to get WebRTC credentials:', response.error);
+          setError(response.error);
+          setIsInitializing(false);
           return false;
         }
+
+        const creds = response.data?.credentials;
+        if (!creds || !creds.sipUsername) {
+          console.error('Invalid credentials received');
+          setError('Invalid calling credentials');
+          setIsInitializing(false);
+          return false;
+        }
+
+        setCredentials(creds);
 
         // Get SIP password from frontend env
         const sipPassword = import.meta.env.VITE_TELNYX_SIP_PASSWORD;
         if (!sipPassword) {
           console.error('Missing VITE_TELNYX_SIP_PASSWORD');
-          setError('Calling not configured properly');
+          setError('Calling password not configured');
+          setIsInitializing(false);
           return false;
         }
 
@@ -269,6 +280,7 @@ export const CallProvider = ({ children }) => {
           try {
             telnyxClientRef.current.disconnect();
           } catch (e) {}
+          telnyxClientRef.current = null;
         }
 
         // Create new Telnyx WebRTC client
@@ -279,27 +291,42 @@ export const CallProvider = ({ children }) => {
           ringbackFile: null,
         });
 
-        // Set up event handlers
-        client.on('telnyx.ready', () => {
-          console.log('✅ Telnyx WebRTC client ready!');
-          setIsClientReady(true);
-          setError(null);
-          setIsInitializing(false);
-        });
+        // Store reference immediately
+        telnyxClientRef.current = client;
 
-        client.on('telnyx.error', (err) => {
-          console.error('❌ Telnyx error:', err);
-          setError(err.message || 'Connection error');
-          setIsClientReady(false);
-          setIsInitializing(false);
+        // Promise to wait for ready
+        const readyPromise = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error('Connection timeout - please check your credentials'));
+          }, 15000);
+
+          client.on('telnyx.ready', () => {
+            clearTimeout(timeout);
+            console.log('✅ Telnyx WebRTC client ready!');
+            setIsClientReady(true);
+            setError(null);
+            setIsInitializing(false);
+            isInitializedRef.current = true;
+            resolve(true);
+          });
+
+          client.on('telnyx.error', (err) => {
+            clearTimeout(timeout);
+            console.error('❌ Telnyx error:', err);
+            setError(err.message || 'Connection error');
+            setIsClientReady(false);
+            setIsInitializing(false);
+            reject(err);
+          });
         });
 
         client.on('telnyx.socket.close', () => {
           console.log('📱 Telnyx socket closed');
           setIsClientReady(false);
+          isInitializedRef.current = false;
         });
 
-        // Handle incoming calls
+        // Handle notifications (incoming calls, call updates)
         client.on('telnyx.notification', (notification) => {
           console.log('📱 Telnyx notification:', notification.type);
           
@@ -313,32 +340,19 @@ export const CallProvider = ({ children }) => {
         });
 
         // Connect to Telnyx
+        console.log('📱 Connecting to Telnyx...');
         await client.connect();
-        telnyxClientRef.current = client;
-
-        // Wait for ready event with timeout
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error('Connection timeout'));
-          }, 10000);
-          
-          const checkReady = () => {
-            if (client.connected) {
-              clearTimeout(timeout);
-              resolve();
-            } else {
-              setTimeout(checkReady, 100);
-            }
-          };
-          checkReady();
-        });
-
+        
+        // Wait for ready
+        await readyPromise;
+        
         console.log('✅ Telnyx client connected and ready');
         return true;
       } catch (err) {
         console.error('Failed to initialize Telnyx client:', err);
-        setError('Failed to connect to calling service');
+        setError(err.message || 'Failed to connect to calling service');
         setIsInitializing(false);
+        setIsClientReady(false);
         return false;
       } finally {
         initializationPromiseRef.current = null;
@@ -346,25 +360,34 @@ export const CallProvider = ({ children }) => {
     })();
 
     return initializationPromiseRef.current;
-  }, [credentials, isClientReady, handleCallStateChange, handleIncomingCallEvent]);
+  }, [handleCallStateChange, handleIncomingCallEvent]);
 
   // Make outbound call
   const makeCall = useCallback(async (destinationNumber, callerIdNumber) => {
-    console.log('📱 Making call to:', destinationNumber);
+    console.log('📱 makeCall called with:', destinationNumber, callerIdNumber);
     
+    if (!destinationNumber) {
+      setError('Please enter a phone number');
+      return false;
+    }
+
     try {
       setError(null);
       setRemoteNumber(destinationNumber);
       setCallState(CALL_STATES.CONNECTING);
+      setIsMinimized(false);
 
       // Initialize client if needed
       if (!telnyxClientRef.current || !isClientReady) {
         console.log('📱 Client not ready, initializing...');
         const initialized = await initializeClient();
         if (!initialized) {
+          console.error('📱 Failed to initialize client');
           setCallState(CALL_STATES.IDLE);
           return false;
         }
+        // Small delay to ensure client is fully ready
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
 
       // Double check client is available
@@ -378,6 +401,12 @@ export const CallProvider = ({ children }) => {
       let callerId = callerIdNumber;
       if (!callerId && credentials?.callerIdNumber) {
         callerId = credentials.callerIdNumber;
+      }
+
+      if (!callerId) {
+        setError('No caller ID available');
+        setCallState(CALL_STATES.IDLE);
+        return false;
       }
 
       console.log('📱 Placing call from:', callerId, 'to:', destinationNumber);
@@ -399,8 +428,8 @@ export const CallProvider = ({ children }) => {
       currentCallRef.current = call;
 
       // Listen for state changes on this call
-      call.on('stateChange', (state) => {
-        console.log('📱 Outbound call state:', state);
+      call.on('stateChange', () => {
+        console.log('📱 Outbound call state:', call.state);
         handleCallStateChange(call);
       });
 
@@ -517,19 +546,28 @@ export const CallProvider = ({ children }) => {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   }, []);
 
+  // Minimize call - allows navigation while on call
+  const minimizeCall = useCallback(() => {
+    setIsMinimized(true);
+  }, []);
+
+  // Expand call - return to call window
+  const expandCall = useCallback(() => {
+    setIsMinimized(false);
+  }, []);
+
   // Auto-initialize client when component mounts (for receiving calls)
   useEffect(() => {
     const autoInit = async () => {
-      // Check if user has a token (is logged in)
       const token = localStorage.getItem('token');
-      if (token && !isClientReady && !isInitializing) {
-        console.log('📱 Auto-initializing WebRTC client for incoming calls...');
-        // Small delay to let other components mount
+      if (token && !isClientReady && !isInitializing && !isInitializedRef.current) {
+        console.log('📱 Auto-initializing WebRTC client...');
+        // Delay to let auth complete
         setTimeout(() => {
           initializeClient().catch(e => {
-            console.log('📱 Auto-init skipped (no subscription or credentials)');
+            console.log('📱 Auto-init failed:', e.message);
           });
-        }, 2000);
+        }, 1500);
       }
     };
     
@@ -563,6 +601,7 @@ export const CallProvider = ({ children }) => {
     error,
     isClientReady,
     isInitializing,
+    isMinimized,
     
     // Methods
     initializeClient,
@@ -575,6 +614,8 @@ export const CallProvider = ({ children }) => {
     toggleSpeaker,
     sendDTMF,
     formatDuration,
+    minimizeCall,
+    expandCall,
     
     // Constants
     CALL_STATES,

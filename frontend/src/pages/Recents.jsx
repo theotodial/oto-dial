@@ -2,8 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { useAuth } from '../context/AuthContext';
-import { useCall, CALL_STATES } from '../context/CallContext';
-import CallWindow from '../components/CallWindow';
+import { useCall } from '../context/CallContext';
 
 const ClockIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -135,12 +134,10 @@ function Recents() {
   
   // WebRTC call context - with safe defaults
   const callContext = useCall();
-  const callState = callContext?.callState || 'idle';
   const isInCall = callContext?.isInCall || false;
   const webrtcMakeCall = callContext?.makeCall || (async () => false);
-  const initializeClient = callContext?.initializeClient || (async () => false);
   const callError = callContext?.error || null;
-  const callRemoteNumber = callContext?.remoteNumber || '';
+  const isMinimized = callContext?.isMinimized || false;
 
   const [activeTab, setActiveTab] = useState('all'); // 'all', 'missed', 'chats'
   const [selectedCall, setSelectedCall] = useState(null);
@@ -483,37 +480,12 @@ function Recents() {
   }
 
   // Helper to get contact name from phone number (moved before early returns)
-  const getContactNameForCall = (phoneNumber) => {
-    if (!phoneNumber) return null;
-    // Try to find in calls first
-    const call = calls.find(c => (c.to_number || c.toNumber || c.phoneNumber) === phoneNumber);
-    if (call?.contactName || call?.name) return call.contactName || call.name;
-    // Try to find in chats
-    const chat = chats.find(c => (c.phoneNumber || c.phone_number) === phoneNumber);
-    if (chat?.contactName || chat?.name) return chat.contactName || chat.name;
-    return null;
-  };
-
-  // Show call window when in a call (replaces main content)
-  const showCallWindow = isInCall || calling;
-  
-  if (showCallWindow) {
-    console.log('🟢 Recents: Showing call window');
-    return (
-      <div className="h-screen flex flex-col bg-gray-50 dark:bg-slate-900 overflow-hidden">
-        {/* Call Window - Full screen on mobile, centered on desktop */}
-        <div className="flex-1 lg:flex lg:items-center lg:justify-center lg:p-6">
-          <div className="h-full lg:h-auto lg:w-[400px] lg:max-h-[700px] lg:rounded-3xl lg:overflow-hidden lg:shadow-2xl">
-            <CallWindow 
-              contactName={getContactNameForCall(callRemoteNumber) || callRemoteNumber} 
-              contactAvatar={null}
-              onCallEnd={() => setCalling(false)}
-            />
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Refresh recents after call ends
+  useEffect(() => {
+    if (!isInCall && !calling) {
+      fetchRecents();
+    }
+  }, [isInCall]);
 
   const dialpadButtons = [
     { digit: '1', letters: '' },
@@ -529,6 +501,7 @@ function Recents() {
     { digit: '0', letters: '+' },
     { digit: '#', letters: '' },
   ];
+
 
   const handleDialpadClick = (digit) => {
     setPhoneNumber(prev => prev + digit);
