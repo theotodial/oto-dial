@@ -141,7 +141,8 @@ function Dialer() {
 
   // Handle making a call with WebRTC
   const handleCall = async () => {
-    console.log('📞 handleCall triggered');
+    console.log('📞 Dialer handleCall triggered');
+    console.log('📞 State:', { phoneNumber, subscriptionActive, userNumbersCount: userNumbers.length, isClientReady, isInCall });
     
     if (!phoneNumber.trim()) {
       setError('Please enter a phone number');
@@ -169,14 +170,21 @@ function Dialer() {
     // Get caller ID
     const callerId = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
 
-    console.log('📞 Calling:', destination, 'from:', callerId);
+    console.log('📞 Dialer: Calling', destination, 'from', callerId);
     
-    const callSuccess = await makeCall(destination, callerId);
-    
-    if (callSuccess) {
-      setPhoneNumber('');
-    } else if (callError) {
-      setError(callError);
+    try {
+      const callSuccess = await makeCall(destination, callerId);
+      console.log('📞 Dialer: makeCall returned:', callSuccess);
+      
+      if (callSuccess) {
+        setPhoneNumber('');
+      } else {
+        // Get the latest error from context
+        setError(callError || 'Failed to place call. Check console for details.');
+      }
+    } catch (err) {
+      console.error('📞 Dialer: Call exception:', err);
+      setError(err.message || 'Failed to place call');
     }
   };
 

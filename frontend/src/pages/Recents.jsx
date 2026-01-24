@@ -138,6 +138,7 @@ function Recents() {
   const webrtcMakeCall = callContext?.makeCall || (async () => false);
   const callError = callContext?.error || null;
   const isMinimized = callContext?.isMinimized || false;
+  const initializeClient = callContext?.initializeClient || (async () => false);
 
   const [activeTab, setActiveTab] = useState('all'); // 'all', 'missed', 'chats'
   const [selectedCall, setSelectedCall] = useState(null);
@@ -468,6 +469,13 @@ function Recents() {
     index === self.findIndex(c => c.number === contact.number) && contact.number
   );
 
+  // Refresh recents after call ends - MUST be before conditional returns
+  useEffect(() => {
+    if (!isInCall && !calling) {
+      fetchRecents();
+    }
+  }, [isInCall]);
+
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -478,14 +486,6 @@ function Recents() {
       </div>
     );
   }
-
-  // Helper to get contact name from phone number (moved before early returns)
-  // Refresh recents after call ends
-  useEffect(() => {
-    if (!isInCall && !calling) {
-      fetchRecents();
-    }
-  }, [isInCall]);
 
   const dialpadButtons = [
     { digit: '1', letters: '' },
@@ -548,7 +548,19 @@ function Recents() {
 
   const handleCall = async (number = null) => {
     const rawNumber = number || phoneNumber.trim();
-    if (!rawNumber || calling || isInCall) return;
+    
+    console.log('📞 Recents handleCall:', { rawNumber, calling, isInCall, subscriptionActive, userNumbersCount: userNumbers.length });
+    
+    if (!rawNumber) {
+      console.log('📞 Recents: No number provided');
+      alert('Please enter a phone number');
+      return;
+    }
+    
+    if (calling) {
+      console.log('📞 Recents: Already calling');
+      return;
+    }
 
     // Automatically prefix selected country code if user didn't type + code
     const targetNumber = rawNumber.startsWith('+')
@@ -556,10 +568,12 @@ function Recents() {
       : `${dialCountryCode}${rawNumber}`;
       
     if (!subscriptionActive) {
+      console.log('📞 Recents: No subscription');
       alert('Active subscription required to make calls');
       return;
     }
     if (userNumbers.length === 0) {
+      console.log('📞 Recents: No user numbers');
       alert('You need to purchase a number first');
       return;
     }
@@ -576,17 +590,20 @@ function Recents() {
       // Make WebRTC call
       const success = await webrtcMakeCall(targetNumber, callerId);
       
+      console.log('📞 Recents: webrtcMakeCall returned:', success);
+      
       if (!isMountedRef.current) return;
       
       if (!success) {
         setCalling(false);
-        if (callError) {
-          alert(callError);
-        }
+        const errorMsg = callError || 'Failed to place call';
+        console.log('📞 Recents: Call failed:', errorMsg);
+        alert(errorMsg);
       } else {
         // Clear phone number on success
         if (!number) setPhoneNumber('');
-        // Keep calling true - will be reset when call ends
+        // Reset calling state - GlobalCallOverlay handles the call UI now
+        setCalling(false);
       }
     } catch (err) {
       console.error('📞 Recents: Call error:', err);
@@ -1667,11 +1684,23 @@ function Recents() {
 
           {mobileTab === 'dialer' && (
             <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900">
-              {/* Active Number - Hidden on mobile */}
-              <div className="hidden lg:block px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
-                <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase mb-1">Active Number</div>
-                <div className="text-sm font-medium text-gray-900 dark:text-white">
-                  {userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || 'No number'}
+              {/* Debug Info - Shows why calling might be blocked */}
+              {(!subscriptionActive || userNumbers.length === 0) && (
+                <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800">
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    {!subscriptionActive && '⚠️ No active subscription. '}
+                    {userNumbers.length === 0 && '⚠️ No phone number purchased.'}
+                  </p>
+                </div>
+              )}
+              
+              {/* Active Number - Shows the caller ID */}
+              <div className="px-4 py-2 bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Your Number</div>
+                  <div className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                    {userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || 'None'}
+                  </div>
                 </div>
               </div>
 
@@ -1828,7 +1857,10 @@ function Recents() {
                       <BackspaceIcon className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={handleCall}
+                      onClick={() => {
+                        console.log('📞 Mobile dialer call button clicked, phoneNumber:', phoneNumber);
+                        handleCall();
+                      }}
                       disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
                       className="w-12 h-12 bg-green-500 hover:bg-green-600 active:bg-green-700 
                                  text-white rounded-full flex items-center justify-center 

@@ -364,9 +364,11 @@ export const CallProvider = ({ children }) => {
 
   // Make outbound call
   const makeCall = useCallback(async (destinationNumber, callerIdNumber) => {
-    console.log('📱 makeCall called with:', destinationNumber, callerIdNumber);
+    console.log('📱 makeCall called with:', { destinationNumber, callerIdNumber });
+    console.log('📱 Current state:', { isClientReady, hasClient: !!telnyxClientRef.current, callState: callStateRef.current });
     
     if (!destinationNumber) {
+      console.log('📱 No destination number');
       setError('Please enter a phone number');
       return false;
     }
@@ -381,17 +383,20 @@ export const CallProvider = ({ children }) => {
       if (!telnyxClientRef.current || !isClientReady) {
         console.log('📱 Client not ready, initializing...');
         const initialized = await initializeClient();
+        console.log('📱 Initialization result:', initialized);
         if (!initialized) {
           console.error('📱 Failed to initialize client');
+          setError('Failed to connect to calling service. Please try again.');
           setCallState(CALL_STATES.IDLE);
           return false;
         }
         // Small delay to ensure client is fully ready
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
 
       // Double check client is available
       if (!telnyxClientRef.current) {
+        console.log('📱 Client ref is null after initialization');
         setError('Calling service not available');
         setCallState(CALL_STATES.IDLE);
         return false;
@@ -404,7 +409,8 @@ export const CallProvider = ({ children }) => {
       }
 
       if (!callerId) {
-        setError('No caller ID available');
+        console.log('📱 No caller ID available');
+        setError('No caller ID available. Please purchase a phone number first.');
         setCallState(CALL_STATES.IDLE);
         return false;
       }
@@ -418,6 +424,8 @@ export const CallProvider = ({ children }) => {
         audio: true,
         video: false
       });
+
+      console.log('📱 Call object created:', !!call);
 
       if (!call) {
         setError('Failed to create call');
@@ -436,7 +444,7 @@ export const CallProvider = ({ children }) => {
       console.log('📱 Call initiated successfully');
       return true;
     } catch (err) {
-      console.error('Failed to make call:', err);
+      console.error('📱 Failed to make call:', err);
       setError(err.message || 'Failed to initiate call');
       setCallState(CALL_STATES.IDLE);
       return false;
