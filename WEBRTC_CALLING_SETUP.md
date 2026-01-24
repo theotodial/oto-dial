@@ -1,132 +1,135 @@
 # WebRTC Calling Setup Guide
 
-This guide explains how to configure real-time WebRTC calling in OTO DIAL.
-
-## Overview
-
-OTO DIAL now supports WebRTC-based calling which allows:
-- **Real voice calls** from the browser (both incoming and outgoing)
-- **Call window UI** with mute, hold, speaker, and dialpad controls
-- **Incoming call notifications** (iPhone-style on mobile, banner on desktop)
-- **Browser notifications** for incoming calls (even when app is in background)
+This guide explains how to configure Telnyx WebRTC for real-time voice calling in OTO DIAL.
 
 ## Prerequisites
 
-1. A Telnyx account with Voice API enabled
-2. A Telnyx Connection configured for WebRTC (SIP Connection)
-3. Phone numbers assigned to the connection
+1. A Telnyx account with:
+   - An active Mission Control Portal access
+   - A purchased phone number
+   - A Credential Connection configured for WebRTC
 
-## Backend Configuration
+## Step 1: Create a Credential Connection in Telnyx
 
-Add these environment variables to your backend `.env` file:
+1. Log into [Telnyx Mission Control Portal](https://portal.telnyx.com)
+2. Go to **Networking** → **Connections**
+3. Click **Create Connection**
+4. Select **Credential Connection**
+5. Configure the connection:
+   - **Name**: Something like "OTO-DIAL-WebRTC"
+   - **Username**: Choose a SIP username (e.g., `otodial_user`)
+   - **Password**: Create a secure password
+6. Under **Outbound Settings**:
+   - Set **Outbound Profile** to allow outbound calls
+   - Configure your Caller ID settings
+7. Save and note down:
+   - **Connection ID** (shown on the connection page)
+   - **SIP Username** (what you entered)
+   - **SIP Password** (what you entered)
+
+## Step 2: Configure Environment Variables
+
+### Backend (.env)
+
+Add these variables to your `backend/.env` file:
 
 ```env
-# Existing Telnyx configuration
-TELNYX_API_KEY=your_telnyx_api_key
-TELNYX_CONNECTION_ID=your_connection_id
-
-# NEW: WebRTC SIP Credentials
+# Telnyx Configuration
+TELNYX_API_KEY=KEY_xxxxxxxxxxxxxxxxxxxx
 TELNYX_SIP_USERNAME=your_sip_username
+TELNYX_CONNECTION_ID=your_connection_id
 ```
 
-### Getting SIP Credentials from Telnyx
+Where:
+- `TELNYX_API_KEY` - Your Telnyx API v2 key (from API Keys page)
+- `TELNYX_SIP_USERNAME` - The SIP username from Step 1
+- `TELNYX_CONNECTION_ID` - The Connection ID from Step 1
 
-1. Log in to the Telnyx Portal
-2. Go to **SIP Connections** (under Voice section)
-3. Create a new **Credential Connection** or use an existing one
-4. Note down:
-   - **SIP Username** (e.g., `your-app-name`)
-   - **SIP Password** (you'll set this in frontend)
-5. Assign your phone numbers to this connection
+### Frontend (.env)
 
-## Frontend Configuration
-
-Add this to your frontend `.env` file:
+Add this variable to your `frontend/.env` file:
 
 ```env
-# WebRTC SIP Password
 VITE_TELNYX_SIP_PASSWORD=your_sip_password
+```
+
+Where:
+- `VITE_TELNYX_SIP_PASSWORD` - The SIP password from Step 1
+
+> ⚠️ **Security Note**: The SIP password is stored in the frontend because the WebRTC client runs in the browser and needs it to authenticate directly with Telnyx. This is the standard approach for WebRTC applications.
+
+## Step 3: Assign Phone Number to Connection
+
+1. In Telnyx Portal, go to **Numbers** → **My Numbers**
+2. Select your purchased phone number
+3. Under **Voice Settings**, set the **Connection** to your Credential Connection
+4. Save
+
+## Step 4: Restart Services
+
+After configuring environment variables:
+
+```bash
+# Restart backend
+cd backend
+npm run dev
+
+# Restart frontend
+cd frontend
+npm run dev
 ```
 
 ## How It Works
 
-### Outgoing Calls
+1. **User initiates call** → Frontend shows call window
+2. **WebRTC client connects** → Browser connects to Telnyx using SIP credentials
+3. **Call is made** → Audio is handled directly via WebRTC (browser ↔ Telnyx ↔ destination)
+4. **Two-way audio** → Both parties can hear each other
 
-1. User enters a number and clicks "Call"
-2. The app requests microphone permission
-3. If WebRTC is configured:
-   - Audio flows directly from browser to Telnyx via WebRTC
-   - Full duplex audio (you can hear and speak)
-4. If WebRTC is not configured:
-   - Falls back to API-based calling (limited functionality)
+## Features
 
-### Incoming Calls
-
-1. When someone calls your Telnyx number
-2. Telnyx sends a webhook to your backend
-3. Backend notifies the WebRTC client
-4. User sees an incoming call notification
-5. User can accept or reject the call
-
-### Call Window Features
-
-- **Avatar** with caller initials
-- **Duration timer** showing call length
-- **Mute** - Toggle microphone
-- **Hold** - Put call on hold
-- **Speaker** - Toggle speaker mode
-- **Dialpad** - Send DTMF tones during call
-- **End Call** - Disconnect the call
-
-## File Structure
-
-```
-frontend/src/
-├── context/
-│   └── CallContext.jsx      # WebRTC call state management
-├── components/
-│   ├── CallWindow.jsx       # In-call UI component
-│   └── IncomingCallNotification.jsx  # Incoming call UI
-├── pages/
-│   ├── Dialer.jsx           # Updated with call window
-│   └── Recents.jsx          # Updated with call window
-
-backend/src/routes/
-└── webrtcRoutes.js          # WebRTC credentials endpoint
-```
+- ✅ Outbound calls with two-way audio
+- ✅ Incoming call notifications (in-app)
+- ✅ Ringing sounds (generated via Web Audio API)
+- ✅ Call duration tracking
+- ✅ Mute/Hold/DTMF support
+- ✅ iPhone-style incoming call UI
 
 ## Troubleshooting
 
-### "Microphone access required"
-- User must allow microphone permission in browser
-- Ensure site is served over HTTPS (required for WebRTC)
+### "SIP password not configured"
+- Ensure `VITE_TELNYX_SIP_PASSWORD` is in your frontend `.env` file
+- Restart the frontend development server
 
-### "Failed to connect to calling service"
-- Check TELNYX_SIP_USERNAME is configured in backend
-- Check VITE_TELNYX_SIP_PASSWORD is configured in frontend
-- Verify credentials are correct in Telnyx portal
+### "WebRTC not configured"
+- Ensure `TELNYX_SIP_USERNAME` and `TELNYX_CONNECTION_ID` are in your backend `.env` file
+- Restart the backend server
 
-### Can't hear the other person
-- Check speaker/volume settings
-- Verify WebRTC connection is established (check browser console)
-- Ensure microphone is working and not muted
+### No audio / one-way audio
+- Check that your phone number is assigned to the Credential Connection
+- Verify the Connection has outbound calling enabled
+- Check browser microphone permissions
+- Ensure no firewall is blocking WebRTC traffic (ports 10000-20000 UDP)
 
-### No incoming call notifications
-- Enable browser notifications when prompted
-- Check that WebRTC client is connected
-- Verify webhook URL is configured in Telnyx for incoming calls
+### "Active subscription required"
+- User needs an active subscription to make calls
+- Check the subscription status in the database
 
-## Browser Compatibility
+### Connection errors
+- Verify SIP username and password are correct
+- Check that the Connection ID matches your credential connection
+- Ensure your Telnyx account has sufficient balance
 
-WebRTC calling works in:
-- Chrome (recommended)
-- Firefox
-- Safari (iOS 14.3+)
-- Edge (Chromium-based)
+## Browser Requirements
 
-## Mobile Considerations
+- Modern browser with WebRTC support (Chrome, Firefox, Safari, Edge)
+- Microphone permission granted
+- HTTPS connection (required for WebRTC in production)
 
-- On mobile, the call window takes full screen
-- Incoming calls show iPhone-style accept/reject UI
-- Bottom navigation is hidden during calls
-- Works in PWA mode for best experience
+## Testing Locally
+
+When testing locally:
+1. Use `localhost` or `127.0.0.1` (WebRTC works without HTTPS on localhost)
+2. Allow microphone access when prompted
+3. Make sure backend is running and connected to MongoDB
+4. Verify you have an active subscription and purchased number

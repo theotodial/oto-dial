@@ -124,21 +124,26 @@ const Dialpad = ({ onDigitPress, onClose }) => {
   );
 };
 
-export default function CallWindow({ contactName, contactAvatar, onMinimize }) {
-  const {
-    callState,
-    callDuration,
-    isMuted,
-    isOnHold,
-    isSpeaker,
-    remoteNumber,
-    hangUp,
-    toggleMute,
-    toggleHold,
-    toggleSpeaker,
-    sendDTMF,
-    formatDuration
-  } = useCall();
+export default function CallWindow({ contactName, contactAvatar, onMinimize, onCallEnd }) {
+  const callContext = useCall();
+  
+  // Safely destructure with defaults
+  const callState = callContext?.callState || CALL_STATES.IDLE;
+  const callDuration = callContext?.callDuration || 0;
+  const isMuted = callContext?.isMuted || false;
+  const isOnHold = callContext?.isOnHold || false;
+  const isSpeaker = callContext?.isSpeaker || false;
+  const remoteNumber = callContext?.remoteNumber || '';
+  const hangUp = callContext?.hangUp || (() => {});
+  const toggleMute = callContext?.toggleMute || (() => {});
+  const toggleHold = callContext?.toggleHold || (() => {});
+  const toggleSpeaker = callContext?.toggleSpeaker || (() => {});
+  const sendDTMF = callContext?.sendDTMF || (() => {});
+  const formatDuration = callContext?.formatDuration || ((s) => {
+    const mins = Math.floor(s / 60);
+    const secs = s % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  });
 
   const [showDialpad, setShowDialpad] = useState(false);
   const statusText = getStatusText(callState);
@@ -146,6 +151,14 @@ export default function CallWindow({ contactName, contactAvatar, onMinimize }) {
 
   const handleDialpadDigit = (digit) => {
     sendDTMF(digit);
+  };
+
+  // Handle end call with callback
+  const handleEndCall = () => {
+    hangUp();
+    if (onCallEnd) {
+      onCallEnd();
+    }
   };
 
   return (
@@ -268,7 +281,7 @@ export default function CallWindow({ contactName, contactAvatar, onMinimize }) {
       {/* End Call Button */}
       <div className="flex justify-center pb-8 relative z-10">
         <button
-          onClick={hangUp}
+          onClick={handleEndCall}
           className="w-16 h-16 bg-rose-500 hover:bg-rose-600 active:bg-rose-700 rounded-full flex items-center justify-center shadow-lg shadow-rose-500/40 transition-all active:scale-95"
         >
           <EndCallIcon />

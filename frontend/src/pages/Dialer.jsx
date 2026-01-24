@@ -25,15 +25,18 @@ function Dialer() {
   const [subscriptionActive, setSubscriptionActive] = useState(false);
   const [dialCountryCode, setDialCountryCode] = useState('+1');
   const [showDialCountryDropdown, setShowDialCountryDropdown] = useState(false);
+  const [isPlacingCall, setIsPlacingCall] = useState(false);
   
-  // WebRTC call context
-  const { 
-    callState, 
-    isInCall, 
-    makeCall, 
-    initializeClient,
-    error: callError 
-  } = useCall();
+  // WebRTC call context - with safe defaults
+  const callContext = useCall();
+  const callState = callContext?.callState || 'idle';
+  const isInCall = callContext?.isInCall || false;
+  const makeCall = callContext?.makeCall || (async () => false);
+  const initializeClient = callContext?.initializeClient || (async () => false);
+  const callError = callContext?.error || null;
+
+  // Debug logging
+  console.log('🔵 Dialer render - callState:', callState, 'isInCall:', isInCall, 'isPlacingCall:', isPlacingCall);
 
   const dialCountries = [
     { code: '+1', name: 'United States', flag: '🇺🇸' },
@@ -140,6 +143,8 @@ function Dialer() {
 
   // Handle making a call with WebRTC
   const handleCall = async () => {
+    console.log('📞 handleCall triggered');
+    
     if (!phoneNumber.trim()) {
       setError('Please enter a phone number');
       return;
@@ -157,6 +162,10 @@ function Dialer() {
 
     setError('');
     setSuccess('');
+    
+    // Show call window immediately
+    setIsPlacingCall(true);
+    console.log('📞 Setting isPlacingCall to true');
 
     // Build final destination number with country code if needed
     const destination = phoneNumber.trim().startsWith('+')
@@ -166,11 +175,16 @@ function Dialer() {
     // Get caller ID
     const callerId = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
 
-    // Make WebRTC call
-    const success = await makeCall(destination, callerId);
+    // Make call through context
+    console.log('📞 Calling makeCall with:', destination);
+    const callSuccess = await makeCall(destination, callerId);
+    console.log('📞 makeCall returned:', callSuccess);
     
-    if (!success && callError) {
-      setError(callError);
+    if (!callSuccess) {
+      setIsPlacingCall(false);
+      if (callError) {
+        setError(callError);
+      }
     }
   };
 
@@ -201,7 +215,11 @@ function Dialer() {
   }
 
   // Show call window when in a call (replaces keypad)
-  if (isInCall) {
+  // Use either context isInCall OR local isPlacingCall state
+  const showCallWindow = isInCall || isPlacingCall;
+  
+  if (showCallWindow) {
+    console.log('🟢 Showing call window');
     return (
       <div className="h-screen flex flex-col bg-gray-50 dark:bg-slate-900 overflow-hidden">
         {/* Call Window - Full screen on mobile, centered on desktop */}
@@ -210,6 +228,7 @@ function Dialer() {
             <CallWindow 
               contactName={null} 
               contactAvatar={null}
+              onCallEnd={() => setIsPlacingCall(false)}
             />
           </div>
         </div>

@@ -23,14 +23,13 @@ const getInitials = (phoneNumber) => {
 };
 
 export default function IncomingCallNotification() {
-  const { 
-    hasIncomingCall, 
-    remoteNumber, 
-    answerCall, 
-    rejectCall 
-  } = useCall();
-  
+  const callContext = useCall();
   const [isVisible, setIsVisible] = useState(false);
+
+  const hasIncomingCall = callContext?.hasIncomingCall || false;
+  const remoteNumber = callContext?.remoteNumber || '';
+  const answerCall = callContext?.answerCall || (() => {});
+  const rejectCall = callContext?.rejectCall || (() => {});
 
   useEffect(() => {
     if (hasIncomingCall) {
