@@ -56,11 +56,11 @@ export default function GlobalCallOverlay() {
 
   const isActive = callState === CALL_STATES.ACTIVE;
 
-  // If minimized, show floating banner
+  // If minimized, show floating banner - Lower z-index to not cover header
   if (isMinimized) {
     return (
       <div 
-        className="fixed top-0 left-0 right-0 z-[60] bg-gradient-to-r from-emerald-600 to-emerald-500 shadow-lg"
+        className="fixed top-16 left-0 right-0 z-[45] bg-gradient-to-r from-emerald-600 to-emerald-500 shadow-lg"
         style={{ paddingTop: 'env(safe-area-inset-top)' }}
       >
         <div className="flex items-center justify-between px-4 py-2.5">

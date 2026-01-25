@@ -44,7 +44,7 @@ router.post("/", async (req, res) => {
       });
 
       if (phoneNumber) {
-        await Call.create({
+        const callRecord = await Call.create({
           telnyxCallControlId: callControlId,
           user: phoneNumber.userId,
           phoneNumber: fromNumber,
@@ -53,7 +53,13 @@ router.post("/", async (req, res) => {
           direction: "inbound",
           status: "ringing"
         });
-        console.log(`✅ Inbound call recorded: ${fromNumber} -> ${toNumber}`);
+        console.log(`✅ Inbound call recorded: ${fromNumber} -> ${toNumber} (userId: ${phoneNumber.userId}, callId: ${callRecord._id})`);
+        
+        // TODO: Here we could emit a WebSocket event or use Server-Sent Events
+        // to notify the frontend about the incoming call
+        // For now, the frontend will poll or rely on WebRTC client
+      } else {
+        console.warn(`⚠️ Inbound call to ${toNumber} but no active phone number found in database`);
       }
     }
 

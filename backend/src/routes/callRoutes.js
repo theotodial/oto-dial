@@ -77,8 +77,76 @@ router.post("/:id/start", requireActiveSubscription, async (req, res) => {
 });
 
 router.get("/", async (req, res) => {
-  const calls = await Call.find({ user: req.userId }).sort("-createdAt");
-  res.json({ success: true, calls });
+  try {
+    // Build query with optional filters
+    const query = { user: req.userId };
+    
+    // Support filtering by status
+    if (req.query.status) {
+      query.status = req.query.status;
+    }
+    
+    // Support filtering by direction
+    if (req.query.direction) {
+      query.direction = req.query.direction;
+    }
+    
+    // Support limit
+    const limit = parseInt(req.query.limit) || 100;
+    
+    const calls = await Call.find(query)
+      .sort("-createdAt")
+      .limit(limit)
+      .lean();
+    
+    // Format calls with duration and proper classification
+    const formattedCalls = calls.map(call => {
+      const durationSeconds = call.durationSeconds || 0;
+      const minutes = Math.floor(durationSeconds / 60);
+      const seconds = durationSeconds % 60;
+      const durationFormatted = durationSeconds > 0 
+        ? `${minutes}:${String(seconds).padStart(2, '0')}`
+        : null;
+      
+      // Classify call type
+      let callType = 'outgoing';
+      if (call.direction === 'inbound') {
+        if (call.status === 'missed') {
+          callType = 'missed';
+        } else if (call.status === 'completed' || call.status === 'answered') {
+          callType = 'incoming';
+        } else {
+          callType = 'incoming';
+        }
+      } else {
+        if (call.status === 'completed' || call.status === 'answered') {
+          callType = 'outgoing';
+        } else if (call.status === 'failed') {
+          callType = 'failed';
+        } else {
+          callType = 'outgoing';
+        }
+      }
+      
+      return {
+        ...call,
+        id: call._id,
+        _id: call._id,
+        phoneNumber: call.phoneNumber || call.toNumber || call.fromNumber,
+        toNumber: call.toNumber || call.phoneNumber,
+        fromNumber: call.fromNumber || call.phoneNumber,
+        durationFormatted,
+        callType,
+        // Ensure status is properly set
+        status: call.status || 'completed'
+      };
+    });
+    
+    res.json({ success: true, calls: formattedCalls });
+  } catch (err) {
+    console.error('GET /api/calls error:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch calls' });
+  }
 });
 
 // Update a call record

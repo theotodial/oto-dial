@@ -55,4 +55,48 @@ router.get("/token", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/webrtc/status
+ * Check WebRTC connection status and provide debugging info
+ */
+router.get("/status", async (req, res) => {
+  try {
+    const connectionId = process.env.TELNYX_CONNECTION_ID;
+    const sipUsername = process.env.TELNYX_SIP_USERNAME;
+    
+    // Get user's phone numbers
+    let numbers = req.subscription?.numbers || [];
+    if (!numbers.length) {
+      const phoneNumbers = await PhoneNumber.find({
+        userId: req.userId,
+        status: "active"
+      }).lean();
+      numbers = phoneNumbers.map(n => ({ phoneNumber: n.phoneNumber }));
+    }
+    
+    res.json({
+      success: true,
+      status: {
+        connectionId: connectionId || "NOT SET",
+        sipUsername: sipUsername ? "SET" : "NOT SET",
+        phoneNumbers: numbers.map(n => n.phoneNumber || n),
+        webhookUrl: process.env.BACKEND_URL 
+          ? `${process.env.BACKEND_URL}/api/webhooks/telnyx/voice`
+          : "NOT SET",
+        instructions: {
+          step1: "Ensure TELNYX_CONNECTION_ID is set in backend .env",
+          step2: "Ensure TELNYX_SIP_USERNAME is set in backend .env",
+          step3: "Ensure VITE_TELNYX_SIP_PASSWORD is set in frontend .env",
+          step4: `Set webhook URL in Telnyx Connection: ${process.env.BACKEND_URL ? `${process.env.BACKEND_URL}/api/webhooks/telnyx/voice` : 'YOUR_BACKEND_URL/api/webhooks/telnyx/voice'}`,
+          step5: `Ensure each phone number has connection_id set to: ${connectionId || 'YOUR_CONNECTION_ID'}`,
+          step6: "Frontend WebRTC client must be connected and ready to receive calls"
+        }
+      }
+    });
+  } catch (err) {
+    console.error("WebRTC status error:", err);
+    res.status(500).json({ error: "Failed to get WebRTC status" });
+  }
+});
+
 export default router;

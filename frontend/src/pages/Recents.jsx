@@ -1484,9 +1484,34 @@ function Recents() {
                     chatMessages.map((item, idx) => {
                       // Handle calls
                       if (item.type === 'call') {
-                        const isOutbound = item.direction === 'outbound';
-                        const callDuration = item.duration ? formatCallDuration(item.duration) : null;
+                        const isOutbound = item.direction === 'outbound' || item.direction === 'outbound';
                         const callStatus = item.status || 'completed';
+                        const isMissed = callStatus === 'missed';
+                        const isFailed = callStatus === 'failed';
+                        const callDuration = item.duration ? formatCallDuration(item.duration) : null;
+                        const durationSeconds = item.duration || item.durationSeconds || 0;
+                        
+                        // Format duration like WhatsApp: "5:23" for 5 minutes 23 seconds
+                        const formatWhatsAppDuration = (seconds) => {
+                          if (!seconds || seconds === 0) return null;
+                          const mins = Math.floor(seconds / 60);
+                          const secs = seconds % 60;
+                          return `${mins}:${String(secs).padStart(2, '0')}`;
+                        };
+                        
+                        const durationFormatted = formatWhatsAppDuration(durationSeconds);
+                        
+                        // Determine call label
+                        let callLabel = 'Voice call';
+                        if (isMissed) {
+                          callLabel = isOutbound ? 'Missed call' : 'Missed call';
+                        } else if (isFailed) {
+                          callLabel = 'Failed call';
+                        } else if (isOutbound) {
+                          callLabel = 'Outgoing call';
+                        } else {
+                          callLabel = 'Incoming call';
+                        }
                         
                         return (
                           <div
@@ -1495,7 +1520,9 @@ function Recents() {
                           >
                           <div
                             className={`max-w-[75%] rounded-2xl px-4 py-2.5 flex items-center gap-2.5 ${
-                              isOutbound
+                              isMissed || isFailed
+                                ? 'bg-red-500 text-white'
+                                : isOutbound
                                 ? 'bg-green-500 text-white'
                                 : 'bg-gray-700 dark:bg-slate-600 text-white'
                             }`}
@@ -1506,9 +1533,9 @@ function Recents() {
                               <PhoneInIcon className="w-4 h-4 flex-shrink-0" />
                             )}
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium">Voice call</p>
+                              <p className="text-sm font-medium">{callLabel}</p>
                               <p className="text-xs opacity-90">
-                                {callDuration || (callStatus === 'no-answer' || callStatus === 'busy' || callStatus === 'missed' ? 'No answer' : callStatus === 'completed' ? 'Completed' : callStatus)}
+                                {durationFormatted || (isMissed ? 'Missed' : isFailed ? 'Failed' : callStatus)}
                               </p>
                             </div>
                             <p className="text-xs opacity-90 flex-shrink-0 ml-1">

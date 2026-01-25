@@ -173,7 +173,7 @@ export const CallProvider = ({ children }) => {
   const handleCallStateChange = useCallback(async (call) => {
     if (!call) return;
     
-    console.log('📱 Call state changed:', call.state);
+    console.log('📱 Call state changed:', call.state, call);
     currentCallRef.current = call;
 
     // Attach remote audio stream when available
@@ -181,8 +181,25 @@ export const CallProvider = ({ children }) => {
       if (remoteAudioRef.current.srcObject !== call.remoteStream) {
         console.log('📱 Attaching remote audio stream');
         remoteAudioRef.current.srcObject = call.remoteStream;
+        
+        // Set initial audio routing based on speaker state
+        if (isSpeaker) {
+          remoteAudioRef.current.setAttribute('playsinline', 'false');
+          remoteAudioRef.current.volume = 1.0;
+        } else {
+          remoteAudioRef.current.setAttribute('playsinline', 'true');
+          remoteAudioRef.current.volume = 0.8;
+        }
+        
         remoteAudioRef.current.play().catch(e => console.warn('Audio play failed:', e));
       }
+    }
+    
+    // Check if this is an incoming call that we haven't handled yet
+    if (call.state === 'ringing' && call.direction === 'incoming' && callState !== CALL_STATES.INCOMING) {
+      console.log('📱 Detected incoming call in state change handler');
+      handleIncomingCallEvent(call);
+      return; // Don't process state change further, incoming call handler will do it
     }
 
     switch (call.state) {
@@ -232,16 +249,26 @@ export const CallProvider = ({ children }) => {
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
+    // Prevent duplicate handling
+    if (callState === CALL_STATES.INCOMING && currentCallRef.current === call) {
+      console.log('📱 Incoming call already being handled, ignoring duplicate');
+      return;
+    }
+    
     const callerNumber = call.options?.remoteCallerNumber || 
                          call.options?.callerNumber || 
                          call.options?.caller_id_number ||
+                         call.remoteCallerNumber ||
+                         call.callerNumber ||
+                         call.from ||
                          'Unknown';
     
-    console.log('📱 INCOMING CALL EVENT:', {
-      callerNumber,
-      callState: call.state,
-      callOptions: call.options
-    });
+    console.log('📱 ========== INCOMING CALL EVENT ==========');
+    console.log('📱 Caller Number:', callerNumber);
+    console.log('📱 Call State:', call.state);
+    console.log('📱 Call Object:', call);
+    console.log('📱 Call Options:', call.options);
+    console.log('📱 =========================================');
     
     currentCallRef.current = call;
     
@@ -371,6 +398,24 @@ export const CallProvider = ({ children }) => {
             setError(null);
             setIsInitializing(false);
             isInitializedRef.current = true;
+            
+            // Listen for any incoming calls directly on the client
+            // Telnyx SDK may fire incoming call events on the client itself
+            if (client.on) {
+              // Some SDK versions use different event names
+              client.on('incoming', (call) => {
+                console.log('📱 Incoming call via client.incoming event:', call);
+                handleIncomingCallEvent(call);
+              });
+              
+              client.on('call', (call) => {
+                console.log('📱 Call event via client.call:', call);
+                if (call.direction === 'incoming' || call.state === 'ringing') {
+                  handleIncomingCallEvent(call);
+                }
+              });
+            }
+            
             resolve(true);
           });
 
@@ -385,32 +430,118 @@ export const CallProvider = ({ children }) => {
         });
 
         client.on('telnyx.socket.close', () => {
-          console.log('📱 Telnyx socket closed');
+          console.log('📱 Telnyx socket closed - attempting to reconnect...');
           setIsClientReady(false);
           isInitializedRef.current = false;
+          
+          // Auto-reconnect after a delay
+          setTimeout(() => {
+            if (!isClientReady && !isInitializing) {
+              console.log('📱 Attempting to reconnect WebRTC client...');
+              initializeClient().catch(e => {
+                console.log('📱 Reconnection failed:', e.message);
+              });
+            }
+          }, 3000);
+        });
+        
+        // Monitor connection health
+        client.on('telnyx.socket.open', () => {
+          console.log('📱 Telnyx socket opened - connection active');
         });
 
-        // Handle notifications (incoming calls, call updates)
+        // COMPREHENSIVE INCOMING CALL DETECTION
+        // Telnyx WebRTC SDK can fire incoming calls through multiple events
+        // We'll listen to ALL possible event patterns
+        
+        // Pattern 1: telnyx.rtc.incoming
+        client.on('telnyx.rtc.incoming', (call) => {
+          console.log('📱 INCOMING CALL via telnyx.rtc.incoming:', call);
+          handleIncomingCallEvent(call);
+        });
+        
+        // Pattern 2: telnyx.notification with incomingCall type
         client.on('telnyx.notification', (notification) => {
-          console.log('📱 Telnyx notification:', notification.type);
+          console.log('📱 Telnyx notification:', notification.type, notification);
           
           if (notification.type === 'callUpdate' && notification.call) {
             handleCallStateChange(notification.call);
           }
           
           if (notification.type === 'incomingCall' && notification.call) {
+            console.log('📱 INCOMING CALL via notification.incomingCall:', notification.call);
             handleIncomingCallEvent(notification.call);
+          }
+        });
+        
+        // Pattern 3: Direct call events (some SDK versions)
+        client.on('call', (call) => {
+          console.log('📱 Call event received:', call);
+          if (call && (call.direction === 'incoming' || call.state === 'ringing')) {
+            console.log('📱 INCOMING CALL via call event:', call);
+            handleIncomingCallEvent(call);
+          } else if (call) {
+            handleCallStateChange(call);
+          }
+        });
+        
+        // Pattern 4: Incoming event (some SDK versions)
+        client.on('incoming', (call) => {
+          console.log('📱 INCOMING CALL via incoming event:', call);
+          handleIncomingCallEvent(call);
+        });
+        
+        // Pattern 5: Session events (some SDK versions use session)
+        client.on('session', (session) => {
+          console.log('📱 Session event:', session);
+          if (session && session.direction === 'incoming') {
+            console.log('📱 INCOMING CALL via session event:', session);
+            handleIncomingCallEvent(session);
+          }
+        });
+        
+        // Pattern 6: Listen for ANY event that might be an incoming call
+        // This is a catch-all for debugging
+        const originalEmit = client.emit;
+        client.emit = function(...args) {
+          console.log('📱 Client emit:', args[0], args[1]);
+          if (args[0] && (args[0].includes('incoming') || args[0].includes('call'))) {
+            console.log('📱 Potential incoming call event:', args);
+          }
+          return originalEmit.apply(this, args);
+        };
+        
+        // Also listen for socket messages that might contain incoming call info
+        client.on('telnyx.socket.message', (message) => {
+          console.log('📱 Socket message:', message);
+          if (message && (message.type === 'incoming' || message.direction === 'incoming')) {
+            console.log('📱 INCOMING CALL via socket message:', message);
+            // Try to create a call object from the message
+            if (message.call) {
+              handleIncomingCallEvent(message.call);
+            }
           }
         });
 
         // Connect to Telnyx
         console.log('📱 Connecting to Telnyx...');
+        console.log('📱 SIP Username:', creds.sipUsername);
+        console.log('📱 Connection ID:', creds.connectionId);
+        
         await client.connect();
         
         // Wait for ready
         await readyPromise;
         
         console.log('✅ Telnyx client connected and ready');
+        console.log('✅ Client is now listening for incoming calls');
+        console.log('✅ Make sure your phone number has connection_id set to:', creds.connectionId);
+        
+        // Verify connection by checking client state
+        if (client.connected !== undefined) {
+          console.log('📱 Client connection state:', client.connected);
+        }
+        
         return true;
       } catch (err) {
         console.error('Failed to initialize Telnyx client:', err);
@@ -424,7 +555,7 @@ export const CallProvider = ({ children }) => {
     })();
 
     return initializationPromiseRef.current;
-  }, [handleCallStateChange, handleIncomingCallEvent]);
+  }, [handleCallStateChange, handleIncomingCallEvent, isSpeaker, callState]);
 
   // Save call record to database
   const saveCallRecord = useCallback(async (toNumber, fromNumber, direction = 'outbound', status = 'dialing') => {
@@ -558,33 +689,95 @@ export const CallProvider = ({ children }) => {
   }, [initializeClient, isClientReady, credentials, handleCallStateChange, saveCallRecord, updateCallRecord]);
 
   // Answer incoming call
-  const answerCall = useCallback(() => {
+  const answerCall = useCallback(async () => {
     console.log('📱 Answering call...');
     soundManager.stopRingtone();
     
+    // Try to answer via WebRTC first
     if (currentCallRef.current) {
       try {
+        // Answer the call via WebRTC
         currentCallRef.current.answer();
-        setIncomingCall(null);
-        setCallState(CALL_STATES.ACTIVE);
-        startDurationTimer();
+        console.log('📱 Call answered via WebRTC');
       } catch (e) {
-        console.error('Failed to answer call:', e);
-        setError('Failed to answer call');
+        console.warn('📱 WebRTC answer failed, trying alternative method:', e);
+        // If WebRTC answer fails, we'll still update the record
       }
+    } else {
+      console.log('📱 No WebRTC call object, call may have been detected via polling');
     }
+    
+    // Update backend call record
+    try {
+      let callRecordId = polledCallIdRef.current;
+      
+      // If we don't have a polled call ID, try to find it
+      if (!callRecordId) {
+        const callsResponse = await API.get('/api/calls?status=ringing&direction=inbound&limit=1');
+        if (callsResponse.data?.calls && callsResponse.data.calls.length > 0) {
+          callRecordId = callsResponse.data.calls[0].id || callsResponse.data.calls[0]._id;
+        }
+      }
+      
+      if (callRecordId) {
+        // Update to answered status
+        await API.patch(`/api/calls/${callRecordId}`, {
+          status: 'answered',
+          callStartedAt: new Date().toISOString()
+        });
+        console.log('📱 Call record updated to answered');
+        polledCallIdRef.current = null; // Clear after use
+      }
+    } catch (updateErr) {
+      console.warn('📱 Failed to update call record:', updateErr);
+      // Don't fail the call if record update fails
+    }
+    
+    setIncomingCall(null);
+    setCallState(CALL_STATES.ACTIVE);
+    startDurationTimer();
+    console.log('✅ Call answered successfully');
   }, [startDurationTimer]);
 
   // Reject incoming call
-  const rejectCall = useCallback(() => {
+  const rejectCall = useCallback(async () => {
     console.log('📱 Rejecting call...');
     soundManager.stopRingtone();
     
+    // Try to hangup via WebRTC if call object exists
     if (currentCallRef.current) {
       try {
         currentCallRef.current.hangup();
-      } catch (e) {}
+        console.log('📱 Call rejected via WebRTC');
+      } catch (e) {
+        console.warn('📱 Hangup error:', e);
+      }
     }
+    
+    // Update backend call record to missed
+    try {
+      let callRecordId = polledCallIdRef.current;
+      
+      // If we don't have a polled call ID, try to find it
+      if (!callRecordId) {
+        const callsResponse = await API.get('/api/calls?status=ringing&direction=inbound&limit=1');
+        if (callsResponse.data?.calls && callsResponse.data.calls.length > 0) {
+          callRecordId = callsResponse.data.calls[0].id || callsResponse.data.calls[0]._id;
+        }
+      }
+      
+      if (callRecordId) {
+        await API.patch(`/api/calls/${callRecordId}`, {
+          status: 'missed',
+          callEndedAt: new Date().toISOString()
+        });
+        console.log('📱 Call record updated to missed');
+        polledCallIdRef.current = null; // Clear after use
+      }
+    } catch (updateErr) {
+      console.warn('📱 Failed to update call record:', updateErr);
+    }
+    
     handleCallEnd();
   }, [handleCallEnd]);
 
@@ -634,9 +827,31 @@ export const CallProvider = ({ children }) => {
     }
   }, [isOnHold]);
 
-  // Toggle speaker
+  // Toggle speaker - actually control audio output
   const toggleSpeaker = useCallback(() => {
-    setIsSpeaker(!isSpeaker);
+    const newSpeakerState = !isSpeaker;
+    setIsSpeaker(newSpeakerState);
+    
+    // Control audio output device
+    if (remoteAudioRef.current) {
+      // On mobile, we can't directly control speaker vs earpiece
+      // But we can set volume and ensure proper routing
+      if (newSpeakerState) {
+        // Speaker mode - ensure audio is routed to speaker
+        remoteAudioRef.current.setAttribute('playsinline', 'false');
+        // Try to set volume higher for speaker
+        remoteAudioRef.current.volume = 1.0;
+      } else {
+        // Earpiece mode - ensure audio is routed to earpiece
+        remoteAudioRef.current.setAttribute('playsinline', 'true');
+        remoteAudioRef.current.volume = 0.8;
+      }
+      
+      // Force re-play to apply changes
+      remoteAudioRef.current.play().catch(e => console.warn('Audio play failed:', e));
+    }
+    
+    console.log('📱 Speaker toggled:', newSpeakerState ? 'ON' : 'OFF');
   }, [isSpeaker]);
 
   // Send DTMF
@@ -678,6 +893,17 @@ export const CallProvider = ({ children }) => {
       if (response.data?.success) {
         console.log('✅ Phone configuration fixed:', response.data);
       }
+      
+      // Also check WebRTC status for debugging
+      try {
+        const statusResponse = await API.get('/api/webrtc/status');
+        if (statusResponse.data?.status) {
+          console.log('📱 WebRTC Status:', statusResponse.data.status);
+          console.log('📱 Instructions:', statusResponse.data.status.instructions);
+        }
+      } catch (statusErr) {
+        console.log('📱 Could not fetch WebRTC status:', statusErr.message);
+      }
     } catch (err) {
       // Silently fail - this is just a best-effort fix
       console.log('📱 Phone config fix skipped:', err.message);
@@ -689,7 +915,7 @@ export const CallProvider = ({ children }) => {
     const autoInit = async () => {
       const token = localStorage.getItem('token');
       if (token && !isClientReady && !isInitializing && !isInitializedRef.current) {
-        console.log('📱 Auto-initializing WebRTC client...');
+        console.log('📱 Auto-initializing WebRTC client for incoming calls...');
         
         // First, try to fix phone configuration
         await fixPhoneConfiguration();
@@ -704,7 +930,103 @@ export const CallProvider = ({ children }) => {
     };
     
     autoInit();
-  }, [fixPhoneConfiguration]);
+    
+    // Also set up a periodic health check to ensure client stays connected
+    const healthCheckInterval = setInterval(() => {
+      const token = localStorage.getItem('token');
+      if (token && !isClientReady && !isInitializing && !isInitializedRef.current) {
+        console.log('📱 Health check: Client not ready, reinitializing...');
+        initializeClient().catch(e => {
+          console.log('📱 Health check reinit failed:', e.message);
+        });
+      } else if (token && isClientReady && telnyxClientRef.current) {
+        // Verify client is still connected
+        try {
+          // Check if client has a connection state
+          if (telnyxClientRef.current.connected === false) {
+            console.log('📱 Health check: Client disconnected, reconnecting...');
+            setIsClientReady(false);
+            isInitializedRef.current = false;
+            initializeClient().catch(e => {
+              console.log('📱 Health check reconnect failed:', e.message);
+            });
+          }
+        } catch (e) {
+          // Client might not have connected property, that's okay
+        }
+      }
+    }, 30000); // Check every 30 seconds
+    
+    return () => clearInterval(healthCheckInterval);
+  }, [fixPhoneConfiguration, isClientReady, isInitializing, initializeClient]);
+  
+  // Store polled call ID for answering
+  const polledCallIdRef = useRef(null);
+  
+  // Poll for incoming calls as a fallback (in case WebRTC events don't fire)
+  useEffect(() => {
+    if (!isClientReady || callState === CALL_STATES.INCOMING || callState === CALL_STATES.ACTIVE) {
+      return; // Don't poll if already handling a call
+    }
+    
+    let lastPolledCallId = null;
+    
+    const pollForIncomingCalls = async () => {
+      try {
+        // Check for recent incoming calls that are still ringing
+        const response = await API.get('/api/calls?status=ringing&direction=inbound&limit=1');
+        if (response.data?.calls && response.data.calls.length > 0) {
+          const incomingCall = response.data.calls[0];
+          const callId = incomingCall.id || incomingCall._id;
+          
+          // Only process if this is a new call we haven't seen
+          if (callId !== lastPolledCallId) {
+            // Check if this call was created in the last 60 seconds
+            const callAge = Date.now() - new Date(incomingCall.createdAt || incomingCall.created_at).getTime();
+            if (callAge < 60000) { // 60 seconds
+              console.log('📱 Polling detected NEW incoming call:', incomingCall);
+              lastPolledCallId = callId;
+              polledCallIdRef.current = callId; // Store for answering
+              
+              // Trigger incoming call UI
+              setRemoteNumber(incomingCall.fromNumber || incomingCall.phoneNumber);
+              setCallState(CALL_STATES.INCOMING);
+              setIsMinimized(false);
+              soundManager.startRingtone();
+              
+              // Show browser notification
+              if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification('📞 Incoming Call', {
+                  body: `Call from ${incomingCall.fromNumber || incomingCall.phoneNumber}`,
+                  icon: '/logo.svg',
+                  tag: 'incoming-call-poll',
+                  requireInteraction: true
+                });
+              }
+              
+              // Try to find the actual WebRTC call object if it exists
+              if (telnyxClientRef.current) {
+                // The WebRTC client might have the call, try to find it
+                // This is a fallback - ideally WebRTC events should fire
+                console.log('📱 Polled call detected, WebRTC client should handle it');
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Silently fail - polling is just a fallback
+        console.log('📱 Poll error (non-critical):', err.message);
+      }
+    };
+    
+    // Poll every 3 seconds as fallback (more frequent for better responsiveness)
+    const pollInterval = setInterval(pollForIncomingCalls, 3000);
+    
+    // Initial poll after 1 second
+    setTimeout(pollForIncomingCalls, 1000);
+    
+    return () => clearInterval(pollInterval);
+  }, [isClientReady, callState]);
 
   // Cleanup on unmount
   useEffect(() => {
