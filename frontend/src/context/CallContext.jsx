@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback } f
 import { TelnyxRTC } from '@telnyx/webrtc';
 import API from '../api';
 import soundManager from '../utils/sounds';
+import { useWakeLock } from '../hooks/useWakeLock';
 
 const CallContext = createContext(null);
 
@@ -68,6 +69,10 @@ export const CallProvider = ({ children }) => {
   const [isInitializing, setIsInitializing] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
 
+  // Keep screen awake during active calls (mobile)
+  const isActiveCall = callState === CALL_STATES.ACTIVE || callState === CALL_STATES.RINGING || callState === CALL_STATES.INCOMING;
+  useWakeLock(isActiveCall);
+
   // Refs
   const telnyxClientRef = useRef(null);
   const currentCallRef = useRef(null);
@@ -84,8 +89,14 @@ export const CallProvider = ({ children }) => {
 
   // Request notification permission on mount
   useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
+    if ('Notification' in window) {
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().then(permission => {
+          console.log('📱 Notification permission:', permission);
+        });
+      } else {
+        console.log('📱 Notification permission:', Notification.permission);
+      }
     }
   }, []);
 
@@ -221,34 +232,57 @@ export const CallProvider = ({ children }) => {
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
-    console.log('📱 Incoming call from:', call.options?.remoteCallerNumber || call.options?.callerNumber);
-    currentCallRef.current = call;
-    
     const callerNumber = call.options?.remoteCallerNumber || 
                          call.options?.callerNumber || 
                          call.options?.caller_id_number ||
                          'Unknown';
+    
+    console.log('📱 INCOMING CALL EVENT:', {
+      callerNumber,
+      callState: call.state,
+      callOptions: call.options
+    });
+    
+    currentCallRef.current = call;
     
     setRemoteNumber(callerNumber);
     setCallState(CALL_STATES.INCOMING);
     setIncomingCall(call);
     setIsMinimized(false);
     
-    // Start ringtone
+    // Start WhatsApp-style ringtone immediately
+    console.log('📱 Starting incoming call ringtone...');
     soundManager.startRingtone();
 
-    // Show browser notification
-    if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification('📞 Incoming Call', {
-        body: `Call from ${callerNumber}`,
-        icon: '/logo.svg',
-        tag: 'incoming-call',
-        requireInteraction: true
-      });
+    // Show browser notification (even if app is in background)
+    if ('Notification' in window) {
+      if (Notification.permission === 'granted') {
+        try {
+          const notification = new Notification('📞 Incoming Call', {
+            body: `Call from ${callerNumber}`,
+            icon: '/logo.svg',
+            tag: 'incoming-call',
+            requireInteraction: true,
+            badge: '/logo.svg',
+            vibrate: [200, 100, 200] // Vibrate pattern for mobile
+          });
+          
+          // Close notification when call is answered/rejected
+          notification.onclick = () => {
+            window.focus();
+            notification.close();
+          };
+        } catch (err) {
+          console.warn('Failed to show notification:', err);
+        }
+      } else if (Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
     }
 
     // Listen for call state changes on this call
     call.on('stateChange', () => {
+      console.log('📱 Incoming call state changed:', call.state);
       handleCallStateChange(call);
     });
   }, [handleCallStateChange]);
@@ -636,13 +670,31 @@ export const CallProvider = ({ children }) => {
     setIsMinimized(false);
   }, []);
 
+  // Fix voice and messaging configuration for phone numbers
+  const fixPhoneConfiguration = useCallback(async () => {
+    try {
+      console.log('📱 Checking and fixing phone configuration...');
+      const response = await API.post('/api/numbers/fix-all');
+      if (response.data?.success) {
+        console.log('✅ Phone configuration fixed:', response.data);
+      }
+    } catch (err) {
+      // Silently fail - this is just a best-effort fix
+      console.log('📱 Phone config fix skipped:', err.message);
+    }
+  }, []);
+
   // Auto-initialize client when component mounts (for receiving calls)
   useEffect(() => {
     const autoInit = async () => {
       const token = localStorage.getItem('token');
       if (token && !isClientReady && !isInitializing && !isInitializedRef.current) {
         console.log('📱 Auto-initializing WebRTC client...');
-        // Delay to let auth complete
+        
+        // First, try to fix phone configuration
+        await fixPhoneConfiguration();
+        
+        // Then initialize the WebRTC client
         setTimeout(() => {
           initializeClient().catch(e => {
             console.log('📱 Auto-init failed:', e.message);
@@ -652,7 +704,7 @@ export const CallProvider = ({ children }) => {
     };
     
     autoInit();
-  }, []);
+  }, [fixPhoneConfiguration]);
 
   // Cleanup on unmount
   useEffect(() => {

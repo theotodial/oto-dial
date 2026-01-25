@@ -33,7 +33,9 @@ export default function GlobalCallOverlay() {
   }
 
   // Don't show if it's an incoming call (handled by IncomingCallNotification)
+  // Incoming calls should ONLY show IncomingCallNotification, not this overlay
   if (callState === CALL_STATES.INCOMING) {
+    console.log('📞 GlobalCallOverlay: Hiding because incoming call is handled by IncomingCallNotification');
     return null;
   }
 

@@ -1,6 +1,7 @@
 import express from "express";
 import SMS from "../../models/SMS.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
+import Subscription from "../../models/Subscription.js";
 
 const router = express.Router();
 
@@ -16,7 +17,9 @@ const normalizePhone = (phone) => {
  */
 router.post("/", async (req, res) => {
   try {
-    console.log("📱 SMS WEBHOOK RECEIVED:", JSON.stringify(req.body, null, 2));
+    console.log("📱 SMS WEBHOOK RECEIVED");
+    console.log("📱 Headers:", JSON.stringify(req.headers, null, 2));
+    console.log("📱 Body:", JSON.stringify(req.body, null, 2));
     
     // Handle different webhook payload formats
     const payload = req.body?.data?.payload || req.body?.payload || req.body;
@@ -77,7 +80,7 @@ router.post("/", async (req, res) => {
     // Format numbers consistently for storage
     const formatPhone = (n) => n.startsWith("+") ? n : `+${n}`;
 
-    await SMS.create({
+    const sms = await SMS.create({
       user: userId,
       to: formatPhone(toNumber),
       from: formatPhone(fromNumber),
@@ -87,7 +90,21 @@ router.post("/", async (req, res) => {
       telnyxMessageId: telnyxId
     });
 
-    console.log(`✅ Inbound SMS saved: ${fromNumber} -> ${toNumber} (userId: ${userId || 'unknown'})`);
+    console.log(`✅ Inbound SMS saved: ${fromNumber} -> ${toNumber} (userId: ${userId || 'unknown'}) [id: ${sms._id}]`);
+    
+    // Update usage tracking for inbound SMS
+    if (userId) {
+      try {
+        await Subscription.updateOne(
+          { userId: userId, status: "active" },
+          { $inc: { "usage.smsReceived": 1 } }
+        );
+        console.log(`📊 Inbound SMS usage tracked for user ${userId}`);
+      } catch (usageErr) {
+        console.warn(`⚠️ Failed to track inbound SMS usage:`, usageErr.message);
+      }
+    }
+    
     res.json({ received: true });
   } catch (err) {
     console.error("SMS webhook error:", err);

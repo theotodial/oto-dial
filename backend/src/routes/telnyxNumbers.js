@@ -113,10 +113,86 @@ router.post(
         { phone_number: phoneNumber }
       );
 
+      // CONFIGURE VOICE - Set connection ID for incoming calls
+      const connectionId = process.env.TELNYX_CONNECTION_ID;
+      if (connectionId) {
+        try {
+          // Update the phone number to use our voice connection
+          await telnyx.phoneNumbers.update(phoneNumber, {
+            connection_id: connectionId
+          });
+          console.log(`✅ Voice connection ${connectionId} set for ${phoneNumber}`);
+        } catch (voiceErr) {
+          console.warn(`⚠️ Could not set voice connection:`, voiceErr.message);
+        }
+      } else {
+        console.warn(`⚠️ TELNYX_CONNECTION_ID not set - incoming calls won't work!`);
+      }
+
       res.json({ success: true, phoneNumber });
     } catch (err) {
       console.error("BUY NUMBER ERROR:", err);
       res.status(500).json({ error: "Failed to buy number" });
+    }
+  }
+);
+
+/**
+ * POST /api/numbers/fix-voice
+ * Fix voice connection for existing phone numbers
+ */
+router.post(
+  "/fix-voice",
+  authenticateUser,
+  loadSubscription,
+  async (req, res) => {
+    try {
+      const telnyx = getTelnyxClient();
+      if (!telnyx) {
+        return res.status(500).json({ error: "Telnyx not configured" });
+      }
+
+      const connectionId = process.env.TELNYX_CONNECTION_ID;
+      if (!connectionId) {
+        return res.status(500).json({ 
+          error: "TELNYX_CONNECTION_ID not configured",
+          hint: "Set TELNYX_CONNECTION_ID environment variable"
+        });
+      }
+
+      // Find user's active phone numbers
+      const phoneNumbers = await PhoneNumber.find({ 
+        userId: req.user._id, 
+        status: "active" 
+      });
+
+      if (phoneNumbers.length === 0) {
+        return res.status(400).json({ error: "No active phone numbers found" });
+      }
+
+      const results = [];
+      for (const pn of phoneNumbers) {
+        try {
+          await telnyx.phoneNumbers.update(pn.phoneNumber, {
+            connection_id: connectionId
+          });
+          results.push({ phoneNumber: pn.phoneNumber, status: "updated" });
+          console.log(`✅ Voice connection set for ${pn.phoneNumber}`);
+        } catch (err) {
+          results.push({ phoneNumber: pn.phoneNumber, status: "failed", error: err.message });
+          console.error(`❌ Failed to update ${pn.phoneNumber}:`, err.message);
+        }
+      }
+
+      res.json({ 
+        success: true, 
+        message: "Voice connections updated",
+        connectionId,
+        results
+      });
+    } catch (err) {
+      console.error("FIX VOICE ERROR:", err);
+      res.status(500).json({ error: "Failed to fix voice connection", details: err.message });
     }
   }
 );
@@ -226,5 +302,179 @@ router.get(
     }
   }
 );
+
+/**
+ * POST /api/numbers/fix-all
+ * Fix both voice and messaging for all user's phone numbers
+ */
+router.post(
+  "/fix-all",
+  authenticateUser,
+  loadSubscription,
+  async (req, res) => {
+    try {
+      const telnyx = getTelnyxClient();
+      if (!telnyx) {
+        return res.status(500).json({ error: "Telnyx not configured" });
+      }
+
+      const user = await User.findById(req.user._id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const connectionId = process.env.TELNYX_CONNECTION_ID;
+      const webhookUrl = process.env.BACKEND_URL 
+        ? `${process.env.BACKEND_URL}/api/webhooks/telnyx/sms`
+        : null;
+
+      const results = {
+        voice: { fixed: false, error: null },
+        messaging: { fixed: false, error: null },
+        numbers: []
+      };
+
+      // Fix messaging profile
+      if (user.messagingProfileId && webhookUrl) {
+        try {
+          await telnyx.messaging.messagingProfiles.update(user.messagingProfileId, {
+            webhook_url: webhookUrl,
+            webhook_failover_url: webhookUrl,
+            webhook_api_version: "2"
+          });
+          results.messaging.fixed = true;
+          console.log(`✅ Messaging webhook fixed for user ${user._id}`);
+        } catch (err) {
+          results.messaging.error = err.message;
+        }
+      }
+
+      // Fix voice for all numbers
+      if (connectionId) {
+        const phoneNumbers = await PhoneNumber.find({ 
+          userId: req.user._id, 
+          status: "active" 
+        });
+
+        for (const pn of phoneNumbers) {
+          try {
+            await telnyx.phoneNumbers.update(pn.phoneNumber, {
+              connection_id: connectionId
+            });
+            results.numbers.push({ phoneNumber: pn.phoneNumber, voiceFixed: true });
+            console.log(`✅ Voice fixed for ${pn.phoneNumber}`);
+          } catch (err) {
+            results.numbers.push({ phoneNumber: pn.phoneNumber, voiceFixed: false, error: err.message });
+          }
+        }
+        results.voice.fixed = results.numbers.some(n => n.voiceFixed);
+      }
+
+      res.json({ 
+        success: true, 
+        message: "Configuration fixed",
+        connectionId: connectionId || "NOT SET",
+        webhookUrl: webhookUrl || "NOT SET",
+        results
+      });
+    } catch (err) {
+      console.error("FIX ALL ERROR:", err);
+      res.status(500).json({ error: "Failed to fix configuration", details: err.message });
+    }
+  }
+);
+
+/**
+ * GET /api/numbers/check-all
+ * Check both voice and messaging configuration
+ */
+router.get(
+  "/check-all",
+  authenticateUser,
+  loadSubscription,
+  async (req, res) => {
+    try {
+      const telnyx = getTelnyxClient();
+      if (!telnyx) {
+        return res.status(500).json({ error: "Telnyx not configured" });
+      }
+
+      const user = await User.findById(req.user._id);
+      const phoneNumbers = await PhoneNumber.find({ 
+        userId: req.user._id, 
+        status: "active" 
+      });
+
+      const config = {
+        user: user?._id,
+        messagingProfileId: user?.messagingProfileId || null,
+        messagingWebhook: null,
+        connectionId: process.env.TELNYX_CONNECTION_ID || "NOT SET",
+        backendUrl: process.env.BACKEND_URL || "NOT SET",
+        expectedWebhookUrl: process.env.BACKEND_URL 
+          ? `${process.env.BACKEND_URL}/api/webhooks/telnyx/sms`
+          : "BACKEND_URL not set",
+        numbers: []
+      };
+
+      // Check messaging profile
+      if (user?.messagingProfileId) {
+        try {
+          const profile = await telnyx.messaging.messagingProfiles.retrieve(user.messagingProfileId);
+          config.messagingWebhook = profile.data.webhook_url || "NOT SET";
+        } catch (e) {
+          config.messagingWebhook = "ERROR: " + e.message;
+        }
+      }
+
+      // Check each phone number's voice configuration
+      for (const pn of phoneNumbers) {
+        try {
+          const numDetails = await telnyx.phoneNumbers.retrieve(pn.phoneNumber);
+          config.numbers.push({
+            phoneNumber: pn.phoneNumber,
+            connectionId: numDetails.data.connection_id || "NOT SET",
+            voiceEnabled: !!numDetails.data.connection_id
+          });
+        } catch (e) {
+          config.numbers.push({
+            phoneNumber: pn.phoneNumber,
+            error: e.message
+          });
+        }
+      }
+
+      res.json({ success: true, config });
+    } catch (err) {
+      console.error("CHECK ALL ERROR:", err);
+      res.status(500).json({ error: "Failed to check configuration", details: err.message });
+    }
+  }
+);
+
+/**
+ * GET /api/numbers/webhook-urls
+ * Show the expected webhook URLs that should be configured in Telnyx
+ */
+router.get("/webhook-urls", async (req, res) => {
+  const backendUrl = process.env.BACKEND_URL || "YOUR_BACKEND_URL";
+  
+  res.json({
+    success: true,
+    info: "Configure these URLs in your Telnyx dashboard",
+    webhooks: {
+      voiceWebhook: `${backendUrl}/api/webhooks/telnyx/voice`,
+      smsWebhook: `${backendUrl}/api/webhooks/telnyx/sms`,
+      voiceWebhookDescription: "Set this on your Telnyx Connection (TeXML App or SIP Connection)",
+      smsWebhookDescription: "Set this on your Messaging Profile (automatically set when buying numbers)"
+    },
+    configuration: {
+      backendUrl: process.env.BACKEND_URL || "NOT SET",
+      connectionId: process.env.TELNYX_CONNECTION_ID || "NOT SET",
+      sipUsername: process.env.TELNYX_SIP_USERNAME ? "SET" : "NOT SET",
+      telnyxApiKey: process.env.TELNYX_API_KEY ? "SET" : "NOT SET"
+    }
+  });
+});
 
 export default router;

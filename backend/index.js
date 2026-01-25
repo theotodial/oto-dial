@@ -104,6 +104,29 @@ app.get("/api/health", (req, res) => {
   res.json({ success: true, status: "ok", time: new Date().toISOString() });
 });
 
+// Webhook info endpoint (public, for debugging)
+app.get("/api/webhook-info", (req, res) => {
+  const backendUrl = process.env.BACKEND_URL || "YOUR_BACKEND_URL";
+  res.json({
+    success: true,
+    message: "Telnyx Webhook Configuration",
+    webhooks: {
+      voice: `${backendUrl}/api/webhooks/telnyx/voice`,
+      sms: `${backendUrl}/api/webhooks/telnyx/sms`,
+    },
+    instructions: {
+      voice: "Configure this URL on your Telnyx TeXML App or SIP Connection under Call Control settings",
+      sms: "This URL is automatically set on messaging profiles when buying numbers"
+    },
+    envStatus: {
+      BACKEND_URL: process.env.BACKEND_URL ? "✅ SET" : "❌ NOT SET",
+      TELNYX_CONNECTION_ID: process.env.TELNYX_CONNECTION_ID ? "✅ SET" : "❌ NOT SET",
+      TELNYX_SIP_USERNAME: process.env.TELNYX_SIP_USERNAME ? "✅ SET" : "❌ NOT SET",
+      TELNYX_API_KEY: process.env.TELNYX_API_KEY ? "✅ SET" : "❌ NOT SET"
+    }
+  });
+});
+
 app.get("/", (req, res) => {
   res.json({ success: true, message: "OTO DIAL API" });
 });

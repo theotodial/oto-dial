@@ -10,9 +10,12 @@ const router = express.Router();
  * Handles call.initiated, call.answered, call.hangup events
  * Counts usage ONLY here (single source of truth)
  */
-router.post("/voice", async (req, res) => {
+// Handler at root since we're mounted at /api/webhooks/telnyx/voice
+router.post("/", async (req, res) => {
   try {
-    console.log("📞 VOICE WEBHOOK:", JSON.stringify(req.body, null, 2));
+    console.log("📞 VOICE WEBHOOK RECEIVED");
+    console.log("📞 Headers:", JSON.stringify(req.headers, null, 2));
+    console.log("📞 Body:", JSON.stringify(req.body, null, 2));
     
     const payload = req.body?.data;
     if (!payload) {

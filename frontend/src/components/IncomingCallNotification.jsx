@@ -34,20 +34,45 @@ export default function IncomingCallNotification() {
   useEffect(() => {
     if (hasIncomingCall) {
       setIsVisible(true);
+      console.log('📞 Incoming call notification shown for:', remoteNumber);
+      
+      // Vibrate on mobile devices (if supported)
+      if ('vibrate' in navigator) {
+        // Vibrate pattern: vibrate for 200ms, pause 100ms, vibrate 200ms (repeat)
+        const vibratePattern = [200, 100, 200];
+        navigator.vibrate(vibratePattern);
+        
+        // Continue vibrating every 3 seconds while call is incoming
+        const vibrateInterval = setInterval(() => {
+          if (hasIncomingCall && 'vibrate' in navigator) {
+            navigator.vibrate(vibratePattern);
+          } else {
+            clearInterval(vibrateInterval);
+          }
+        }, 3000);
+        
+        return () => {
+          clearInterval(vibrateInterval);
+          if ('vibrate' in navigator) {
+            navigator.vibrate(0); // Stop vibration
+          }
+        };
+      }
     } else {
       // Small delay before hiding for animation
       const timeout = setTimeout(() => setIsVisible(false), 300);
       return () => clearTimeout(timeout);
     }
-  }, [hasIncomingCall]);
+  }, [hasIncomingCall, remoteNumber]);
 
-  if (!isVisible) return null;
+  // Don't render if no incoming call
+  if (!hasIncomingCall || !isVisible) return null;
 
   return (
     <>
-      {/* Full screen overlay for mobile */}
+      {/* Full screen overlay for mobile - Highest z-index to ensure it's on top */}
       <div 
-        className={`fixed inset-0 z-[100] lg:hidden transition-all duration-300 ${
+        className={`fixed inset-0 z-[9999] lg:hidden transition-all duration-300 ${
           hasIncomingCall ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
@@ -109,9 +134,9 @@ export default function IncomingCallNotification() {
         </div>
       </div>
 
-      {/* Desktop notification banner */}
+      {/* Desktop notification banner - Highest z-index */}
       <div 
-        className={`hidden lg:block fixed top-4 right-4 z-[100] transition-all duration-300 ${
+        className={`hidden lg:block fixed top-4 right-4 z-[9999] transition-all duration-300 ${
           hasIncomingCall 
             ? 'opacity-100 translate-y-0' 
             : 'opacity-0 -translate-y-4 pointer-events-none'

@@ -131,6 +131,11 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
   
   // Safely destructure with defaults
   const callState = callContext?.callState || CALL_STATES.IDLE;
+  
+  // Don't show call window for incoming calls - that's handled by IncomingCallNotification
+  if (callState === CALL_STATES.INCOMING) {
+    return null;
+  }
   const callDuration = callContext?.callDuration || 0;
   const isMuted = callContext?.isMuted || false;
   const isOnHold = callContext?.isOnHold || false;
