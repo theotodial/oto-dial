@@ -1,47 +1,37 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import API from '../api';
 
-export const getChat = async (number_id) => {
-  try {
-    const url = number_id 
-      ? `${API_BASE_URL}/api/chat?number_id=${number_id}`
-      : `${API_BASE_URL}/api/chat`;
-    
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch chat messages');
-    }
-    
-    const data = await response.json();
-    return Array.isArray(data) ? data : (data.messages || []);
-  } catch (error) {
-    throw error;
+export const getChat = async (phoneNumber) => {
+  const response = await API.get('/api/messages');
+  if (response.error) {
+    throw new Error(response.error || 'Failed to fetch chat messages');
   }
+
+  const messages = response.data?.messages || response.data || [];
+  if (!phoneNumber) {
+    return messages;
+  }
+
+  const normalized = String(phoneNumber).replace(/\D/g, '');
+  return messages.filter((msg) => {
+    const candidate = msg.phone_number || msg.to || msg.from || '';
+    return String(candidate).replace(/\D/g, '') === normalized;
+  });
 };
 
-export const sendMessage = async (message, number_id) => {
-  try {
-    const body = number_id 
-      ? { text: message, number_id }
-      : { text: message };
-    
-    const response = await fetch(`${API_BASE_URL}/api/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to send message');
-    }
-    
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    throw error;
+export const sendMessage = async (message, phoneNumber) => {
+  if (!phoneNumber) {
+    throw new Error('Phone number is required to send a message');
   }
+
+  const response = await API.post('/api/sms/send', {
+    to: phoneNumber,
+    text: message
+  });
+
+  if (response.error) {
+    throw new Error(response.error || 'Failed to send message');
+  }
+
+  return response.data;
 };
 

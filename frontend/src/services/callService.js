@@ -1,24 +1,10 @@
 import API from "../api";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-
-export async function getCalls() {
-  const res = await API.get("/api/calls");
-  return res.data.calls || [];
-}
-
 export const getCalls = async () => {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/calls`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch calls');
-    }
-    
-    const data = await response.json();
-    return Array.isArray(data) ? data : [];
-  } catch (error) {
-    throw error;
+  const response = await API.get("/api/calls");
+  if (response.error) {
+    throw new Error(response.error || "Failed to fetch calls");
   }
+  return response.data?.calls || response.data || [];
 };
 

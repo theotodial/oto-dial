@@ -8,7 +8,7 @@ const CheckIcon = () => (
 );
 
 function Billing() {
-  const [balance, setBalance] = useState(null);
+  const [balance, setBalance] = useState(0);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
@@ -84,7 +84,12 @@ function Billing() {
       
       if (!isMountedRef.current) return;
       
-      setBalance(response?.data?.balance ?? 0);
+      if (response.error) {
+        setBalance(0);
+      } else {
+        const nextBalance = Number(response.data?.balance ?? 0);
+        setBalance(Number.isFinite(nextBalance) ? nextBalance : 0);
+      }
     } catch {
       if (!isMountedRef.current) return;
       setBalance(0);
@@ -169,7 +174,7 @@ function Billing() {
           <div className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full shadow-lg">
             <span className="text-white font-medium mr-2">Current Balance:</span>
             <span className="text-2xl font-bold text-white">
-              ${balance !== null ? balance.toFixed(2) : '0.00'}
+              ${(Number.isFinite(balance) ? balance : 0).toFixed(2)}
             </span>
           </div>
         </div>
