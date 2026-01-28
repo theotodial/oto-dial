@@ -765,7 +765,7 @@ function Recents() {
 
   // Mobile Bottom Navigation Component
   const MobileBottomNav = () => (
-    <div className="lg:hidden fixed bottom-0 left-0 right-0 safe-area-bottom z-40">
+    <div className="fixed bottom-0 left-0 right-0 safe-area-bottom z-40">
       <div className="mx-3 mb-3 rounded-3xl bg-white/95 dark:bg-slate-900/95 border border-gray-200/80 dark:border-slate-700/80 shadow-[0_10px_30px_rgba(15,23,42,0.35)] backdrop-blur-xl">
         <div className="grid grid-cols-3 h-16 px-4">
           {/* Chats */}
@@ -852,8 +852,8 @@ function Recents() {
 
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-white dark:bg-slate-900">
-      {/* Desktop View */}
-      <div className="hidden lg:flex flex-col h-full">
+      {/* Legacy Desktop View (hidden, mobile layout used instead) */}
+      <div className="hidden">
         {/* Header - Google Voice Style */}
         <div className="px-4 sm:px-6 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-3">
@@ -1418,8 +1418,8 @@ function Recents() {
       </div>
       </div>
 
-      {/* Mobile View */}
-      <div className="lg:hidden flex flex-col h-full">
+      {/* Unified View (mobile layout for all sizes) */}
+      <div className="flex flex-col h-full">
         {/* Mobile Header - Hidden on dialer tab */}
         {mobileTab !== 'dialer' && (
           <div className="px-4 py-2 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between sticky top-0 z-20 h-14">

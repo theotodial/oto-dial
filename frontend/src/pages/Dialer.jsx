@@ -139,6 +139,13 @@ function Dialer() {
     };
   }, []);
 
+  // Refresh call logs when call ends
+  useEffect(() => {
+    if (!isInCall && callState === 'idle') {
+      fetchData(isMountedRef);
+    }
+  }, [isInCall, callState]);
+
   // Handle making a call with WebRTC
   const handleCall = async () => {
     console.log('📞 Dialer handleCall triggered');
@@ -217,13 +224,6 @@ function Dialer() {
       </div>
     );
   }
-
-  // Refresh call logs when call ends
-  useEffect(() => {
-    if (!isInCall && callState === 'idle') {
-      fetchData(isMountedRef);
-    }
-  }, [isInCall]);
 
   // Determine if dialer should be disabled (when in active call)
   const dialerDisabled = isInCall && !isMinimized;
