@@ -1,8 +1,13 @@
 import express from "express";
+import multer from "multer";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 
 const router = express.Router();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
 
 /**
  * GET /api/users/profile
@@ -154,6 +159,40 @@ router.post("/change-password", async (req, res) => {
   } catch (err) {
     console.error("POST /change-password error:", err);
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+/**
+ * POST /api/users/verify
+ * Accepts verification documents (stored externally in production)
+ */
+router.post("/verify", upload.single("document"), async (req, res) => {
+  try {
+    const { type } = req.body;
+
+    if (!type) {
+      return res.status(400).json({ error: "Verification type is required" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "Document is required" });
+    }
+
+    console.log("📝 Verification upload:", {
+      userId: req.userId,
+      type,
+      filename: req.file.originalname,
+      size: req.file.size,
+      receivedAt: new Date().toISOString()
+    });
+
+    return res.json({
+      success: true,
+      message: "Verification submitted"
+    });
+  } catch (err) {
+    console.error("POST /verify error:", err);
+    res.status(500).json({ error: "Failed to submit verification" });
   }
 });
 

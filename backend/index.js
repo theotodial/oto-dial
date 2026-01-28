@@ -34,6 +34,8 @@ import contactRoutes from "./src/routes/contactRoutes.js";
 import userRoutes from "./src/routes/userRoutes.js";
 import messageRoutes from "./src/routes/messageRoutes.js";
 import webrtcRoutes from "./src/routes/webrtcRoutes.js";
+import walletRoutes from "./src/routes/walletRoutes.js";
+import storeRoutes from "./src/routes/storeRoutes.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
 import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
@@ -81,11 +83,13 @@ app.use("/webhooks/telnyx", telnyxWebhookRoutes);
 // ========================
 app.use("/api/auth", authRoutes);
 app.use("/api/contact", contactRoutes);
+app.use("/api/stores", storeRoutes);
 
 // ========================
 // PROTECTED
 // ========================
 app.use("/api/users", authenticateUser, loadSubscription, userRoutes);
+app.use("/api/wallet", authenticateUser, walletRoutes);
 app.use("/api/subscription", authenticateUser, loadSubscription, subscriptionRoutes);
 app.use("/api/stripe", authenticateUser, stripeCheckoutRoutes);
 app.use("/api/dialer", authenticateUser, loadSubscription, dialerRoutes);
