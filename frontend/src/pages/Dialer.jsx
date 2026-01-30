@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import API from '../api';
 import { useCall } from '../context/CallContext';
 
@@ -88,7 +88,7 @@ function Dialer() {
   };
 
   // Fetch user's numbers, call logs, and subscription
-  const fetchData = async (isMounted = { current: true }) => {
+  const fetchData = useCallback(async (isMounted = { current: true }) => {
     try {
       setError('');
       setSuccess('');
@@ -126,7 +126,7 @@ function Dialer() {
         setLoading(false);
       }
     }
-  };
+  }, []);
 
   const isMountedRef = useRef(true);
   
@@ -137,7 +137,14 @@ function Dialer() {
     return () => {
       isMountedRef.current = false;
     };
-  }, []);
+  }, [fetchData]);
+
+  // Refresh call logs when call ends
+  useEffect(() => {
+    if (!isInCall && callState === 'idle') {
+      fetchData(isMountedRef);
+    }
+  }, [callState, fetchData, isInCall]);
 
   // Handle making a call with WebRTC
   const handleCall = async () => {
@@ -217,13 +224,6 @@ function Dialer() {
       </div>
     );
   }
-
-  // Refresh call logs when call ends
-  useEffect(() => {
-    if (!isInCall && callState === 'idle') {
-      fetchData(isMountedRef);
-    }
-  }, [isInCall]);
 
   // Determine if dialer should be disabled (when in active call)
   const dialerDisabled = isInCall && !isMinimized;

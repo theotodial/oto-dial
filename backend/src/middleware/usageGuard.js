@@ -1,5 +1,3 @@
-// backend/src/middleware/usageGuard.js
-
 /**
  * CANONICAL USAGE GUARD
  * --------------------

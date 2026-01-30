@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -211,15 +211,6 @@ function Recents() {
     }
   }, [loading, navigate]);
 
-  useEffect(() => {
-    isMountedRef.current = true;
-    fetchRecents();
-    
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
   // Fetch user numbers and subscription - MUST be before conditional returns
   useEffect(() => {
     const fetchDialerData = async () => {
@@ -280,9 +271,11 @@ function Recents() {
     };
   }, [selectedChat, mobileTab]);
 
-  const fetchRecents = async () => {
+  const fetchRecents = useCallback(async (showLoading = true) => {
     if (!isMountedRef.current) return;
-    setLoading(true);
+    if (showLoading) {
+      setLoading(true);
+    }
     
     // Fetch calls and messages from API
     const [callsResponse, messagesResponse] = await Promise.all([
@@ -363,7 +356,16 @@ function Recents() {
     if (isMountedRef.current) {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    fetchRecents(true);
+    
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [fetchRecents]);
 
   const formatDate = (date) => {
     if (!date) return '';
@@ -472,9 +474,9 @@ function Recents() {
   // Refresh recents after call ends - MUST be before conditional returns
   useEffect(() => {
     if (!isInCall && !calling) {
-      fetchRecents();
+      fetchRecents(false);
     }
-  }, [isInCall]);
+  }, [calling, fetchRecents, isInCall]);
 
   if (loading) {
     return (

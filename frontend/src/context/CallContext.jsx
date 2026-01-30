@@ -81,11 +81,31 @@ export const CallProvider = ({ children }) => {
   const remoteAudioRef = useRef(null);
   const initializationPromiseRef = useRef(null);
   const isInitializedRef = useRef(false);
+  const isSpeakerRef = useRef(isSpeaker);
+  const callDurationRef = useRef(0);
+  const isClientReadyRef = useRef(isClientReady);
+  const isInitializingRef = useRef(isInitializing);
   
   // Keep refs in sync with state
   useEffect(() => {
     callStateRef.current = callState;
   }, [callState]);
+  
+  useEffect(() => {
+    isSpeakerRef.current = isSpeaker;
+  }, [isSpeaker]);
+  
+  useEffect(() => {
+    callDurationRef.current = callDuration;
+  }, [callDuration]);
+  
+  useEffect(() => {
+    isClientReadyRef.current = isClientReady;
+  }, [isClientReady]);
+  
+  useEffect(() => {
+    isInitializingRef.current = isInitializing;
+  }, [isInitializing]);
 
   // Request notification permission on mount
   useEffect(() => {
@@ -122,9 +142,11 @@ export const CallProvider = ({ children }) => {
   // Start call duration timer
   const startDurationTimer = useCallback(() => {
     setCallDuration(0);
+    callDurationRef.current = 0;
     if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
     durationIntervalRef.current = setInterval(() => {
-      setCallDuration((prev) => prev + 1);
+      callDurationRef.current += 1;
+      setCallDuration(callDurationRef.current);
     }, 1000);
   }, []);
 
@@ -136,7 +158,7 @@ export const CallProvider = ({ children }) => {
 
     // Update call record in database
     if (currentCallRef.current?._dbCallId) {
-      const duration = durationIntervalRef.current ? callDuration : 0;
+      const duration = callDurationRef.current;
       try {
         await API.patch(`/api/calls/${currentCallRef.current._dbCallId}`, {
           status: 'completed',
@@ -161,13 +183,14 @@ export const CallProvider = ({ children }) => {
     currentCallRef.current = null;
     setCallState(CALL_STATES.IDLE);
     setCallDuration(0);
+    callDurationRef.current = 0;
     setIsMuted(false);
     setIsOnHold(false);
     setRemoteNumber('');
     setError(null);
     setIncomingCall(null);
     setIsMinimized(false);
-  }, [callDuration]);
+  }, []);
 
   // Handle call state updates from Telnyx
   const handleCallStateChange = useCallback(async (call) => {
@@ -182,8 +205,8 @@ export const CallProvider = ({ children }) => {
         console.log('📱 Attaching remote audio stream');
         remoteAudioRef.current.srcObject = call.remoteStream;
         
-        // Set initial audio routing based on speaker state
-        if (isSpeaker) {
+        // Set initial audio routing based on speaker state (use ref)
+        if (isSpeakerRef.current) {
           remoteAudioRef.current.setAttribute('playsinline', 'false');
           remoteAudioRef.current.volume = 1.0;
         } else {
@@ -195,10 +218,10 @@ export const CallProvider = ({ children }) => {
       }
     }
     
-    // Check if this is an incoming call that we haven't handled yet
-    if (call.state === 'ringing' && call.direction === 'incoming' && callState !== CALL_STATES.INCOMING) {
+    // Check if this is an incoming call that we haven't handled yet (use ref)
+    if (call.state === 'ringing' && call.direction === 'incoming' && callStateRef.current !== CALL_STATES.INCOMING) {
       console.log('📱 Detected incoming call in state change handler');
-      handleIncomingCallEvent(call);
+      handleIncomingCallEventRef.current(call);
       return; // Don't process state change further, incoming call handler will do it
     }
 
@@ -245,12 +268,12 @@ export const CallProvider = ({ children }) => {
         handleCallEnd();
         break;
     }
-  }, [startDurationTimer, handleCallEnd]);
+  }, [startDurationTimer, handleCallEnd]); // Removed handleIncomingCallEvent - use ref instead
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
-    // Prevent duplicate handling
-    if (callState === CALL_STATES.INCOMING && currentCallRef.current === call) {
+    // Prevent duplicate handling (use ref)
+    if (callStateRef.current === CALL_STATES.INCOMING && currentCallRef.current === call) {
       console.log('📱 Incoming call already being handled, ignoring duplicate');
       return;
     }
@@ -310,9 +333,26 @@ export const CallProvider = ({ children }) => {
     // Listen for call state changes on this call
     call.on('stateChange', () => {
       console.log('📱 Incoming call state changed:', call.state);
-      handleCallStateChange(call);
+      handleCallStateChangeRef.current(call);
     });
+  }, []); // Empty deps - use ref instead
+  
+  // Store stable references to callbacks - initialize immediately
+  const handleCallStateChangeRef = useRef(() => {
+    console.warn('handleCallStateChangeRef called before initialization');
+  });
+  const handleIncomingCallEventRef = useRef(() => {
+    console.warn('handleIncomingCallEventRef called before initialization');
+  });
+  
+  // Update refs whenever callbacks change
+  useEffect(() => {
+    handleCallStateChangeRef.current = handleCallStateChange;
   }, [handleCallStateChange]);
+  
+  useEffect(() => {
+    handleIncomingCallEventRef.current = handleIncomingCallEvent;
+  }, [handleIncomingCallEvent]);
 
   // Initialize Telnyx WebRTC client
   const initializeClient = useCallback(async () => {
@@ -322,8 +362,8 @@ export const CallProvider = ({ children }) => {
       return initializationPromiseRef.current;
     }
 
-    // If already connected and ready, return true
-    if (telnyxClientRef.current && isClientReady && isInitializedRef.current) {
+    // If already connected and ready, return true (use refs)
+    if (telnyxClientRef.current && isClientReadyRef.current && isInitializedRef.current) {
       console.log('📱 Client already ready');
       return true;
     }
@@ -405,13 +445,13 @@ export const CallProvider = ({ children }) => {
               // Some SDK versions use different event names
               client.on('incoming', (call) => {
                 console.log('📱 Incoming call via client.incoming event:', call);
-                handleIncomingCallEvent(call);
+                handleIncomingCallEventRef.current(call);
               });
               
               client.on('call', (call) => {
                 console.log('📱 Call event via client.call:', call);
                 if (call.direction === 'incoming' || call.state === 'ringing') {
-                  handleIncomingCallEvent(call);
+                  handleIncomingCallEventRef.current(call);
                 }
               });
             }
@@ -434,9 +474,9 @@ export const CallProvider = ({ children }) => {
           setIsClientReady(false);
           isInitializedRef.current = false;
           
-          // Auto-reconnect after a delay
+          // Auto-reconnect after a delay (use refs)
           setTimeout(() => {
-            if (!isClientReady && !isInitializing) {
+            if (!isClientReadyRef.current && !isInitializingRef.current) {
               console.log('📱 Attempting to reconnect WebRTC client...');
               initializeClient().catch(e => {
                 console.log('📱 Reconnection failed:', e.message);
@@ -457,7 +497,7 @@ export const CallProvider = ({ children }) => {
         // Pattern 1: telnyx.rtc.incoming
         client.on('telnyx.rtc.incoming', (call) => {
           console.log('📱 INCOMING CALL via telnyx.rtc.incoming:', call);
-          handleIncomingCallEvent(call);
+          handleIncomingCallEventRef.current(call);
         });
         
         // Pattern 2: telnyx.notification with incomingCall type
@@ -465,12 +505,12 @@ export const CallProvider = ({ children }) => {
           console.log('📱 Telnyx notification:', notification.type, notification);
           
           if (notification.type === 'callUpdate' && notification.call) {
-            handleCallStateChange(notification.call);
+            handleCallStateChangeRef.current(notification.call);
           }
           
           if (notification.type === 'incomingCall' && notification.call) {
             console.log('📱 INCOMING CALL via notification.incomingCall:', notification.call);
-            handleIncomingCallEvent(notification.call);
+            handleIncomingCallEventRef.current(notification.call);
           }
         });
         
@@ -479,16 +519,16 @@ export const CallProvider = ({ children }) => {
           console.log('📱 Call event received:', call);
           if (call && (call.direction === 'incoming' || call.state === 'ringing')) {
             console.log('📱 INCOMING CALL via call event:', call);
-            handleIncomingCallEvent(call);
+            handleIncomingCallEventRef.current(call);
           } else if (call) {
-            handleCallStateChange(call);
+            handleCallStateChangeRef.current(call);
           }
         });
         
         // Pattern 4: Incoming event (some SDK versions)
         client.on('incoming', (call) => {
           console.log('📱 INCOMING CALL via incoming event:', call);
-          handleIncomingCallEvent(call);
+          handleIncomingCallEventRef.current(call);
         });
         
         // Pattern 5: Session events (some SDK versions use session)
@@ -496,7 +536,7 @@ export const CallProvider = ({ children }) => {
           console.log('📱 Session event:', session);
           if (session && session.direction === 'incoming') {
             console.log('📱 INCOMING CALL via session event:', session);
-            handleIncomingCallEvent(session);
+            handleIncomingCallEventRef.current(session);
           }
         });
         
@@ -518,7 +558,7 @@ export const CallProvider = ({ children }) => {
             console.log('📱 INCOMING CALL via socket message:', message);
             // Try to create a call object from the message
             if (message.call) {
-              handleIncomingCallEvent(message.call);
+              handleIncomingCallEventRef.current(message.call);
             }
           }
         });
@@ -555,7 +595,7 @@ export const CallProvider = ({ children }) => {
     })();
 
     return initializationPromiseRef.current;
-  }, [handleCallStateChange, handleIncomingCallEvent, isSpeaker, callState]);
+  }, []); // Stable - use refs for callbacks and state
 
   // Save call record to database
   const saveCallRecord = useCallback(async (toNumber, fromNumber, direction = 'outbound', status = 'dialing') => {
@@ -675,7 +715,7 @@ export const CallProvider = ({ children }) => {
       // Listen for state changes on this call
       call.on('stateChange', () => {
         console.log('📱 Outbound call state:', call.state);
-        handleCallStateChange(call);
+        handleCallStateChangeRef.current(call);
       });
 
       console.log('📱 Call initiated successfully');
@@ -686,7 +726,7 @@ export const CallProvider = ({ children }) => {
       setCallState(CALL_STATES.IDLE);
       return false;
     }
-  }, [initializeClient, isClientReady, credentials, handleCallStateChange, saveCallRecord, updateCallRecord]);
+  }, [initializeClient, credentials, saveCallRecord, updateCallRecord]); // Removed frequently changing deps
 
   // Answer incoming call
   const answerCall = useCallback(async () => {
@@ -934,12 +974,13 @@ export const CallProvider = ({ children }) => {
     // Also set up a periodic health check to ensure client stays connected
     const healthCheckInterval = setInterval(() => {
       const token = localStorage.getItem('token');
-      if (token && !isClientReady && !isInitializing && !isInitializedRef.current) {
+      // Use refs to avoid dependency on changing state
+      if (token && !isClientReadyRef.current && !isInitializingRef.current && !isInitializedRef.current) {
         console.log('📱 Health check: Client not ready, reinitializing...');
         initializeClient().catch(e => {
           console.log('📱 Health check reinit failed:', e.message);
         });
-      } else if (token && isClientReady && telnyxClientRef.current) {
+      } else if (token && isClientReadyRef.current && telnyxClientRef.current) {
         // Verify client is still connected
         try {
           // Check if client has a connection state
@@ -955,23 +996,29 @@ export const CallProvider = ({ children }) => {
           // Client might not have connected property, that's okay
         }
       }
-    }, 30000); // Check every 30 seconds
+    }, 60000); // Check every 60 seconds (reduced frequency)
     
     return () => clearInterval(healthCheckInterval);
-  }, [fixPhoneConfiguration, isClientReady, isInitializing, initializeClient]);
+  }, [fixPhoneConfiguration, initializeClient]); // Removed frequently changing deps
   
   // Store polled call ID for answering
   const polledCallIdRef = useRef(null);
   
   // Poll for incoming calls as a fallback (in case WebRTC events don't fire)
   useEffect(() => {
-    if (!isClientReady || callState === CALL_STATES.INCOMING || callState === CALL_STATES.ACTIVE) {
+    // Use refs to check state without causing re-renders
+    if (!isClientReadyRef.current || callStateRef.current === CALL_STATES.INCOMING || callStateRef.current === CALL_STATES.ACTIVE) {
       return; // Don't poll if already handling a call
     }
     
     let lastPolledCallId = null;
     
     const pollForIncomingCalls = async () => {
+      // Check refs again inside the polling function
+      if (!isClientReadyRef.current || callStateRef.current === CALL_STATES.INCOMING || callStateRef.current === CALL_STATES.ACTIVE) {
+        return;
+      }
+      
       try {
         // Check for recent incoming calls that are still ringing
         const response = await API.get('/api/calls?status=ringing&direction=inbound&limit=1');
@@ -1019,14 +1066,14 @@ export const CallProvider = ({ children }) => {
       }
     };
     
-    // Poll every 3 seconds as fallback (more frequent for better responsiveness)
-    const pollInterval = setInterval(pollForIncomingCalls, 3000);
+    // Poll every 5 seconds as fallback (reduced frequency to improve performance)
+    const pollInterval = setInterval(pollForIncomingCalls, 5000);
     
-    // Initial poll after 1 second
-    setTimeout(pollForIncomingCalls, 1000);
+    // Initial poll after 2 seconds
+    setTimeout(pollForIncomingCalls, 2000);
     
     return () => clearInterval(pollInterval);
-  }, [isClientReady, callState]);
+  }, []); // Empty deps - use refs instead
 
   // Cleanup on unmount
   useEffect(() => {
