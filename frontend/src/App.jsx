@@ -16,8 +16,6 @@ import ForgotPassword from './pages/ForgotPassword';
 import OAuthConsent from './pages/OAuthConsent';
 import Recents from './pages/Recents';
 import Dashboard from './pages/Dashboard';
-import Dialer from './pages/Dialer';
-import Chat from './pages/Chat';
 import Billing from './pages/Billing';
 import Profile from './pages/Profile';
 import Contact from './pages/Contact';
@@ -135,27 +133,9 @@ function App() {
             }
           />
             
-          <Route
-            path="/dialer"
-            element={
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <Dialer />
-                </DashboardLayout>
-              </ProtectedRoute>
-            }
-          />
-            
-          <Route
-            path="/chat"
-            element={
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <Chat />
-                </DashboardLayout>
-              </ProtectedRoute>
-            }
-          />
+          {/* Dialer and Chat: redirect to Recents (all voice/chat operates from Recents) */}
+          <Route path="/dialer" element={<Navigate to="/recents" replace />} />
+          <Route path="/chat" element={<Navigate to="/recents" replace />} />
             
           <Route
             path="/billing"

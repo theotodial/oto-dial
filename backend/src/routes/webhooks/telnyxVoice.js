@@ -90,14 +90,21 @@ router.post("/", async (req, res) => {
 
       const endedAt = new Date();
       let durationSeconds = 0;
-      let minutes = 0;
       let cost = 0;
 
-      // Only calculate duration if call was answered
-      if (call.callStartedAt) {
+      // Use Telnyx-provided duration if available, otherwise calculate from timestamps
+      // Telnyx webhook may provide duration_seconds in the payload
+      if (callPayload.duration_seconds !== undefined) {
+        durationSeconds = Number(callPayload.duration_seconds) || 0;
+      } else if (call.callStartedAt) {
+        // Fallback: calculate from timestamps
         durationSeconds = Math.floor((endedAt - call.callStartedAt) / 1000);
-        minutes = Math.max(1, Math.ceil(durationSeconds / 60));
+      }
+
+      // Only calculate cost if call was answered and has duration
+      if (durationSeconds > 0) {
         const rate = Number(process.env.CALL_RATE_PER_MINUTE || 0.0065);
+        const minutes = durationSeconds / 60; // Use exact minutes for cost calculation
         cost = minutes * rate;
       }
 
@@ -105,7 +112,7 @@ router.post("/", async (req, res) => {
       const hangupCause = callPayload.hangup_cause || "unknown";
       let finalStatus = "completed";
       
-      if (!call.callStartedAt) {
+      if (!call.callStartedAt && durationSeconds === 0) {
         // Call was never answered
         finalStatus = call.direction === "inbound" ? "missed" : "failed";
       }
@@ -113,7 +120,7 @@ router.post("/", async (req, res) => {
       // Update call record
       call.callEndedAt = endedAt;
       call.durationSeconds = durationSeconds;
-      call.billedMinutes = minutes;
+      call.billedMinutes = durationSeconds / 60; // Store as decimal minutes for display
       call.cost = cost;
       call.status = finalStatus;
       call.hangupCause = hangupCause;
@@ -122,16 +129,19 @@ router.post("/", async (req, res) => {
 
       // ===============================
       // UPDATE SUBSCRIPTION USAGE
+      // Deduct usage per SECOND (not per minute, not per call)
+      // minutesUsed field stores SECONDS internally
       // ===============================
-      if (minutes > 0 && call.user) {
+      if (durationSeconds > 0 && call.user) {
         await Subscription.findOneAndUpdate(
           { userId: call.user, status: "active" },
           {
             $inc: {
-              "usage.minutesUsed": minutes,
+              "usage.minutesUsed": durationSeconds, // Store seconds in minutesUsed field
             },
           }
         );
+        console.log(`📊 Usage deducted: ${durationSeconds} seconds for ${call.direction} call (userId: ${call.user})`);
       }
     }
 

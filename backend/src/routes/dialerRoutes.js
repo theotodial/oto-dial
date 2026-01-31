@@ -21,8 +21,14 @@ router.post("/call", async (req, res) => {
       return res.status(403).json({ error: "Active subscription required" });
     }
 
-    if (req.subscription.minutesRemaining <= 0) {
-      return res.status(403).json({ error: "No minutes remaining" });
+    // Check remaining seconds > 0 before allowing outgoing call
+    // minutesRemaining is in minutes (with decimals), convert to seconds
+    const minutesRemaining = req.subscription.minutesRemaining || 0;
+    const remainingSeconds = minutesRemaining * 60;
+    if (remainingSeconds <= 0) {
+      return res.status(403).json({ 
+        error: "No minutes remaining. Please upgrade your plan or wait for your next billing cycle." 
+      });
     }
 
     const telnyx = getTelnyx();

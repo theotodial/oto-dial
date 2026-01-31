@@ -39,9 +39,12 @@ router.post("/send", async (req, res) => {
       return res.status(403).json({ error: "Subscription is not active" });
     }
 
-    // 🔒 SINGLE SOURCE OF TRUTH
-    // ❌ NO smsRemaining enforcement here
-    // Usage limits are informational only
+    // 🔒 USAGE GUARD: Check remaining SMS > 0 before allowing outgoing SMS
+    if (req.subscription.smsRemaining <= 0) {
+      return res.status(403).json({ 
+        error: "No SMS remaining. Please upgrade your plan or wait for your next billing cycle." 
+      });
+    }
 
     const phone = await PhoneNumber.findOne({
       userId: req.userId,

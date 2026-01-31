@@ -93,11 +93,12 @@ router.post("/", async (req, res) => {
     console.log(`✅ Inbound SMS saved: ${fromNumber} -> ${toNumber} (userId: ${userId || 'unknown'}) [id: ${sms._id}]`);
     
     // Update usage tracking for inbound SMS
+    // Both inbound and outbound SMS count toward usage
     if (userId) {
       try {
         await Subscription.updateOne(
           { userId: userId, status: "active" },
-          { $inc: { "usage.smsReceived": 1 } }
+          { $inc: { "usage.smsUsed": 1 } }
         );
         console.log(`📊 Inbound SMS usage tracked for user ${userId}`);
       } catch (usageErr) {

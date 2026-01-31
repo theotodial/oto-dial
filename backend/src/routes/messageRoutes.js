@@ -42,5 +42,55 @@ router.get("/", async (req, res) => {
   }
 });
 
+/**
+ * DELETE /api/messages
+ * Delete all messages (SMS) for the current user
+ */
+router.delete("/", async (req, res) => {
+  try {
+    const userId = req.userId;
+    const result = await SMS.deleteMany({ user: userId });
+    res.json({ success: true, deleted: result.deletedCount });
+  } catch (err) {
+    console.error("DELETE /api/messages error:", err);
+    res.status(500).json({ success: false, error: "Failed to delete messages" });
+  }
+});
+
+/** Normalize phone for matching: digits only (no + or spaces) */
+function normalizePhoneForMatch(phone) {
+  if (!phone || typeof phone !== "string") return "";
+  return phone.replace(/\D/g, "");
+}
+
+/**
+ * DELETE /api/messages/thread/:phoneNumber
+ * Delete all messages in a thread (conversation with one number)
+ * Encoded phone number can include + (use encodeURIComponent on frontend)
+ */
+router.delete("/thread/:phoneNumber", async (req, res) => {
+  try {
+    const userId = req.userId;
+    const raw = req.params.phoneNumber ? decodeURIComponent(req.params.phoneNumber) : "";
+    const normalized = normalizePhoneForMatch(raw);
+    if (!normalized) {
+      return res.status(400).json({ success: false, error: "Phone number required" });
+    }
+    const messages = await SMS.find({ user: userId }).lean();
+    const idsToDelete = messages
+      .filter((m) => {
+        const toNorm = normalizePhoneForMatch(m.to);
+        const fromNorm = normalizePhoneForMatch(m.from);
+        return toNorm === normalized || fromNorm === normalized;
+      })
+      .map((m) => m._id);
+    const result = await SMS.deleteMany({ _id: { $in: idsToDelete } });
+    res.json({ success: true, deleted: result.deletedCount });
+  } catch (err) {
+    console.error("DELETE /api/messages/thread error:", err);
+    res.status(500).json({ success: false, error: "Failed to delete conversation" });
+  }
+});
+
 export default router;
 

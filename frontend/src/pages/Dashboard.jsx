@@ -206,7 +206,7 @@ function Dashboard() {
           <div className="space-y-3 mb-4">
             <div className="flex items-center justify-between">
               <span className="text-sm opacity-90">Remaining Minutes</span>
-              <span className="text-2xl font-bold">{(packageDetails?.remainingMinutes || 0).toLocaleString()}</span>
+              <span className="text-2xl font-bold">{parseFloat(packageDetails?.remainingMinutes || 0).toFixed(2)}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm opacity-90">Remaining SMS</span>

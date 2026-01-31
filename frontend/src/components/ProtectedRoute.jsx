@@ -8,7 +8,9 @@ import { useAuth } from '../context/AuthContext';
  * Redirects to login with return URL if not authenticated
  */
 function ProtectedRoute({ children }) {
-  const { isAuthenticated, loading } = useAuth();
+  const auth = useAuth();
+  const isAuthenticated = auth?.isAuthenticated ?? false;
+  const loading = auth?.loading ?? true;
   const location = useLocation();
 
   // Show loading spinner while checking authentication

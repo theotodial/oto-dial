@@ -16,6 +16,10 @@ class ErrorBoundary extends React.Component {
 
   render() {
     if (this.state.hasError) {
+      const { error } = this.state;
+      const message = error?.message || 'Unknown error';
+      const stack = error?.stack || '';
+      const showDetails = import.meta.env?.DEV === true;
       return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900 p-4">
           <div className="max-w-md w-full bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6 text-center">
@@ -28,6 +32,14 @@ class ErrorBoundary extends React.Component {
             <p className="text-gray-600 dark:text-gray-400 mb-4">
               We're sorry, but something unexpected happened. Please try refreshing the page.
             </p>
+            {showDetails && message && (
+              <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg text-left overflow-auto max-h-32">
+                <p className="text-sm font-mono text-red-700 dark:text-red-300 break-words">{message}</p>
+                {stack && (
+                  <pre className="text-xs text-gray-600 dark:text-gray-400 mt-2 whitespace-pre-wrap break-words">{stack}</pre>
+                )}
+              </div>
+            )}
             <button
               onClick={() => {
                 this.setState({ hasError: false, error: null });

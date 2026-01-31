@@ -32,12 +32,14 @@ router.get("/", authMiddleware, async (req, res) => {
       });
     }
 
-    const minutesRemaining = Math.max(
-      0,
-      (subscription.limits?.minutesTotal || 0) +
-        (subscription.addons?.minutes || 0) -
-        (subscription.usage?.minutesUsed || 0)
-    );
+    // minutesUsed field stores SECONDS internally
+    const secondsUsed = subscription.usage?.minutesUsed || 0;
+    const minutesTotal = (subscription.limits?.minutesTotal || 0) + (subscription.addons?.minutes || 0);
+    const secondsTotal = minutesTotal * 60;
+    const secondsRemaining = Math.max(0, secondsTotal - secondsUsed);
+    
+    // Convert remaining seconds to minutes for display (with decimals)
+    const minutesRemaining = secondsRemaining / 60;
 
     const smsRemaining = Math.max(
       0,

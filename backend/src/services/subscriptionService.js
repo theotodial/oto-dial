@@ -67,9 +67,16 @@ export async function loadUserSubscription(userId) {
   const smsAddons = subscription.addons?.sms || 0;
   const minutesAddons = subscription.addons?.minutes || 0;
   const smsUsed = subscription.usage?.smsUsed || 0;
-  const minutesUsed = subscription.usage?.minutesUsed || 0;
-
-  const minutesRemaining = Math.max(0, minutesTotal + minutesAddons - minutesUsed);
+  
+  // minutesUsed field stores SECONDS internally
+  const secondsUsed = subscription.usage?.minutesUsed || 0;
+  
+  // Convert limits from minutes to seconds for comparison
+  const secondsTotal = (minutesTotal + minutesAddons) * 60;
+  const secondsRemaining = Math.max(0, secondsTotal - secondsUsed);
+  
+  // Convert remaining seconds back to minutes for display (with decimals)
+  const minutesRemaining = secondsRemaining / 60;
   const smsRemaining = Math.max(0, smsTotal + smsAddons - smsUsed);
 
   console.log("📊 Subscription loaded:", {
@@ -78,8 +85,8 @@ export async function loadUserSubscription(userId) {
     smsUsed,
     smsRemaining,
     minutesTotal,
-    minutesUsed,
-    minutesRemaining
+    secondsUsed,
+    minutesRemaining: minutesRemaining.toFixed(2)
   });
 
   return {

@@ -1,6 +1,7 @@
 import express from "express";
 import User from "../../models/User.js";
 import Call from "../../models/Call.js";
+import Subscription from "../../models/Subscription.js";
 import requireAdmin from "../../middleware/requireAdmin.js";
 import statsRoutes from "./statsRoutes.js";
 
@@ -91,28 +92,39 @@ router.get("/calls", requireAdmin, async (req, res) => {
 
 /**
  * GET /api/admin/usage
+ * Uses Subscription collection as single source of truth
  */
 router.get("/usage", requireAdmin, async (req, res) => {
   try {
     const users = await User.find();
-
-    let totalMinutes = 0;
+    
+    // Aggregate usage from Subscription (single source of truth)
+    const subscriptions = await Subscription.find({ status: "active" });
+    
+    let totalSeconds = 0;
     let totalSms = 0;
 
-    users.forEach(user => {
-      totalMinutes += user.minutesUsed || 0;
-      totalSms += user.smsUsed || 0;
+    subscriptions.forEach(sub => {
+      // minutesUsed field stores SECONDS internally
+      const secondsUsed = sub.usage?.minutesUsed || 0;
+      totalSeconds += secondsUsed;
+      totalSms += sub.usage?.smsUsed || 0;
     });
+
+    // Convert seconds to minutes for display (with decimals)
+    const totalMinutes = totalSeconds / 60;
 
     res.json({
       success: true,
       totals: {
         totalUsers: users.length,
-        minutesUsed: totalMinutes,
+        totalActiveSubscriptions: subscriptions.length,
+        minutesUsed: parseFloat(totalMinutes.toFixed(2)),
         smsUsed: totalSms
       }
     });
-  } catch {
+  } catch (err) {
+    console.error("Admin usage error:", err);
     res.status(500).json({
       success: false,
       error: "Failed to fetch usage data"

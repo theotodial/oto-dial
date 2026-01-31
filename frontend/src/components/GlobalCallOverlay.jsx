@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useCall, CALL_STATES } from '../context/CallContext';
 import CallWindow from './CallWindow';
 
@@ -7,11 +8,19 @@ import CallWindow from './CallWindow';
  * 
  * When call is active:
  * - If minimized: Shows floating banner at top (can navigate while on call)
- * - If expanded: Shows full-screen call window overlay
- * 
- * This ensures users can always access their call from any page.
+ * - If expanded: Shows full-screen call window overlay (except on Recents desktop, where call shows in dialer panel only)
  */
 export default function GlobalCallOverlay() {
+  const location = useLocation();
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    setIsDesktop(mq.matches);
+    const fn = () => setIsDesktop(mq.matches);
+    mq.addEventListener('change', fn);
+    return () => mq.removeEventListener('change', fn);
+  }, []);
+
   const {
     callState,
     callDuration,
@@ -136,6 +145,11 @@ export default function GlobalCallOverlay() {
         </div>
       </div>
     );
+  }
+
+  // On Recents desktop: don't show full-screen overlay; call UI is shown inside Recents' dialer panel
+  if (location.pathname === '/recents' && isDesktop) {
+    return null;
   }
 
   // If expanded, show full-screen call window overlay

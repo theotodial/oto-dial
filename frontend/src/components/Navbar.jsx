@@ -57,22 +57,16 @@ function Navbar() {
             {isAuthenticated ? (
               <>
                 <Link
+                  to="/recents"
+                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium transition-colors"
+                >
+                  Voice
+                </Link>
+                <Link
                   to="/dashboard"
                   className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium transition-colors"
                 >
                   Dashboard
-                </Link>
-                <Link
-                  to="/dialer"
-                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium transition-colors"
-                >
-                  Dialer
-                </Link>
-                <Link
-                  to="/chat"
-                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium transition-colors"
-                >
-                  Chat
                 </Link>
                 <button
                   onClick={handleLogout}
@@ -155,25 +149,18 @@ function Navbar() {
             {isAuthenticated ? (
               <div className="flex flex-col space-y-4 items-center">
                 <Link
+                  to="/recents"
+                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  Voice
+                </Link>
+                <Link
                   to="/dashboard"
                   className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Dashboard
-                </Link>
-                <Link
-                  to="/dialer"
-                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  Dialer
-                </Link>
-                <Link
-                  to="/chat"
-                  className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  Chat
                 </Link>
                 <button
                   onClick={() => {

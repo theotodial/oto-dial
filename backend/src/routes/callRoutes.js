@@ -184,4 +184,38 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
+/**
+ * DELETE /api/calls
+ * Delete all call history for the current user
+ */
+router.delete("/", async (req, res) => {
+  try {
+    const result = await Call.deleteMany({ user: req.userId });
+    res.json({ success: true, deleted: result.deletedCount });
+  } catch (err) {
+    console.error("DELETE /api/calls error:", err);
+    res.status(500).json({ success: false, error: "Failed to delete call history" });
+  }
+});
+
+/**
+ * DELETE /api/calls/:id
+ * Delete a single call record
+ */
+router.delete("/:id", async (req, res) => {
+  try {
+    const call = await Call.findOneAndDelete({
+      _id: req.params.id,
+      user: req.userId
+    });
+    if (!call) {
+      return res.status(404).json({ success: false, error: "Call not found" });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error("DELETE /api/calls/:id error:", err);
+    res.status(500).json({ success: false, error: "Failed to delete call" });
+  }
+});
+
 export default router;
