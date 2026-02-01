@@ -329,6 +329,23 @@ function Recents() {
     }
   }, [selectedChat, fetchChatMessages]);
 
+  // Fetch read state and unread counts (must be defined before use)
+  const fetchReadStateAndUnread = useCallback(async () => {
+    if (!isMountedRef.current) return;
+    try {
+      const [readRes, unreadRes] = await Promise.all([
+        API.get('/api/messages/read-state').catch(() => ({ data: null })),
+        API.get('/api/messages/unread-counts').catch(() => ({ data: null }))
+      ]);
+      if (isMountedRef.current) {
+        if (readRes?.data?.readState) setReadState(readRes.data.readState);
+        if (unreadRes?.data?.unreadCounts) setUnreadCounts(unreadRes.data.unreadCounts);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
   // Mark thread as read when user opens a chat
   useEffect(() => {
     if (!selectedChat) return;
@@ -515,22 +532,6 @@ function Recents() {
     try {
       const res = await API.get('/api/contacts');
       if (res?.data?.contacts && isMountedRef.current) setContacts(res.data.contacts);
-    } catch (e) {
-      // ignore
-    }
-  }, []);
-
-  const fetchReadStateAndUnread = useCallback(async () => {
-    if (!isMountedRef.current) return;
-    try {
-      const [readRes, unreadRes] = await Promise.all([
-        API.get('/api/messages/read-state').catch(() => ({ data: null })),
-        API.get('/api/messages/unread-counts').catch(() => ({ data: null }))
-      ]);
-      if (isMountedRef.current) {
-        if (readRes?.data?.readState) setReadState(readRes.data.readState);
-        if (unreadRes?.data?.unreadCounts) setUnreadCounts(unreadRes.data.unreadCounts);
-      }
     } catch (e) {
       // ignore
     }

@@ -9,12 +9,17 @@ const router = express.Router();
  * GET /api/push/vapid-public
  * Returns VAPID public key for client to subscribe (public)
  */
-router.get("/vapid-public", (req, res) => {
-  const key = getVapidPublicKey();
-  if (!key) {
-    return res.status(503).json({ success: false, error: "Push not configured" });
+router.get("/vapid-public", async (req, res) => {
+  try {
+    const key = await getVapidPublicKey();
+    if (!key) {
+      return res.status(503).json({ success: false, error: "Push not configured" });
+    }
+    res.json({ success: true, publicKey: key });
+  } catch (err) {
+    console.error("GET /api/push/vapid-public error:", err);
+    res.status(503).json({ success: false, error: "Push not configured" });
   }
-  res.json({ success: true, publicKey: key });
 });
 
 /**

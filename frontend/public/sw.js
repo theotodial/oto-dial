@@ -8,13 +8,17 @@ self.addEventListener("push", function (event) {
     payload.body = event.data.text();
   }
   const title = payload.title || "New message";
+  const isCall = payload.data?.type === "call";
   const options = {
     body: payload.body || "You have a new message",
     icon: "/favicon.ico",
     badge: "/favicon.ico",
-    tag: "oto-dial-message",
+    tag: isCall ? `oto-dial-call-${payload.data?.from || 'unknown'}` : "oto-dial-message",
     data: payload.data || { url: "/recents" },
-    requireInteraction: false
+    // Calls require interaction (user must click), messages don't
+    requireInteraction: isCall,
+    // Calls should have sound/vibration
+    vibrate: isCall ? [200, 100, 200] : undefined
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });

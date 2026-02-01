@@ -55,9 +55,19 @@ router.post("/", async (req, res) => {
         });
         console.log(`✅ Inbound call recorded: ${fromNumber} -> ${toNumber} (userId: ${phoneNumber.userId}, callId: ${callRecord._id})`);
         
-        // TODO: Here we could emit a WebSocket event or use Server-Sent Events
-        // to notify the frontend about the incoming call
-        // For now, the frontend will poll or rely on WebRTC client
+        // Send Web Push notification for incoming call (when app is closed or tab in background)
+        if (phoneNumber.userId) {
+          try {
+            const { sendPushToUser } = await import("../../services/pushService.js");
+            await sendPushToUser(phoneNumber.userId, {
+              title: "Incoming call",
+              body: `Call from ${fromNumber}`,
+              data: { url: "/recents", type: "call", from: fromNumber, callId: callRecord._id.toString() }
+            });
+          } catch (pushErr) {
+            console.warn("Push notification error for incoming call:", pushErr?.message);
+          }
+        }
       } else {
         console.warn(`⚠️ Inbound call to ${toNumber} but no active phone number found in database`);
       }
