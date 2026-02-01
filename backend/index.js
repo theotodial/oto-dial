@@ -34,6 +34,7 @@ import contactRoutes from "./src/routes/contactRoutes.js";
 import userRoutes from "./src/routes/userRoutes.js";
 import messageRoutes from "./src/routes/messageRoutes.js";
 import userContactRoutes from "./src/routes/userContactRoutes.js";
+import pushRoutes from "./src/routes/pushRoutes.js";
 import webrtcRoutes from "./src/routes/webrtcRoutes.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
@@ -96,6 +97,7 @@ app.use("/api/calls", authenticateUser, loadSubscription, callRoutes);
 app.use("/api/sms", authenticateUser, loadSubscription, smsRoutes);
 app.use("/api/messages", authenticateUser, loadSubscription, messageRoutes);
 app.use("/api/contacts", authenticateUser, userContactRoutes);
+app.use("/api/push", pushRoutes);
 app.use("/api/webrtc", authenticateUser, loadSubscription, webrtcRoutes);
 app.use("/api/admin", authenticateUser, loadSubscription, adminRoutes);
 

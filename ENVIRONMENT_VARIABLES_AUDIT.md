@@ -71,6 +71,18 @@ All frontend environment variables use the `VITE_` prefix (required by Vite).
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase admin key | ✅ Yes | 🔒 Private | Backend |
 | `PORT` | Server port | ⚠️ Optional | N/A | Backend |
 
+### Web Push (optional)
+
+For out-of-app push notifications when new SMS arrives:
+
+| Variable | Purpose | Required | Location |
+|----------|---------|----------|----------|
+| `VAPID_PUBLIC_KEY` | Web Push VAPID public key | Optional | Backend `.env` |
+| `VAPID_PRIVATE_KEY` | Web Push VAPID private key | Optional | Backend `.env` |
+| `VAPID_MAILTO` | Contact email for VAPID (e.g. `mailto:support@example.com`) | Optional | Backend `.env` |
+
+Generate keys with: `npx web-push generate-vapid-keys` (run in `backend/` or with `web-push` installed).
+
 ---
 
 ## 📁 Files Checked

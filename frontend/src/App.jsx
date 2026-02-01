@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { CallProvider } from './context/CallContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Navbar from './components/Navbar';
@@ -10,6 +10,18 @@ import PublicRoute from './components/PublicRoute';
 import IncomingCallNotification from './components/IncomingCallNotification';
 import GlobalCallOverlay from './components/GlobalCallOverlay';
 import Home from './pages/Home';
+
+/** Home only for guests; logged-in users go to Voice (Recents) */
+function HomeOrRedirect() {
+  const { token } = useAuth();
+  if (token) return <Navigate to="/recents" replace />;
+  return (
+    <>
+      <Navbar />
+      <Home />
+    </>
+  );
+}
 import Signup from './pages/Signup';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
@@ -17,6 +29,7 @@ import OAuthConsent from './pages/OAuthConsent';
 import Recents from './pages/Recents';
 import Dashboard from './pages/Dashboard';
 import Billing from './pages/Billing';
+import BuyNumber from './pages/BuyNumber';
 import Profile from './pages/Profile';
 import Contact from './pages/Contact';
 import Privacy from './pages/Privacy';
@@ -37,15 +50,7 @@ function App() {
             
       <Routes>
             {/* Public Routes - Accessible to everyone, redirects if authenticated */}
-        <Route
-              path="/"
-          element={
-                <>
-                  <Navbar />
-                  <Home />
-                </>
-          }
-        />
+        <Route path="/" element={<HomeOrRedirect />} />
             
         <Route
               path="/login"
@@ -143,6 +148,17 @@ function App() {
               <ProtectedRoute>
                 <DashboardLayout>
                   <Billing />
+                </DashboardLayout>
+              </ProtectedRoute>
+            }
+          />
+          
+          <Route
+            path="/buy-number"
+            element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <BuyNumber />
                 </DashboardLayout>
               </ProtectedRoute>
             }

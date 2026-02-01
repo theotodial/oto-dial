@@ -185,6 +185,11 @@ function Recents() {
   const [saveContactName, setSaveContactName] = useState('');
   const [savingContact, setSavingContact] = useState(false);
   const [importingContacts, setImportingContacts] = useState(false);
+  // Read/unread state and notifications
+  const [readState, setReadState] = useState({}); // phoneNumber -> lastReadAt
+  const [unreadCounts, setUnreadCounts] = useState({}); // phoneNumber -> count
+  const lastUnreadTotalRef = useRef(0);
+  const notificationPermissionRef = useRef(null);
 
   // Simple dialer country list (shared for desktop + mobile)
   const dialCountries = [
@@ -324,6 +329,89 @@ function Recents() {
     }
   }, [selectedChat, fetchChatMessages]);
 
+  // Mark thread as read when user opens a chat
+  useEffect(() => {
+    if (!selectedChat) return;
+    const markRead = async () => {
+      try {
+        await API.post('/api/messages/read-state', { phoneNumber: selectedChat });
+        fetchReadStateAndUnread();
+      } catch (e) {
+        // ignore
+      }
+    };
+    markRead();
+  }, [selectedChat, fetchReadStateAndUnread]);
+
+  // Web Push subscribe helper (so we get notifications when app is closed)
+  const subscribeToPush = useCallback(async () => {
+    try {
+      const keyRes = await API.get('/api/push/vapid-public');
+      const publicKey = keyRes?.data?.publicKey;
+      if (!publicKey) return;
+      const reg = await navigator.serviceWorker.ready;
+      const buf = Uint8Array.from(atob(publicKey.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: buf });
+      const subscription = sub.toJSON ? sub.toJSON() : { endpoint: sub.endpoint, keys: { auth: sub.getKey?.('auth'), p256dh: sub.getKey?.('p256dh') } };
+      if (subscription?.keys?.auth && subscription?.keys?.p256dh) {
+        const auth = typeof subscription.keys.auth === 'string' ? subscription.keys.auth : btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.keys.auth)));
+        const p256dh = typeof subscription.keys.p256dh === 'string' ? subscription.keys.p256dh : btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.keys.p256dh)));
+        await API.post('/api/push/subscribe', { endpoint: subscription.endpoint, keys: { auth, p256dh } });
+      }
+    } catch (_) {
+      // Push not configured or already subscribed
+    }
+  }, []);
+
+  // Notifications: request permission and poll for new messages when tab is in background
+  const getContactNameRef = useRef(() => null);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (notificationPermissionRef.current === null && Notification.permission === 'default') {
+      Notification.requestPermission().then((p) => {
+        notificationPermissionRef.current = p;
+        if (p === 'granted' && 'serviceWorker' in navigator && 'PushManager' in window) {
+          subscribeToPush();
+        }
+      });
+    } else {
+      notificationPermissionRef.current = Notification.permission;
+    }
+    const pollInterval = setInterval(async () => {
+      if (!document.hidden || Notification.permission !== 'granted') return;
+      try {
+        const res = await API.get('/api/messages/unread-counts');
+        const counts = res?.data?.unreadCounts || {};
+        const total = Object.values(counts).reduce((a, b) => a + b, 0);
+        if (total > 0 && total > lastUnreadTotalRef.current) {
+          const firstThread = Object.keys(counts).find((p) => counts[p] > 0);
+          const name = firstThread ? (getContactNameRef.current(firstThread) || firstThread) : 'Someone';
+          new Notification('New message', {
+            body: total === 1 ? `Message from ${name}` : `You have ${total} unread messages`,
+            icon: '/favicon.ico'
+          });
+        }
+        lastUnreadTotalRef.current = total;
+      } catch (e) {
+        // ignore
+      }
+    }, 30000);
+    return () => clearInterval(pollInterval);
+  }, []);
+
+  // Update lastUnreadTotalRef when unreadCounts changes (so we don't re-notify on same count)
+  useEffect(() => {
+    const total = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
+    lastUnreadTotalRef.current = total;
+  }, [unreadCounts]);
+
+  // Web Push: subscribe on mount when permission already granted
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (Notification.permission !== 'granted') return;
+    subscribeToPush();
+  }, [subscribeToPush]);
+
   // Hide sidebar button when chat is open or on dialer tab (mobile only)
   useEffect(() => {
     const sidebarButton = document.getElementById('mobile-sidebar-button');
@@ -411,6 +499,7 @@ function Recents() {
         }
       });
       setChats(Array.from(chatMap.values()));
+      if (isMountedRef.current) fetchReadStateAndUnread();
     } catch (err) {
       if (isMountedRef.current) {
         setCalls([]);
@@ -419,7 +508,7 @@ function Recents() {
     } finally {
       if (isMountedRef.current) setLoading(false);
     }
-  }, []);
+  }, [fetchReadStateAndUnread]);
 
   const fetchContacts = useCallback(async () => {
     if (!isMountedRef.current) return;
@@ -431,14 +520,31 @@ function Recents() {
     }
   }, []);
 
+  const fetchReadStateAndUnread = useCallback(async () => {
+    if (!isMountedRef.current) return;
+    try {
+      const [readRes, unreadRes] = await Promise.all([
+        API.get('/api/messages/read-state').catch(() => ({ data: null })),
+        API.get('/api/messages/unread-counts').catch(() => ({ data: null }))
+      ]);
+      if (isMountedRef.current) {
+        if (readRes?.data?.readState) setReadState(readRes.data.readState);
+        if (unreadRes?.data?.unreadCounts) setUnreadCounts(unreadRes.data.unreadCounts);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
     isMountedRef.current = true;
     fetchRecents(false);
     fetchContacts();
+    fetchReadStateAndUnread();
     return () => {
       isMountedRef.current = false;
     };
-  }, [fetchRecents, fetchContacts]);
+  }, [fetchRecents, fetchContacts, fetchReadStateAndUnread]);
 
   const formatDate = (date) => {
     if (!date) return '';
@@ -752,6 +858,13 @@ function Recents() {
     }
   };
 
+  const normPhone = (n) => (n || '').replace(/\D/g, '');
+  const getUnreadCount = (phoneNumber) => {
+    const n = normPhone(phoneNumber);
+    const key = Object.keys(unreadCounts).find((k) => normPhone(k) === n) || phoneNumber;
+    return unreadCounts[key] || 0;
+  };
+
   // Get contact name from phone number (saved contacts first, then calls/chats)
   const getContactName = (phoneNumber) => {
     const norm = (n) => (n || '').replace(/\D/g, '');
@@ -764,6 +877,7 @@ function Recents() {
     if (chat?.contactName || chat?.name) return chat.contactName || chat.name;
     return null;
   };
+  getContactNameRef.current = getContactName;
 
   // Delete chat (messages for one thread) - wired to backend
   const handleDeleteChat = async (phoneNumber) => {
@@ -1016,6 +1130,7 @@ function Recents() {
                   const contactName = getContactName(phoneNumber) || chat.contactName || chat.name;
                   const displayName = contactName || phoneNumber || 'Unknown';
                   const isSelected = selectedChat === phoneNumber;
+                  const unread = getUnreadCount(phoneNumber);
                   return (
                     <div
                       key={chat.id}
@@ -1024,13 +1139,20 @@ function Recents() {
                       }`}
                     >
                       <div onClick={() => phoneNumber && handleText(phoneNumber)} className="flex-1 flex items-center gap-3 min-w-0 cursor-pointer">
-                        <Avatar name={displayName} phoneNumber={phoneNumber} size="w-11 h-11" className="ring-1 ring-gray-200/50 dark:ring-slate-600/50" />
+                        <div className="relative flex-shrink-0">
+                          <Avatar name={displayName} phoneNumber={phoneNumber} size="w-11 h-11" className="ring-1 ring-gray-200/50 dark:ring-slate-600/50" />
+                          {unread > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-emerald-500 text-white text-[10px] font-bold">
+                              {unread > 99 ? '99+' : unread}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-baseline justify-between gap-2 mb-0.5">
-                            <span className="font-medium text-gray-900 dark:text-white truncate text-sm">{displayName}</span>
+                            <span className={`font-medium truncate text-sm ${unread > 0 ? 'text-gray-900 dark:text-white font-semibold' : 'text-gray-900 dark:text-white'}`}>{displayName}</span>
                             <span className="text-[11px] text-gray-400 dark:text-gray-400 flex-shrink-0">{formatDate(chat.date)}</span>
                           </div>
-                          <p className="text-[11px] text-gray-500 dark:text-gray-400 truncate">{chat.lastMessage || 'No messages'}</p>
+                          <p className={`text-[11px] truncate ${unread > 0 ? 'text-gray-700 dark:text-gray-200 font-medium' : 'text-gray-500 dark:text-gray-400'}`}>{chat.lastMessage || 'No messages'}</p>
                         </div>
                       </div>
                       <button onClick={(e) => { e.stopPropagation(); openSaveContactModal(phoneNumber); }} className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 opacity-0 group-hover:opacity-100 transition-opacity" title="Save to contacts">
@@ -1567,16 +1689,24 @@ function Recents() {
                   const phoneNumber = chat.phoneNumber || chat.phone_number || '';
                   const contactName = getContactName(phoneNumber) || chat.contactName || chat.name;
                   const displayName = contactName || phoneNumber || 'Unknown';
+                  const unread = getUnreadCount(phoneNumber);
                   return (
                     <div key={chat.id} className="flex items-center p-4 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700/50 active:bg-gray-100 dark:active:bg-slate-700 transition-all duration-150">
                       <div onClick={() => handleText(phoneNumber)} className="flex-1 flex items-center space-x-3 min-w-0 active:scale-[0.98]">
-                        <Avatar name={displayName} phoneNumber={phoneNumber} size="w-12 h-12" />
+                        <div className="relative flex-shrink-0">
+                          <Avatar name={displayName} phoneNumber={phoneNumber} size="w-12 h-12" />
+                          {unread > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 min-w-[20px] h-[20px] px-1 flex items-center justify-center rounded-full bg-emerald-500 text-white text-xs font-bold">
+                              {unread > 99 ? '99+' : unread}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-1">
-                            <span className="font-medium text-gray-900 dark:text-white truncate">{displayName}</span>
+                            <span className={`truncate ${unread > 0 ? 'font-semibold text-gray-900 dark:text-white' : 'font-medium text-gray-900 dark:text-white'}`}>{displayName}</span>
                             <span className="text-xs text-gray-500 dark:text-gray-300 ml-2 flex-shrink-0">{formatDate(chat.date)}</span>
                           </div>
-                          <p className="text-sm text-gray-600 dark:text-gray-300 truncate">{chat.lastMessage || 'No messages'}</p>
+                          <p className={`text-sm truncate ${unread > 0 ? 'font-medium text-gray-700 dark:text-gray-200' : 'text-gray-600 dark:text-gray-300'}`}>{chat.lastMessage || 'No messages'}</p>
                         </div>
                       </div>
                       <button onClick={(e) => { e.stopPropagation(); openSaveContactModal(phoneNumber); }} className="p-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 flex-shrink-0" title="Save to contacts">

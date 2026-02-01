@@ -91,7 +91,22 @@ router.post("/", async (req, res) => {
     });
 
     console.log(`✅ Inbound SMS saved: ${fromNumber} -> ${toNumber} (userId: ${userId || 'unknown'}) [id: ${sms._id}]`);
-    
+
+    // Send Web Push to user's devices (when app is closed or tab in background)
+    if (userId) {
+      try {
+        const { sendPushToUser } = await import("../../services/pushService.js");
+        const bodyPreview = (messageText || "").slice(0, 80);
+        await sendPushToUser(userId, {
+          title: "New message",
+          body: bodyPreview ? `From ${fromNumber}: ${bodyPreview}` : `Message from ${fromNumber}`,
+          data: { url: "/recents", from: fromNumber }
+        });
+      } catch (pushErr) {
+        console.warn("Push notification error:", pushErr?.message);
+      }
+    }
+
     // Update usage tracking for inbound SMS
     // Both inbound and outbound SMS count toward usage
     if (userId) {

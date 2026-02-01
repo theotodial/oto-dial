@@ -103,23 +103,8 @@ function Dashboard() {
     navigate('/billing');
   };
 
-  const handleBuyNumber = async () => {
-    setActionLoading(true);
-    setError('');
-    setSuccess('');
-
-    const response = await API.post('/api/numbers/buy', { country: 'US' });
-    
-    if (response.error) {
-      setError(response.error);
-    } else {
-      const num = response.data?.phoneNumber?.phoneNumber || response.data?.phoneNumber?.number || response.data?.phoneNumber;
-      setSuccess(`Number ${num || 'purchased'} successfully`);
-      fetchData();
-      setTimeout(() => setSuccess(''), 3000);
-    }
-    
-    setActionLoading(false);
+  const handleBuyNumber = () => {
+    navigate('/buy-number');
   };
 
   /* ================= LOADING ================= */

@@ -1,26 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
-import { getMyNumbers, buyNumber } from '../services/numberService';
-
-const countries = [
-  { code: 'US', name: 'United States', flag: '🇺🇸' },
-  { code: 'GB', name: 'United Kingdom', flag: '🇬🇧' },
-  { code: 'DE', name: 'Germany', flag: '🇩🇪' },
-  { code: 'FR', name: 'France', flag: '🇫🇷' },
-  { code: 'IT', name: 'Italy', flag: '🇮🇹' },
-  { code: 'ES', name: 'Spain', flag: '🇪🇸' },
-  { code: 'AE', name: 'UAE', flag: '🇦🇪' },
-  { code: 'SA', name: 'Saudi Arabia', flag: '🇸🇦' },
-  { code: 'MY', name: 'Malaysia', flag: '🇲🇾' },
-  { code: 'SG', name: 'Singapore', flag: '🇸🇬' },
-  { code: 'AU', name: 'Australia', flag: '🇦🇺' },
-];
+import { getMyNumbers, searchNumbers, purchaseNumber } from '../services/numberService';
 
 function BuyNumber() {
   const navigate = useNavigate();
-  const [selectedCountry, setSelectedCountry] = useState('US');
   const [userNumbers, setUserNumbers] = useState([]);
+  const [availableNumbers, setAvailableNumbers] = useState([]);
+  const [selectedNumber, setSelectedNumber] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [buying, setBuying] = useState(false);
@@ -79,7 +67,51 @@ function BuyNumber() {
     }
   };
 
-  const handleBuy = async () => {
+  const handleSearch = async () => {
+    if (!subscriptionActive) {
+      setError('Active subscription required to search numbers');
+      return;
+    }
+
+    if (!isMountedRef.current) return;
+    
+    setSearching(true);
+    setError('');
+    setAvailableNumbers([]);
+    setSelectedNumber(null);
+
+    try {
+      // Extract area code if 3 digits provided
+      const areaCode = /^\d{3}$/.test(searchQuery) ? searchQuery : null;
+      const searchPattern = searchQuery || null;
+
+      const numbers = await searchNumbers(areaCode, searchPattern);
+
+      if (!isMountedRef.current) return;
+
+      if (numbers.length === 0) {
+        setError(''); // Clear error, show info message instead
+        setAvailableNumbers([]);
+      } else {
+        setError(''); // Clear any previous errors
+        setAvailableNumbers(numbers);
+      }
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setError(err.message || 'Failed to search numbers. Please try again.');
+    } finally {
+      if (isMountedRef.current) {
+        setSearching(false);
+      }
+    }
+  };
+
+  const handlePurchase = async () => {
+    if (!selectedNumber) {
+      setError('Please select a number first');
+      return;
+    }
+
     if (userNumbers.length > 0) {
       setError('You already have a phone number. Maximum 1 number allowed.');
       return;
@@ -87,7 +119,7 @@ function BuyNumber() {
 
     if (!subscriptionActive) {
       setError('Active subscription required to buy a number');
-      navigate('/billing');
+      navigate('/dashboard');
       return;
     }
 
@@ -98,9 +130,7 @@ function BuyNumber() {
     setSuccess('');
 
     try {
-      const response = await buyNumber({
-        country: selectedCountry
-      });
+      const response = await purchaseNumber(selectedNumber.phone_number);
 
       if (!isMountedRef.current) return;
 
@@ -108,17 +138,17 @@ function BuyNumber() {
         throw new Error(response.error);
       }
 
-      const purchasedNumber = response?.phoneNumber || response?.phoneNumber?.phoneNumber || response?.number;
+      const purchasedNumber = response?.phoneNumber || selectedNumber.phone_number;
       
       setSuccess(`Successfully purchased number: ${purchasedNumber}`);
       setTimeout(() => {
         if (isMountedRef.current) {
-          navigate('/my-numbers');
+          navigate('/dashboard');
         }
       }, 2000);
     } catch (err) {
       if (!isMountedRef.current) return;
-      setError(err.message || 'Failed to buy number. Please try again.');
+      setError(err.message || 'Failed to purchase number. Please try again.');
     } finally {
       if (isMountedRef.current) {
         setBuying(false);
@@ -176,7 +206,7 @@ function BuyNumber() {
       <div className="max-w-4xl mx-auto">
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Buy Phone Number</h1>
-          <p className="text-gray-600 dark:text-gray-400">Select a country to purchase a phone number</p>
+          <p className="text-gray-600 dark:text-gray-400">Search and select a local phone number. Only the cheapest eligible numbers are shown.</p>
         </div>
 
         {error && (
@@ -205,43 +235,94 @@ function BuyNumber() {
         )}
 
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-gray-200 dark:border-slate-700 p-8">
+          {/* Search Section */}
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-              Select Country
+              Search Available Numbers
             </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {countries.map((country) => (
-                <button
-                  key={country.code}
-                  onClick={() => setSelectedCountry(country.code)}
-                  disabled={!subscriptionActive}
-                  className={`p-4 rounded-xl border-2 transition-all ${
-                    selectedCountry === country.code
-                      ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-900/30'
-                      : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500'
-                  } ${
-                    !subscriptionActive ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                  }`}
-                >
-                  <div className="text-3xl mb-2">{country.flag}</div>
-                  <div className={`text-sm font-medium ${
-                    selectedCountry === country.code
-                      ? 'text-indigo-600 dark:text-indigo-400'
-                      : 'text-gray-700 dark:text-gray-300'
-                  }`}>
-                    {country.name}
-                  </div>
-                </button>
-              ))}
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              Enter a 3-digit area code (e.g., 212) or search by number pattern. Only cheapest local numbers are shown.
+            </p>
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                placeholder="Area code (e.g., 212) or number pattern"
+                disabled={!subscriptionActive || searching}
+                className="flex-1 px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+              />
+              <button
+                onClick={handleSearch}
+                disabled={!subscriptionActive || searching}
+                className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {searching ? 'Searching...' : 'Search'}
+              </button>
             </div>
           </div>
 
+          {/* Available Numbers List */}
+          {searching && availableNumbers.length === 0 && !error && (
+            <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded-xl">
+              <p className="text-sm">Searching for available numbers...</p>
+            </div>
+          )}
+
+          {!searching && availableNumbers.length === 0 && searchQuery && !error && (
+            <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 text-yellow-700 dark:text-yellow-300 rounded-xl">
+              <p className="text-sm font-medium mb-1">No eligible numbers found</p>
+              <p className="text-xs">Try a different area code or search pattern. Only cheapest local numbers are available.</p>
+            </div>
+          )}
+
+          {availableNumbers.length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                Available Numbers ({availableNumbers.length})
+              </h3>
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {availableNumbers.map((num) => (
+                  <button
+                    key={num.phone_number}
+                    onClick={() => setSelectedNumber(num)}
+                    className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
+                      selectedNumber?.phone_number === num.phone_number
+                        ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-900/30'
+                        : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-lg font-bold text-gray-900 dark:text-white">
+                          {num.phone_number}
+                        </div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                          Carrier Group: {num.carrier_group} | Monthly: ${num.monthly_cost.toFixed(2)}
+                        </div>
+                      </div>
+                      {selectedNumber?.phone_number === num.phone_number && (
+                        <div className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center">
+                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Purchase Button */}
           <div className="pt-6 border-t border-gray-200 dark:border-slate-700">
             <button
-              onClick={handleBuy}
-              disabled={!subscriptionActive || buying || userNumbers.length > 0}
+              onClick={handlePurchase}
+              disabled={!subscriptionActive || buying || !selectedNumber || userNumbers.length > 0}
               className={`w-full py-4 rounded-xl font-semibold transition-all ${
-                !subscriptionActive || buying || userNumbers.length > 0
+                !subscriptionActive || buying || !selectedNumber || userNumbers.length > 0
                   ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                   : 'bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600 text-white shadow-lg hover:shadow-xl'
               }`}
@@ -251,13 +332,15 @@ function BuyNumber() {
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   Processing...
                 </span>
+              ) : selectedNumber ? (
+                `Purchase ${selectedNumber.phone_number} ($${selectedNumber.monthly_cost.toFixed(2)}/month)`
               ) : (
-                `Purchase Number in ${countries.find(c => c.code === selectedCountry)?.name || 'Selected Country'}`
+                'Select a number to purchase'
               )}
             </button>
 
             <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
-              Maximum 1 phone number per account
+              Maximum 1 phone number per account. Only cheapest local numbers are available.
             </p>
           </div>
         </div>
