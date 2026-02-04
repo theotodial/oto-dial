@@ -1,21 +1,22 @@
 import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 function OAuthSuccess() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { setAuthFromToken } = useAuth();
 
   useEffect(() => {
     const token = searchParams.get('token');
 
     if (token) {
       try {
-        // Store token so AuthContext picks it up
-        localStorage.removeItem('adminToken');
-        localStorage.setItem('token', token);
-        
-        // Redirect to voice app (Recents) after short delay
-        navigate('/recents', { replace: true });
+        // Set auth state via context so ProtectedRoute sees it immediately
+        setAuthFromToken(token, {});
+
+        // Hard redirect so AuthProvider re-initializes cleanly on first mount
+        window.location.replace('/recents');
       } catch (e) {
         console.error('Failed to store OAuth token', e);
         navigate('/login', { replace: true });
@@ -23,7 +24,7 @@ function OAuthSuccess() {
     } else {
       navigate('/login', { replace: true });
     }
-  }, [searchParams, navigate]);
+  }, [searchParams, navigate, setAuthFromToken]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900">

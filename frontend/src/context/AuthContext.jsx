@@ -18,6 +18,16 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
+  // Allow setting auth state directly from an existing token (e.g., OAuth)
+  const setAuthFromToken = (newToken, userData = {}) => {
+    if (!newToken) return;
+    // Clear admin token when user logs in to prevent conflicts
+    localStorage.removeItem("adminToken");
+    localStorage.setItem("token", newToken);
+    setToken(newToken);
+    setUser(userData);
+  };
+
   // ✅ LOGIN - uses API wrapper, checks for token
   const login = async (email, password) => {
     const response = await API.post("/api/auth/login", { email, password });
@@ -84,6 +94,7 @@ export function AuthProvider({ children }) {
         login,
         signup,
         logout,
+        setAuthFromToken,
       }}
     >
       {!loading && children}
