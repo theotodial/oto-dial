@@ -137,27 +137,75 @@ router.get(
       const calls = await Call.find({ user: user._id }).lean();
       const sms = await SMS.find({ user: user._id }).lean();
 
-      // Get Telnyx costs
-      const costs = await TelnyxCost.aggregate([
+      // Get Telnyx costs with breakdown by resource type
+      const costGroups = await TelnyxCost.aggregate([
         { $match: { userId: user._id } },
         {
           $group: {
-            _id: null,
-            totalCost: { $sum: "$totalCostUsd" }
+            _id: "$resourceType",
+            totalCost: { $sum: "$totalCostUsd" },
+            count: { $sum: 1 },
+            totalUnits: { $sum: "$units" }
           }
         }
       ]);
+
+      const callCostGroup = costGroups.find(c => c._id === "call") || {};
+      const smsCostGroup = costGroups.find(c => c._id === "sms") || {};
+      const numberCostGroup = costGroups.find(c => c._id === "number") || {};
+
+      const callCosts = callCostGroup.totalCost || 0;
+      const smsCosts = smsCostGroup.totalCost || 0;
+      const numberCosts = numberCostGroup.totalCost || 0;
+      const totalCost = callCosts + smsCosts + numberCosts;
+
+      // Derive identity block to match frontend expectations
+      const primaryNumber = phoneNumbers[0] || {};
+      const identity = {
+        id: user._id,
+        email: user.email,
+        name: user.name || `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+        accountStatus: user.status || "active",
+        country: primaryNumber.country || primaryNumber.regionInformation?.country || "N/A",
+        createdAt: user.createdAt
+      };
+
+      // Derive subscription summary expected by frontend
+      const subscriptionSummary = subscription
+        ? {
+            planName: subscription.planKey || "Active Plan",
+            status: subscription.status,
+            nextBillingDate: subscription.periodEnd || null,
+            raw: subscription
+          }
+        : null;
 
       res.json({
         success: true,
         user: {
           ...user,
-          subscription: subscription || null,
+          identity,
+          subscription: subscriptionSummary,
           phoneNumbers,
           calls,
           sms,
           costs: {
-            totalTelnyxCost: costs[0]?.totalCost || 0
+            calls: {
+              totalCost: callCosts,
+              count: callCostGroup.count || 0,
+              // totalUnits may represent seconds; convert to minutes if present
+              totalMinutes: callCostGroup.totalUnits ? (callCostGroup.totalUnits / 60) : 0
+            },
+            sms: {
+              totalCost: smsCosts,
+              count: smsCostGroup.count || 0
+            },
+            phoneNumbers: {
+              // Treat numberCosts as total number-related cost; we don't yet split monthly vs one-time
+              monthlyCost: numberCosts,
+              oneTimeCost: 0
+            },
+            totalTelnyxCost: totalCost
           }
         }
       });

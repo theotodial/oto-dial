@@ -568,13 +568,21 @@ function AdminUserDetail() {
                   <dl className="grid grid-cols-2 gap-4">
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Call Costs</dt>
-                      <dd className="text-sm font-semibold text-red-600">${user.costs.calls.totalCost?.toFixed(4)}</dd>
-                      <dd className="text-xs text-gray-500 dark:text-gray-400">{user.costs.calls.count} calls, {user.costs.calls.totalMinutes?.toFixed(2)} min</dd>
+                      <dd className="text-sm font-semibold text-red-600">
+                        ${user.costs?.calls?.totalCost?.toFixed(4) ?? '0.0000'}
+                      </dd>
+                      <dd className="text-xs text-gray-500 dark:text-gray-400">
+                        {(user.costs?.calls?.count ?? 0)} calls, {(user.costs?.calls?.totalMinutes ?? 0).toFixed(2)} min
+                      </dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">SMS Costs</dt>
-                      <dd className="text-sm font-semibold text-red-600">${user.costs.sms.totalCost?.toFixed(4)}</dd>
-                      <dd className="text-xs text-gray-500 dark:text-gray-400">{user.costs.sms.count} SMS</dd>
+                      <dd className="text-sm font-semibold text-red-600">
+                        ${user.costs?.sms?.totalCost?.toFixed(4) ?? '0.0000'}
+                      </dd>
+                      <dd className="text-xs text-gray-500 dark:text-gray-400">
+                        {(user.costs?.sms?.count ?? 0)} SMS
+                      </dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Number Monthly</dt>
