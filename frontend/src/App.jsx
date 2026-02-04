@@ -27,7 +27,6 @@ import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
 import OAuthConsent from './pages/OAuthConsent';
 import OAuthSuccess from './pages/OAuthSuccess';
-import OAuthSuccess from './pages/OAuthSuccess';
 import Recents from './pages/Recents';
 import Dashboard from './pages/Dashboard';
 import Billing from './pages/Billing';
