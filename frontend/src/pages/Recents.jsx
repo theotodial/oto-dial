@@ -1141,7 +1141,7 @@ function Recents() {
                     >
                       <div onClick={() => phoneNumber && handleText(phoneNumber)} className="flex-1 flex items-center gap-3 min-w-0 cursor-pointer">
                         <div className="relative flex-shrink-0">
-                          <Avatar name={displayName} phoneNumber={phoneNumber} size="w-11 h-11" className="ring-1 ring-gray-200/50 dark:ring-slate-600/50" />
+                        <Avatar name={displayName} phoneNumber={phoneNumber} size="w-11 h-11" className="ring-1 ring-gray-200/50 dark:ring-slate-600/50" />
                           {unread > 0 && (
                             <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-emerald-500 text-white text-[10px] font-bold">
                               {unread > 99 ? '99+' : unread}
@@ -1695,7 +1695,7 @@ function Recents() {
                     <div key={chat.id} className="flex items-center p-4 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700/50 active:bg-gray-100 dark:active:bg-slate-700 transition-all duration-150">
                       <div onClick={() => handleText(phoneNumber)} className="flex-1 flex items-center space-x-3 min-w-0 active:scale-[0.98]">
                         <div className="relative flex-shrink-0">
-                          <Avatar name={displayName} phoneNumber={phoneNumber} size="w-12 h-12" />
+                        <Avatar name={displayName} phoneNumber={phoneNumber} size="w-12 h-12" />
                           {unread > 0 && (
                             <span className="absolute -top-0.5 -right-0.5 min-w-[20px] h-[20px] px-1 flex items-center justify-center rounded-full bg-emerald-500 text-white text-xs font-bold">
                               {unread > 99 ? '99+' : unread}

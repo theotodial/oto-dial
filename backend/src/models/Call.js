@@ -40,6 +40,11 @@ const callSchema = new mongoose.Schema(
       default: "queued"
     },
 
+    callInitiatedAt: {
+      type: Date,
+      default: null
+    },
+
     callStartedAt: {
       type: Date,
       default: null
@@ -68,6 +73,53 @@ const callSchema = new mongoose.Schema(
     billedMinutes: {
       type: Number,
       default: 0
+    },
+
+    // Enhanced cost tracking
+    costPerSecond: {
+      type: Number,
+      default: 0
+    },
+
+    ringingDuration: {
+      type: Number,
+      default: 0 // seconds
+    },
+
+    answeredDuration: {
+      type: Number,
+      default: 0 // seconds
+    },
+
+    telnyxCallId: {
+      type: String,
+      default: null
+    },
+
+    // Cost sync tracking
+    billedSeconds: {
+      type: Number,
+      default: 0
+    },
+
+    carrierFee: {
+      type: Number,
+      default: 0
+    },
+
+    costPending: {
+      type: Boolean,
+      default: false
+    },
+
+    costSyncError: {
+      type: String,
+      default: null
+    },
+
+    costSyncedAt: {
+      type: Date,
+      default: null
     }
   },
   {

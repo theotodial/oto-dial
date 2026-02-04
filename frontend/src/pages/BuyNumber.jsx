@@ -22,10 +22,48 @@ function BuyNumber() {
     isMountedRef.current = true;
     checkUserStatus();
     
+    // Auto-load default numbers on page load (like Google Voice/TextNow)
+    if (subscriptionActive && userNumbers.length === 0) {
+      loadDefaultNumbers();
+    }
+    
     return () => {
       isMountedRef.current = false;
     };
   }, []);
+
+  // Load default numbers when subscription becomes active
+  useEffect(() => {
+    if (subscriptionActive && userNumbers.length === 0 && !loading && availableNumbers.length === 0) {
+      loadDefaultNumbers();
+    }
+  }, [subscriptionActive, userNumbers.length, loading]);
+
+  const loadDefaultNumbers = async () => {
+    if (!subscriptionActive || searching) return;
+    
+    setSearching(true);
+    setError('');
+    
+    try {
+      // Search without area code to get default numbers
+      const numbers = await searchNumbers(null, null);
+      
+      if (!isMountedRef.current) return;
+      
+      if (numbers.length > 0) {
+        setAvailableNumbers(numbers);
+      }
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      console.error('Failed to load default numbers:', err);
+      // Don't show error for default load - just silently fail
+    } finally {
+      if (isMountedRef.current) {
+        setSearching(false);
+      }
+    }
+  };
 
   const checkUserStatus = async () => {
     if (!isMountedRef.current) return;
@@ -270,10 +308,15 @@ function BuyNumber() {
             </div>
           )}
 
-          {!searching && availableNumbers.length === 0 && searchQuery && !error && (
+          {!searching && availableNumbers.length === 0 && !error && (
             <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 text-yellow-700 dark:text-yellow-300 rounded-xl">
-              <p className="text-sm font-medium mb-1">No eligible numbers found</p>
-              <p className="text-xs">Try a different area code or search pattern. Only cheapest local numbers are available.</p>
+              <p className="text-sm font-medium mb-1">No numbers found</p>
+              <p className="text-xs">
+                {searchQuery 
+                  ? "Try a different area code or search pattern. Only affordable local numbers are available."
+                  : "Enter an area code (e.g., 212) or search pattern to find numbers, or browse available numbers below."
+                }
+              </p>
             </div>
           )}
 

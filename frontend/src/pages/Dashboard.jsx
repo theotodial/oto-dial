@@ -2,6 +2,32 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import API from '../api';
+import { getLocationFromAreaCode } from '../utils/areaCodeMapping';
+
+// Copy notification component
+function CopyNotification({ show, onClose }) {
+  useEffect(() => {
+    if (show) {
+      const timer = setTimeout(() => {
+        onClose();
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [show, onClose]);
+
+  if (!show) return null;
+
+  return (
+    <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 transition-opacity duration-300">
+      <div className="bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-2">
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+        <span className="font-medium">Copied to clipboard!</span>
+      </div>
+    </div>
+  );
+}
 
 /* ================= ICONS (UNCHANGED) ================= */
 
@@ -36,6 +62,7 @@ function Dashboard() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [copyNotification, setCopyNotification] = useState(false);
   const isMountedRef = useRef(true);
 
   /* ================= FETCH DASHBOARD ================= */
@@ -186,7 +213,10 @@ function Dashboard() {
 
       {/* PACKAGE + NUMBERS CARDS */}
       <div className={`grid grid-cols-1 ${(numbers || []).length === 0 ? 'md:grid-cols-2' : ''} gap-6 mb-8`}>
-        <div className="bg-gradient-to-br from-teal-500 via-green-500 to-emerald-500 dark:from-teal-600 dark:via-green-600 dark:to-emerald-600 rounded-2xl p-6 text-white shadow-lg">
+        <button
+          onClick={() => navigate('/subscription-details')}
+          className="bg-gradient-to-br from-teal-500 via-green-500 to-emerald-500 dark:from-teal-600 dark:via-green-600 dark:to-emerald-600 rounded-2xl p-6 text-white shadow-lg hover:shadow-xl transition-all cursor-pointer text-left"
+        >
           <p className="text-sm opacity-90 mb-2">{packageDetails.planName}</p>
           <div className="space-y-3 mb-4">
             <div className="flex items-center justify-between">
@@ -198,13 +228,22 @@ function Dashboard() {
               <span className="text-2xl font-bold">{(packageDetails?.remainingSMS || 0).toLocaleString()}</span>
             </div>
           </div>
+          <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/20">
+            <span className="text-xs opacity-75">View Details →</span>
+          </div>
           {/* Only show Choose Plan button if no active subscription */}
           {packageDetails.planName === 'No Plan' && (
-          <button onClick={handleChoosePlan} className="w-full py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium transition-colors">
-            Choose Your Plan
-          </button>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                handleChoosePlan();
+              }} 
+              className="w-full mt-4 py-3 bg-white/20 hover:bg-white/30 rounded-xl font-medium transition-colors"
+            >
+              Choose Your Plan
+            </button>
           )}
-        </div>
+        </button>
 
         {/* Only show Active Numbers section if user has no numbers yet (max 1 number) */}
         {(numbers || []).length === 0 && (
@@ -244,15 +283,10 @@ function Dashboard() {
                             const numberToCopy = n.number || n.phoneNumber;
                             try {
                               await navigator.clipboard.writeText(numberToCopy);
-                              // Show temporary success feedback
-                              const btn = e.currentTarget;
-                              const originalHTML = btn.innerHTML;
-                              btn.innerHTML = '<svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
-                              setTimeout(() => {
-                                btn.innerHTML = originalHTML;
-                              }, 2000);
+                              setCopyNotification(true);
                             } catch (err) {
                               console.error('Failed to copy:', err);
+                              setError('Failed to copy to clipboard');
                             }
                           }}
                           className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
@@ -271,34 +305,64 @@ function Dashboard() {
                   </div>
                   
                   {/* Number Details */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-                    <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
-                      <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">Country</p>
-                      <p className="text-gray-900 dark:text-white font-medium">{n.country || 'United States'}</p>
-                    </div>
-                    <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
-                      <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">State</p>
-                      <p className="text-gray-900 dark:text-white font-medium">{n.state || n.region || 'Michigan'}</p>
-                    </div>
-                    <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
-                      <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">City</p>
-                      <p className="text-gray-900 dark:text-white font-medium">{n.city || n.locality || 'Detroit'}</p>
-                    </div>
-                    <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
-                      <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">Activated</p>
-                      <p className="text-gray-900 dark:text-white font-medium">
-                        {n.createdAt || n.created_at 
-                          ? new Date(n.createdAt || n.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                          : 'Jan 13, 2026'}
-                      </p>
-                    </div>
-                  </div>
+                  {(() => {
+                    const phoneNumber = n.number || n.phoneNumber;
+                    const areaCodeLocation = getLocationFromAreaCode(phoneNumber);
+                    
+                    // Priority: Telnyx data > Area code mapping > Defaults
+                    const country = n.country || 
+                                   (n.regionInformation?.country_name || n.regionInformation?.country) || 
+                                   (areaCodeLocation ? 'United States' : 'United States');
+                    
+                    const state = n.state || 
+                                 (n.regionInformation?.region_name || n.regionInformation?.state || n.regionInformation?.region) ||
+                                 (areaCodeLocation?.state || null);
+                    
+                    const city = n.city || 
+                                (n.regionInformation?.locality || n.regionInformation?.city) ||
+                                (areaCodeLocation?.city || null);
+                    
+                    // Priority: purchaseDate (when number was assigned) > createdAt (when record was created)
+                    const activatedDate = n.purchaseDate || n.createdAt || n.created_at;
+                    
+                    return (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                        <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
+                          <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">Country</p>
+                          <p className="text-gray-900 dark:text-white font-medium">{country}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
+                          <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">State</p>
+                          <p className="text-gray-900 dark:text-white font-medium">{state || 'Unknown'}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
+                          <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">City</p>
+                          <p className="text-gray-900 dark:text-white font-medium">{city || 'Unknown'}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-slate-600/50 rounded-lg p-3">
+                          <p className="text-gray-500 dark:text-gray-400 text-xs mb-1">Activated</p>
+                          <p className="text-gray-900 dark:text-white font-medium">
+                            {activatedDate
+                              ? new Date(activatedDate).toLocaleDateString('en-US', { 
+                                  month: 'short', 
+                                  day: 'numeric', 
+                                  year: 'numeric' 
+                                })
+                              : 'Unknown'}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* Copy Notification */}
+      <CopyNotification show={copyNotification} onClose={() => setCopyNotification(false)} />
     </div>
   );
 }

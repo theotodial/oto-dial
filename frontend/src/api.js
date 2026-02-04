@@ -12,10 +12,24 @@ const axiosInstance = axios.create({
 // Add request interceptor to include auth token
 axiosInstance.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    // CRITICAL: Only use adminToken for /api/admin/* routes
+    // Use userToken for all other routes to prevent conflicts
+    const isAdminRoute = config.url && config.url.startsWith('/api/admin');
+    
+    if (isAdminRoute) {
+      // Admin routes: use adminToken only
+      const adminToken = localStorage.getItem('adminToken');
+      if (adminToken && !config.headers.Authorization) {
+        config.headers.Authorization = `Bearer ${adminToken}`;
+      }
+    } else {
+      // User routes: use userToken only (never adminToken)
+      const userToken = localStorage.getItem('token');
+      if (userToken && !config.headers.Authorization) {
+        config.headers.Authorization = `Bearer ${userToken}`;
+      }
     }
+    
     return config;
   },
   (error) => {
@@ -43,11 +57,11 @@ const safeRequest = async (requestFn) => {
 
 // Create safe API wrapper
 const API = {
-  get: async (path) => {
-    return safeRequest(() => axiosInstance.get(path));
+  get: async (path, config = {}) => {
+    return safeRequest(() => axiosInstance.get(path, config));
   },
-  post: async (path, data) => {
-    return safeRequest(() => axiosInstance.post(path, data));
+  post: async (path, data, config = {}) => {
+    return safeRequest(() => axiosInstance.post(path, data, config));
   },
   patch: async (path, data) => {
     return safeRequest(() => axiosInstance.patch(path, data));

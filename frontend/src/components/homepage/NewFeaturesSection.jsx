@@ -6,8 +6,8 @@ function NewFeaturesSection() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
         </svg>
       ),
-      title: "Global Phone Numbers",
-      description: "Get local numbers from 100+ countries instantly. No contracts, no hassle. Activate in under 60 seconds."
+      title: "Virtual Phone Numbers",
+      description: "Buy virtual phone numbers from 100+ countries instantly. Perfect for businesses expanding globally. No contracts, activate in under 60 seconds."
     },
     {
       icon: (
@@ -33,8 +33,17 @@ function NewFeaturesSection() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
         </svg>
       ),
-      title: "Unified Inbox",
-      description: "Manage all your calls, messages, and voicemails in one place. Never lose track of customer conversations."
+      title: "Two-Way SMS Platform",
+      description: "Send and receive SMS messages from your business phone number. Perfect for customer support, notifications, and two-way conversations. Built for business SMS workflows."
+    },
+    {
+      icon: (
+        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+      ),
+      title: "Call Analytics & Reporting",
+      description: "Track call metrics, SMS usage, and performance analytics. Monitor your business communications with detailed reporting and insights."
     },
     {
       icon: (
@@ -43,7 +52,7 @@ function NewFeaturesSection() {
         </svg>
       ),
       title: "Enterprise Security",
-      description: "Bank-level encryption and compliance with GDPR, HIPAA, and SOC 2. Your data is always protected."
+      description: "Bank-level encryption and compliance with GDPR, HIPAA, and SOC 2. Built on carrier-grade infrastructure (Telnyx) for reliable voice & SMS delivery."
     }
   ];
 
@@ -53,10 +62,10 @@ function NewFeaturesSection() {
         {/* Section Header */}
         <div className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4 tracking-tight">
-            Everything you need to scale
+            Cloud Dialer & Two-Way SMS Platform for Businesses
           </h2>
           <p className="text-lg md:text-xl text-gray-600 dark:text-gray-400 max-w-3xl mx-auto leading-relaxed">
-            Powerful features that help businesses of all sizes communicate better with their customers
+            Powerful cloud-based calling and SMS features that help businesses of all sizes communicate better with customers. Built for sales teams, support teams, and call centers.
           </p>
         </div>
 

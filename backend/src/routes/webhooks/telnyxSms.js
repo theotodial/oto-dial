@@ -2,6 +2,7 @@ import express from "express";
 import SMS from "../../models/SMS.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import Subscription from "../../models/Subscription.js";
+import { recordSmsCost } from "../../services/telnyxCostCalculator.js";
 
 const router = express.Router();
 
@@ -80,6 +81,10 @@ router.post("/", async (req, res) => {
     // Format numbers consistently for storage
     const formatPhone = (n) => n.startsWith("+") ? n : `+${n}`;
 
+    // Calculate SMS cost for inbound (Telnyx may charge for inbound too)
+    const smsCostRate = Number(process.env.SMS_COST_RATE || 0.0075);
+    const smsCost = smsCostRate; // Per SMS
+
     const sms = await SMS.create({
       user: userId,
       to: formatPhone(toNumber),
@@ -87,10 +92,64 @@ router.post("/", async (req, res) => {
       body: messageText,
       status: "received",
       direction: "inbound",
-      telnyxMessageId: telnyxId
+      telnyxMessageId: telnyxId,
+      cost: smsCost,
+      costPerSms: smsCostRate,
+      carrier: payload.carrier || null,
+      carrierFees: 0 // Can be enhanced with actual carrier fee data
     });
 
     console.log(`✅ Inbound SMS saved: ${fromNumber} -> ${toNumber} (userId: ${userId || 'unknown'}) [id: ${sms._id}]`);
+
+    // RECORD COST IN IMMUTABLE LEDGER (TELNYX COST ENGINE)
+    // This creates a permanent cost record based on admin-defined pricing
+    if (userId) {
+      try {
+        // Determine destination from phone numbers (default to US)
+        const destination = toNumber?.startsWith('+1') || fromNumber?.startsWith('+1') ? 'US' : 'US';
+        
+        const costResult = await recordSmsCost(sms._id, userId, {
+          telnyxMessageId: sms.telnyxMessageId || telnyxId,
+          destination: destination,
+          direction: 'inbound',
+          status: sms.status,
+          timestamp: new Date()
+        });
+
+        if (costResult.success) {
+          console.log(`✅ Recorded SMS cost in ledger: $${costResult.totalCost.toFixed(6)}`);
+        } else {
+          console.warn(`⚠️ Could not record SMS cost: ${costResult.error}`);
+        }
+      } catch (costErr) {
+        console.error(`❌ Error recording SMS cost:`, costErr);
+        // Don't fail webhook - cost recording is non-blocking
+      }
+    }
+
+    // SYNC REAL COST FROM TELNYX (CRITICAL)
+    // This replaces hardcoded cost calculation with real Telnyx billing data
+    if (sms.telnyxMessageId) {
+      try {
+        const { syncSmsCost } = await import("../../services/telnyxCostService.js");
+        const syncResult = await syncSmsCost(sms._id.toString(), sms.telnyxMessageId);
+        if (syncResult.success) {
+          console.log(`✅ Synced real Telnyx cost for SMS ${sms.telnyxMessageId}: $${sms.cost || 0}`);
+        } else {
+          console.warn(`⚠️ Could not sync Telnyx cost for SMS ${sms.telnyxMessageId}: ${syncResult.error}`);
+        }
+      } catch (costSyncErr) {
+        console.error(`❌ Error syncing SMS cost:`, costSyncErr);
+        // Don't fail the webhook - mark as pending for later sync
+        sms.costPending = true;
+        sms.costSyncError = costSyncErr.message;
+        await sms.save();
+      }
+    } else {
+      // No Telnyx message ID yet - mark as pending
+      sms.costPending = true;
+      await sms.save();
+    }
 
     // Send Web Push to user's devices (when app is closed or tab in background)
     if (userId) {
@@ -106,16 +165,41 @@ router.post("/", async (req, res) => {
         console.warn("Push notification error:", pushErr?.message);
       }
     }
-
+    
     // Update usage tracking for inbound SMS
     // Both inbound and outbound SMS count toward usage
     if (userId) {
       try {
+        // Get subscription before update to log remaining balance
+        const subscription = await Subscription.findOne({
+          userId: userId,
+          status: "active"
+        });
+
+        if (subscription) {
+          const smsUsedBefore = subscription.usage?.smsUsed || 0;
+          const smsTotal = (subscription.limits?.smsTotal || 200) + (subscription.addons?.sms || 0);
+          const smsRemainingBefore = Math.max(0, smsTotal - smsUsedBefore);
+
+          // Deduct usage
         await Subscription.updateOne(
           { userId: userId, status: "active" },
-          { $inc: { "usage.smsUsed": 1 } }
+            { $inc: { "usage.smsUsed": 1 } }
         );
-        console.log(`📊 Inbound SMS usage tracked for user ${userId}`);
+
+          // Calculate remaining after deduction
+          const smsUsedAfter = smsUsedBefore + 1;
+          const smsRemainingAfter = Math.max(0, smsTotal - smsUsedAfter);
+
+          // Enhanced logging for debugging and cost tracking
+          console.log(`📊 INBOUND SMS USAGE DEDUCTED:`);
+          console.log(`   SMS: ${fromNumber} -> ${toNumber}`);
+          console.log(`   User: ${userId}`);
+          console.log(`   Before: ${smsUsedBefore} SMS used, ${smsRemainingBefore} SMS remaining`);
+          console.log(`   After: ${smsUsedAfter} SMS used, ${smsRemainingAfter} SMS remaining`);
+        } else {
+          console.warn(`⚠️ No active subscription found for user ${userId} - SMS usage not deducted`);
+        }
       } catch (usageErr) {
         console.warn(`⚠️ Failed to track inbound SMS usage:`, usageErr.message);
       }

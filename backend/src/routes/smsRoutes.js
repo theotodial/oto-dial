@@ -73,6 +73,11 @@ router.post("/send", async (req, res) => {
       text
     });
 
+    // Calculate SMS cost (Telnyx typically charges per SMS)
+    // Default rate: $0.0075 per SMS (can be configured)
+    const smsCostRate = Number(process.env.SMS_COST_RATE || 0.0075);
+    const smsCost = smsCostRate; // Per SMS
+
     await SMS.create({
       user: req.userId,
       from,
@@ -80,15 +85,40 @@ router.post("/send", async (req, res) => {
       body: text,
       status: "sent",
       direction: "outbound",
-      telnyxMessageId: response.data.id
+      telnyxMessageId: response.data.id,
+      cost: smsCost,
+      costPerSms: smsCostRate,
+      carrier: response.data.carrier || null,
+      carrierFees: 0 // Can be enhanced with actual carrier fee data
     });
 
-    // ✅ Usage tracking ONLY (no enforcement)
+    // ✅ Usage tracking - deduct usage for outbound SMS
     if (req.subscription.id) {
-      await Subscription.updateOne(
-        { _id: req.subscription.id },
-        { $inc: { "usage.smsUsed": 1 } }
-      );
+      // Get subscription before update to log remaining balance
+      const subscription = await Subscription.findById(req.subscription.id);
+      
+      if (subscription) {
+        const smsUsedBefore = subscription.usage?.smsUsed || 0;
+        const smsTotal = (subscription.limits?.smsTotal || 200) + (subscription.addons?.sms || 0);
+        const smsRemainingBefore = Math.max(0, smsTotal - smsUsedBefore);
+
+        // Deduct usage
+        await Subscription.updateOne(
+          { _id: req.subscription.id },
+          { $inc: { "usage.smsUsed": 1 } }
+        );
+
+        // Calculate remaining after deduction
+        const smsUsedAfter = smsUsedBefore + 1;
+        const smsRemainingAfter = Math.max(0, smsTotal - smsUsedAfter);
+
+        // Enhanced logging for debugging and cost tracking
+        console.log(`📊 OUTBOUND SMS USAGE DEDUCTED:`);
+        console.log(`   SMS: ${from} -> ${toFormatted}`);
+        console.log(`   User: ${req.userId}`);
+        console.log(`   Before: ${smsUsedBefore} SMS used, ${smsRemainingBefore} SMS remaining`);
+        console.log(`   After: ${smsUsedAfter} SMS used, ${smsRemainingAfter} SMS remaining`);
+      }
     }
 
     console.log(`✅ SMS sent from ${from} to ${toFormatted}`);

@@ -25,6 +25,7 @@
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",
+    "recharts": "^3.7.0",
     "stripe": "^20.1.0",
     "telnyx": "^4.6.0",
     "web-push": "^3.6.7"

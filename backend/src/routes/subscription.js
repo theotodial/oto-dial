@@ -19,16 +19,21 @@ router.get("/", authMiddleware, async (req, res) => {
   try {
     const userId = req.userId;
 
+    // Get subscription - include both active and cancelled (cancelled subscriptions are still active until periodEnd)
     const subscription = await Subscription.findOne({
       userId,
-      status: "active",
-    }).populate("planId");
+      $or: [
+        { status: "active" },
+        { status: "cancelled" }
+      ]
+    }).populate("planId").sort({ createdAt: -1 });
 
     if (!subscription) {
       return res.json({
         planName: "No Plan",
         minutesRemaining: 0,
         smsRemaining: 0,
+        status: "inactive",
       });
     }
 
@@ -52,6 +57,12 @@ router.get("/", authMiddleware, async (req, res) => {
       planName: subscription.planId?.name || "Active Plan",
       minutesRemaining,
       smsRemaining,
+      status: subscription.status || "active",
+      periodEnd: subscription.periodEnd,
+      periodStart: subscription.periodStart,
+      limits: subscription.limits,
+      totalMinutes: subscription.limits?.minutesTotal || 0,
+      totalSMS: subscription.limits?.smsTotal || 0,
       subscription,
     });
   } catch (err) {
@@ -190,6 +201,41 @@ router.post("/fix", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("SUBSCRIPTION FIX ERROR:", err);
     res.status(500).json({ error: "Failed to fix subscription" });
+  }
+});
+
+/**
+ * POST /api/subscription/cancel
+ * Cancel subscription - no refunds, account remains active until periodEnd
+ */
+router.post("/cancel", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    const subscription = await Subscription.findOne({
+      userId,
+      status: "active"
+    });
+
+    if (!subscription) {
+      return res.status(404).json({ error: "No active subscription found" });
+    }
+
+    // Mark subscription as cancelled but keep it active until periodEnd
+    // This ensures user keeps access until the end of the billing cycle
+    subscription.status = "cancelled";
+    await subscription.save();
+
+    console.log(`✅ Subscription cancelled for user ${userId}. Active until ${subscription.periodEnd}`);
+
+    res.json({
+      success: true,
+      message: "Subscription cancelled successfully. Your account will remain active until the end of the current billing cycle.",
+      periodEnd: subscription.periodEnd
+    });
+  } catch (err) {
+    console.error("CANCEL SUBSCRIPTION ERROR:", err);
+    res.status(500).json({ error: "Failed to cancel subscription" });
   }
 });
 

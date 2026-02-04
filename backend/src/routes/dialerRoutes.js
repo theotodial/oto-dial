@@ -62,6 +62,7 @@ router.post("/call", async (req, res) => {
     });
 
     // Create call record in database
+    // CRITICAL: Set callInitiatedAt to track ring time for billing
     const callRecord = await Call.create({
       user: req.userId,
       phoneNumber: to,
@@ -69,7 +70,8 @@ router.post("/call", async (req, res) => {
       toNumber: to,
       direction: "outbound",
       status: "dialing",
-      telnyxCallControlId: telnyxCall.data.call_control_id
+      telnyxCallControlId: telnyxCall.data.call_control_id,
+      callInitiatedAt: new Date() // Track initiation time for billing ring time
     });
 
     res.json({

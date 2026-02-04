@@ -15,10 +15,29 @@ const subscriptionSchema = new mongoose.Schema(
       required: true
     },
 
+    // Stripe integration fields
+    stripeSubscriptionId: {
+      type: String,
+      default: null,
+      index: true,
+      sparse: true
+    },
+
+    stripePriceId: {
+      type: String,
+      default: null
+    },
+
+    planKey: {
+      type: String,
+      default: null,
+      index: true
+    },
+
     status: {
       type: String,
-      enum: ["active", "suspended", "cancelled"],
-      default: "active",
+      enum: ["active", "suspended", "cancelled", "past_due", "incomplete", "pending_activation"],
+      default: "pending_activation",
       index: true
     },
 

@@ -4,8 +4,8 @@ function NewHowItWorks() {
   const steps = [
     {
       number: "01",
-      title: "Choose Your Number",
-      description: "Browse available numbers from 100+ countries. Filter by location, features, or price to find your perfect match.",
+      title: "Buy Virtual Phone Number",
+      description: "Browse and buy virtual phone numbers from 100+ countries. Filter by location, features, or price to find the perfect business phone number for your needs.",
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -24,8 +24,8 @@ function NewHowItWorks() {
     },
     {
       number: "03",
-      title: "Start Calling",
-      description: "Begin making and receiving calls immediately. Connect with customers worldwide from day one.",
+      title: "Start Calling & Sending SMS",
+      description: "Begin making and receiving calls, plus send and receive SMS messages immediately. Connect with customers worldwide through voice and text from day one.",
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
@@ -40,10 +40,10 @@ function NewHowItWorks() {
         {/* Section Header */}
         <div className="text-center mb-20">
           <h2 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4">
-            Get started in 3 simple steps
+            Get Started with Your Business Phone System in 3 Simple Steps
           </h2>
           <p className="text-xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
-            No technical knowledge required. Set up your virtual phone system in minutes, not days.
+            No technical knowledge required. Set up your cloud dialer and SMS platform in minutes, not days. Buy virtual phone numbers and start making business calls immediately.
           </p>
         </div>
 

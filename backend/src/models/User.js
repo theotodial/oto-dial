@@ -51,7 +51,15 @@ const userSchema = new mongoose.Schema(
     },
 
     stripeCustomerId: { 
-      type: String 
+      type: String,
+      index: true
+    },
+
+    activeSubscriptionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Subscription",
+      default: null,
+      index: true
     },
 
     subscriptionActive: { 

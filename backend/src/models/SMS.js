@@ -35,7 +35,44 @@ const smsSchema = new mongoose.Schema(
       default: "outbound"
     },
 
-    telnyxMessageId: String
+    telnyxMessageId: String,
+
+    // Enhanced cost tracking
+    cost: {
+      type: Number,
+      default: 0
+    },
+
+    costPerSms: {
+      type: Number,
+      default: 0
+    },
+
+    carrier: {
+      type: String,
+      default: null
+    },
+
+    carrierFees: {
+      type: Number,
+      default: 0
+    },
+
+    // Cost sync tracking
+    costPending: {
+      type: Boolean,
+      default: false
+    },
+
+    costSyncError: {
+      type: String,
+      default: null
+    },
+
+    costSyncedAt: {
+      type: Date,
+      default: null
+    }
   },
   { timestamps: true }
 );

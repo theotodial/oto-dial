@@ -35,7 +35,7 @@ router.get(
 
       const { areaCode, searchPattern } = req.query;
       
-      // Build filter - STRICT COST CONTROL
+      // Build filter - RELAXED to show more numbers
       // Note: Telnyx API filter structure may vary, so we filter results after fetching
       const filter = {
         country_code: "US",
@@ -47,19 +47,50 @@ router.get(
         filter.npa = areaCode; // NPA = Numbering Plan Area (area code)
       }
 
-      // Search for available numbers - get more results to filter client-side
-      const available = await telnyx.availablePhoneNumbers.list({
-        filter,
-        page: { size: 100 } // Get more results to filter
-      });
+      // If no area code, try popular area codes to show default numbers
+      const popularAreaCodes = ['212', '310', '415', '646', '213', '323', '424', '818', '347', '929'];
+      let allResults = [];
 
-      if (!available.data || available.data.length === 0) {
+      if (areaCode && /^\d{3}$/.test(areaCode)) {
+        // Search specific area code
+        try {
+          const available = await telnyx.availablePhoneNumbers.list({
+            filter,
+            page: { size: 200 } // Get more results
+          });
+          if (available.data) {
+            allResults = available.data;
+          }
+        } catch (err) {
+          console.error(`Error searching area code ${areaCode}:`, err.message);
+        }
+      } else {
+        // No area code specified - search popular area codes to show default numbers
+        // This mimics Google Voice/TextNow behavior
+        const searchPromises = popularAreaCodes.slice(0, 5).map(async (code) => {
+          try {
+            const available = await telnyx.availablePhoneNumbers.list({
+              filter: { ...filter, npa: code },
+              page: { size: 20 }
+            });
+            return available.data || [];
+          } catch (err) {
+            console.error(`Error searching area code ${code}:`, err.message);
+            return [];
+          }
+        });
+
+        const results = await Promise.all(searchPromises);
+        allResults = results.flat();
+      }
+
+      if (!allResults || allResults.length === 0) {
         return res.json({ numbers: [] });
       }
 
-      // STRICT FILTERING - Only allow cheapest numbers
-      // This is the CRITICAL cost control layer
-      const filteredNumbers = available.data
+      // RELAXED FILTERING - Allow more numbers but still prioritize cheapest
+      // This is the cost control layer but less restrictive
+      const filteredNumbers = allResults
         .filter(num => {
           // Must have phone_number
           if (!num.phone_number) {
@@ -84,25 +115,24 @@ router.get(
             return false;
           }
 
-          // Only carrier group A or B (cheapest tiers)
-          // Check multiple possible field locations
+          // RELAXED: Only block carrier groups C, D, E, etc. (allow A, B, or unknown)
           const carrierGroup = num.carrier?.group || 
                               num.carrier_group || 
                               num.carrier?.carrier_group ||
                               num.region_information?.carrier_group;
           if (carrierGroup && !['A', 'B', 'a', 'b'].includes(String(carrierGroup).toUpperCase())) {
-            return false;
+            // Only block if explicitly C or higher
+            const groupUpper = String(carrierGroup).toUpperCase();
+            if (['C', 'D', 'E', 'F', 'G', 'H'].includes(groupUpper)) {
+              return false;
+            }
           }
 
-          // No premium features (check various field names)
+          // RELAXED: Only block explicit premium features
           const features = num.features || num.capabilities || [];
           if (Array.isArray(features)) {
-            if (features.some(f => 
-              f === 'hd_calling' || 
-              f === 'premium_routing' || 
-              f === 'premium' ||
-              f === 'toll_free'
-            )) {
+            // Only block if explicitly premium routing or toll-free
+            if (features.some(f => f === 'premium_routing' || f === 'toll_free')) {
               return false;
             }
           }
@@ -110,27 +140,26 @@ router.get(
             return false;
           }
 
-          // Check monthly cost - CRITICAL: Hard block expensive numbers
-          // Check multiple possible field locations for cost
+          // RELAXED: Allow up to $3/month (increased from $2)
           const monthlyCost = num.monthly_cost || 
                              num.monthly_rate || 
                              num.cost?.monthly ||
                              num.region_information?.monthly_cost ||
                              num.pricing?.monthly ||
                              0;
-          if (monthlyCost > 2.00) {
-            console.log(`🚫 Blocked expensive number ${num.phone_number}: $${monthlyCost}/month`);
+          if (monthlyCost > 3.00) {
+            console.log(`🚫 COST CONTROL: Blocked expensive number ${num.phone_number}: $${monthlyCost.toFixed(2)}/month (limit: $3.00)`);
             return false;
           }
 
-          // Check messaging rate - CRITICAL: Block numbers with extra messaging fees
+          // RELAXED: Allow messaging rates up to $0.02/msg
           const messagingRate = num.messaging_rate || 
                                num.cost?.messaging || 
                                num.pricing?.messaging ||
                                num.region_information?.messaging_rate ||
                                0;
-          if (messagingRate > 0.01) {
-            console.log(`🚫 Blocked number with high messaging rate ${num.phone_number}: $${messagingRate}/msg`);
+          if (messagingRate > 0.02) {
+            console.log(`🚫 COST CONTROL: Blocked number with high messaging rate ${num.phone_number}: $${messagingRate.toFixed(4)}/msg (limit: $0.02)`);
             return false;
           }
 
@@ -153,7 +182,7 @@ router.get(
         }))
         // Sort by monthly cost (cheapest first)
         .sort((a, b) => a.monthly_cost - b.monthly_cost)
-        .slice(0, 20); // Limit to 20 cheapest results
+        .slice(0, 50); // Show up to 50 numbers (increased from 20)
 
       res.json({ 
         success: true,
@@ -347,18 +376,85 @@ router.post(
       }
 
       // PURCHASE NUMBER (ONLY AFTER ALL VALIDATIONS PASSED)
+      console.log(`✅ COST CONTROL: Number ${phoneNumber} passed all validations, purchasing...`);
+      console.log(`   User: ${user._id}`);
+      console.log(`   Carrier Group: ${carrierGroup || 'Unknown'}`);
+      console.log(`   Monthly Cost: $${monthlyCost.toFixed(2)}`);
+      console.log(`   Messaging Rate: $${messagingRate.toFixed(4)}`);
+      
       const order = await telnyx.numberOrders.create({
         phone_numbers: [{ phone_number: phoneNumber }]
       });
 
-      // SAVE IMMEDIATELY
-      await PhoneNumber.create({
+      // Get number cost details and region information from Telnyx
+      let finalMonthlyCost = monthlyCost;
+      let oneTimeFees = 0;
+      let finalCarrierGroup = carrierGroup;
+      let regionInfo = num.region_information || null;
+      let country = "United States";
+      let state = null;
+      let city = null;
+      
+      try {
+        const numDetails = await telnyx.phoneNumbers.retrieve(phoneNumber);
+        finalMonthlyCost = numDetails.data.monthly_cost || numDetails.data.monthly_rate || monthlyCost;
+        oneTimeFees = numDetails.data.one_time_cost || 0;
+        finalCarrierGroup = numDetails.data.carrier?.group || numDetails.data.carrier_group || carrierGroup;
+        
+        // Extract region information
+        regionInfo = numDetails.data.region_information || num.region_information || null;
+        if (regionInfo) {
+          country = regionInfo.country_name || regionInfo.country || "United States";
+          state = regionInfo.region_name || regionInfo.state || regionInfo.region || null;
+          city = regionInfo.locality || regionInfo.city || null;
+        }
+      } catch (err) {
+        console.warn("Could not fetch number details from Telnyx:", err.message);
+        // Fallback to data from search
+        if (num.region_information) {
+          regionInfo = num.region_information;
+          country = regionInfo.country_name || regionInfo.country || "United States";
+          state = regionInfo.region_name || regionInfo.state || regionInfo.region || null;
+          city = regionInfo.locality || regionInfo.city || null;
+        }
+      }
+
+      // SAVE IMMEDIATELY with cost tracking and region information
+      const phoneNumberDoc = await PhoneNumber.create({
         userId: user._id,
         phoneNumber,
         telnyxPhoneNumberId: order.data.id,
         messagingProfileId: user.messagingProfileId,
-        status: "active"
+        status: "active",
+        monthlyCost: finalMonthlyCost,
+        oneTimeFees: oneTimeFees,
+        carrierGroup: finalCarrierGroup,
+        country: country,
+        state: state,
+        city: city,
+        regionInformation: regionInfo,
+        purchaseDate: new Date()
       });
+      
+      console.log(`✅ Number ${phoneNumber} purchased successfully for user ${user._id}`);
+
+      // SYNC REAL COST FROM TELNYX (CRITICAL)
+      // This ensures we have the most accurate cost data from Telnyx
+      try {
+        const { syncNumberCost } = await import("../services/telnyxCostService.js");
+        const syncResult = await syncNumberCost(phoneNumberDoc._id.toString(), phoneNumberDoc.telnyxPhoneNumberId);
+        if (syncResult.success) {
+          console.log(`✅ Synced real Telnyx cost for number ${phoneNumber}: $${phoneNumberDoc.monthlyCost || 0}/month`);
+        } else {
+          console.warn(`⚠️ Could not sync Telnyx cost for number ${phoneNumber}: ${syncResult.error}`);
+        }
+      } catch (costSyncErr) {
+        console.error(`❌ Error syncing number cost:`, costSyncErr);
+        // Don't fail the purchase - mark as pending for later sync
+        phoneNumberDoc.costPending = true;
+        phoneNumberDoc.costSyncError = costSyncErr.message;
+        await phoneNumberDoc.save();
+      }
 
       // ATTACH TO MESSAGING PROFILE
       await telnyx.messaging.messagingProfiles.phoneNumbers.create(

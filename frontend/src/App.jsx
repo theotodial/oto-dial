@@ -30,10 +30,23 @@ import Recents from './pages/Recents';
 import Dashboard from './pages/Dashboard';
 import Billing from './pages/Billing';
 import BuyNumber from './pages/BuyNumber';
+import SubscriptionDetails from './pages/SubscriptionDetails';
 import Profile from './pages/Profile';
 import Contact from './pages/Contact';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
+import AdminLogin from './pages/admin/AdminLogin';
+import AdminDashboard from './pages/admin/AdminDashboard';
+import AdminDashboardEnhanced from './pages/admin/AdminDashboardEnhanced';
+import AdminDashboardEnterprise from './pages/admin/AdminDashboardEnterprise';
+import AdminUsers from './pages/admin/AdminUsers';
+import AdminUserDetail from './pages/admin/AdminUserDetail';
+import AdminCalls from './pages/admin/AdminCalls';
+import AdminSms from './pages/admin/AdminSms';
+import AdminNumbers from './pages/admin/AdminNumbers';
+import AdminSupport from './pages/admin/AdminSupport';
+import AdminTeam from './pages/admin/AdminTeam';
+import AdminProtectedRoute from './components/AdminProtectedRoute';
 
 function App() {
     return (
@@ -115,6 +128,73 @@ function App() {
             {/* OAuth consent page - public but special */}
             <Route path="/oauth/consent" element={<OAuthConsent />} />
 
+            {/* Admin Routes - Separate from user routes */}
+            <Route path="/adminbobby" element={<AdminLogin />} />
+            <Route 
+              path="/adminbobby/dashboard" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminDashboardEnterprise />
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/users" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminUsers />
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/users/:id" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminUserDetail />
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/calls" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminCalls />
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/sms" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminSms />
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/numbers" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminNumbers />
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/support" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminSupport />
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/team" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminTeam />
+                </AdminProtectedRoute>
+              } 
+            />
+
             {/* Protected Routes - Require authentication */}
           <Route
             path="/recents"
@@ -159,6 +239,17 @@ function App() {
               <ProtectedRoute>
                 <DashboardLayout>
                   <BuyNumber />
+                </DashboardLayout>
+              </ProtectedRoute>
+            }
+          />
+          
+          <Route
+            path="/subscription-details"
+            element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <SubscriptionDetails />
                 </DashboardLayout>
               </ProtectedRoute>
             }

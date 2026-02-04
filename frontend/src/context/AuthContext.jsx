@@ -27,6 +27,8 @@ export function AuthProvider({ children }) {
     }
 
     if (response.data?.token) {
+      // Clear admin token when user logs in to prevent conflicts
+      localStorage.removeItem("adminToken");
       localStorage.setItem("token", response.data.token);
       setToken(response.data.token);
       setUser({ email });
@@ -54,6 +56,8 @@ export function AuthProvider({ children }) {
     }
 
     if (response.data?.token) {
+      // Clear admin token when user signs up to prevent conflicts
+      localStorage.removeItem("adminToken");
       localStorage.setItem("token", response.data.token);
       setToken(response.data.token);
       setUser({ email, ...additionalData });

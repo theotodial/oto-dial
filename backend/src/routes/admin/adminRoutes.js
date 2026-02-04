@@ -4,88 +4,71 @@ import Call from "../../models/Call.js";
 import Subscription from "../../models/Subscription.js";
 import requireAdmin from "../../middleware/requireAdmin.js";
 import statsRoutes from "./statsRoutes.js";
+import adminAnalytics from "./adminAnalytics.js";
+import adminAnalyticsEnhanced from "./adminAnalyticsEnhanced.js";
+import adminUsers from "./adminUsers.js";
+import adminActions from "./adminActions.js";
+import adminCalls from "./adminCalls.js";
+import adminSms from "./adminSms.js";
+import adminNumbers from "./adminNumbers.js";
+import adminSupport from "./adminSupport.js";
+import adminAnalyticsTimeSeries from "./adminAnalyticsTimeSeries.js";
+import adminAnalyticsTimeSeriesEnhanced from "./adminAnalyticsTimeSeriesEnhanced.js";
+import adminUserCosts from "./adminUserCosts.js";
+import adminUsersUpdate from "./adminUsersUpdate.js";
+import adminTeam from "./adminTeam.js";
+import adminSubscriptionRepair from "./adminSubscriptionRepair.js";
+import adminSubscriptionAudit from "./adminSubscriptionAudit.js";
+import Plan from "../../models/Plan.js";
 
 const router = express.Router();
 
-// Admin stats only
-router.use(statsRoutes);
+// Admin stats (legacy)
+router.use("/stats", statsRoutes);
+
+// Analytics dashboard
+router.use("/analytics", adminAnalytics);
+router.use("/analytics/enhanced", adminAnalyticsEnhanced);
+router.use("/analytics/time-series", adminAnalyticsTimeSeries);
+router.use("/analytics/time-series/enhanced", adminAnalyticsTimeSeriesEnhanced);
+
+// Users management
+router.use("/users", adminUsers);
+router.use("/users", adminUserCosts);
+router.use("/users", adminUsersUpdate);
+
+// Admin actions (subscription, telnyx controls)
+router.use("/actions", adminActions);
+
+// Drill-down pages
+router.use("/calls", adminCalls);
+router.use("/sms", adminSms);
+router.use("/numbers", adminNumbers);
+router.use("/support", adminSupport);
+
+// Admin team management
+router.use("/team", adminTeam);
+
+// Subscription repair and audit
+router.use("/subscriptions", adminSubscriptionRepair);
+router.use("/subscriptions", adminSubscriptionAudit);
 
 /**
- * GET /api/admin/users
+ * GET /api/admin/plans
+ * Get all available subscription plans
  */
-router.get("/users", requireAdmin, async (req, res) => {
+router.get("/plans", requireAdmin, async (req, res) => {
   try {
-    const users = await User.find().select("-password");
-
+    const plans = await Plan.find().sort({ price: 1 });
     res.json({
       success: true,
-      users
+      plans
     });
-  } catch {
+  } catch (err) {
+    console.error("Admin plans error:", err);
     res.status(500).json({
       success: false,
-      error: "Failed to fetch users"
-    });
-  }
-});
-
-/**
- * PATCH /api/admin/users/:id/status
- */
-router.patch("/users/:id/status", requireAdmin, async (req, res) => {
-  try {
-    const { status } = req.body;
-
-    if (!["active", "suspended", "banned"].includes(status)) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid status value"
-      });
-    }
-
-    const user = await User.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true }
-    ).select("-password");
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: "User not found"
-      });
-    }
-
-    res.json({
-      success: true,
-      message: `User status updated to ${status}`,
-      user
-    });
-  } catch {
-    res.status(500).json({
-      success: false,
-      error: "Failed to update user status"
-    });
-  }
-});
-
-/**
- * GET /api/admin/calls
- */
-router.get("/calls", requireAdmin, async (req, res) => {
-  try {
-    const calls = await Call.find()
-      .populate("user", "email role")
-      .sort({ createdAt: -1 });
-
-    res.json({
-      success: true,
-      calls
-    });
-  } catch {
-    res.status(500).json({
-      success: false,
-      error: "Failed to fetch calls"
+      error: "Failed to fetch plans"
     });
   }
 });

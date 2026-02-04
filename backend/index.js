@@ -30,12 +30,14 @@ import smsRoutes from "./src/routes/smsRoutes.js";
 import stripeCheckoutRoutes from "./src/routes/stripeCheckoutRoutes.js";
 import stripeWebhookRoutes from "./src/routes/stripeWebhookRoutes.js";
 import adminRoutes from "./src/routes/admin/adminRoutes.js";
+import adminAuthRoutes from "./src/routes/admin/adminAuth.js";
 import contactRoutes from "./src/routes/contactRoutes.js";
 import userRoutes from "./src/routes/userRoutes.js";
 import messageRoutes from "./src/routes/messageRoutes.js";
 import userContactRoutes from "./src/routes/userContactRoutes.js";
 import pushRoutes from "./src/routes/pushRoutes.js";
 import webrtcRoutes from "./src/routes/webrtcRoutes.js";
+import usageStatisticsRoutes from "./src/routes/usageStatistics.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
 import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
@@ -83,6 +85,7 @@ app.use("/webhooks/telnyx", telnyxWebhookRoutes);
 // ========================
 app.use("/api/auth", authRoutes);
 app.use("/api/contact", contactRoutes);
+app.use("/api/admin/auth", adminAuthRoutes); // Admin auth (no auth middleware needed for login)
 
 // ========================
 // PROTECTED
@@ -99,7 +102,9 @@ app.use("/api/messages", authenticateUser, loadSubscription, messageRoutes);
 app.use("/api/contacts", authenticateUser, userContactRoutes);
 app.use("/api/push", pushRoutes);
 app.use("/api/webrtc", authenticateUser, loadSubscription, webrtcRoutes);
-app.use("/api/admin", authenticateUser, loadSubscription, adminRoutes);
+app.use("/api/usage", authenticateUser, loadSubscription, usageStatisticsRoutes);
+// Admin routes: Only require authentication, NOT subscription (admins don't need subscriptions)
+app.use("/api/admin", authenticateUser, adminRoutes);
 
 // ========================
 // HEALTH

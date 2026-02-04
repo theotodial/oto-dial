@@ -1,4 +1,5 @@
 import express from "express";
+import SupportTicket from "../models/SupportTicket.js";
 
 const router = express.Router();
 
@@ -25,22 +26,33 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Log submission (safe + traceable)
-    console.log("📩 CONTACT FORM SUBMISSION:", {
+    // Create support ticket in MongoDB
+    const ticket = await SupportTicket.create({
       name,
       email,
-      phone,
+      phone: phone || "",
+      subject: serviceRequest || "General Inquiry",
+      message: businessDescription || serviceRequest || "No message provided",
       businessCategory,
       businessDescription,
       serviceRequest,
-      isUrgent,
+      isUrgent: isUrgent || false,
+      priority: isUrgent ? "urgent" : "medium",
+      status: "open"
+    });
+
+    console.log("📩 CONTACT FORM SUBMISSION - Ticket Created:", {
+      ticketId: ticket._id,
+      name,
+      email,
       receivedAt: new Date().toISOString()
     });
 
     // Always return success (frontend-friendly)
     return res.json({
       success: true,
-      message: "Thank you! Our team will contact you shortly."
+      message: "Thank you! Our team will contact you shortly.",
+      ticketId: ticket._id
     });
   } catch (err) {
     console.error("Contact form error:", err);

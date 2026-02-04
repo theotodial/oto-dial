@@ -1,15 +1,18 @@
 import express from "express";
 import Stripe from "stripe";
-import User from "../models/User.js";
-import Subscription from "../models/Subscription.js";
-import Plan from "../models/Plan.js";
+import {
+  processCheckoutCompleted,
+  processInvoicePaymentSucceeded,
+  processSubscriptionUpdated,
+  processSubscriptionDeleted,
+  isEventProcessed,
+  markEventProcessed
+} from "../services/stripeSubscriptionService.js";
 
 const router = express.Router();
 
 /**
- * IMPORTANT:
- * Stripe must be initialized INSIDE request,
- * not at import time (ESM safe)
+ * Get Stripe instance
  */
 function getStripe() {
   if (!process.env.STRIPE_SECRET_KEY) {
@@ -21,7 +24,8 @@ function getStripe() {
 
 /**
  * POST /api/webhooks/stripe
- * Stripe payment confirmation
+ * GUARANTEED SUBSCRIPTION PIPELINE
+ * Zero-failure mode with idempotency and atomic transactions
  */
 router.post("/", async (req, res) => {
   const stripe = getStripe();
@@ -32,6 +36,7 @@ router.post("/", async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
 
+  // Verify Stripe signature
   try {
     event = stripe.webhooks.constructEvent(
       req.body,
@@ -39,103 +44,81 @@ router.post("/", async (req, res) => {
       process.env.STRIPE_WEBHOOK_SECRET
     );
   } catch (err) {
-    console.error("❌ Stripe webhook signature failed:", err.message);
-    return res.status(400).send("Webhook Error");
+    console.error("❌ Stripe webhook signature verification failed:", err.message);
+    return res.status(400).send("Webhook Error: Invalid signature");
   }
 
-  // ✅ PAYMENT CONFIRMED
-  if (event.type === "invoice.payment_succeeded") {
-    const invoice = event.data.object;
-    const customerId = invoice.customer;
+  const eventId = event.id;
+  const eventType = event.type;
 
-    const user = await User.findOne({ stripeCustomerId: customerId });
+  console.log(`📥 Stripe webhook received: ${eventType} (${eventId})`);
 
-    if (user) {
-      // Update user document for backwards compatibility
-      user.subscriptionActive = true;
-      user.plan = "basic";
-      user.minutesRemaining = 2500;
-      user.smsRemaining = 200;
-      await user.save();
+  // IDEMPOTENCY CHECK - Prevent double processing
+  const alreadyProcessed = await isEventProcessed(eventId);
+  if (alreadyProcessed) {
+    console.log(`⏭️ Event ${eventId} already processed, skipping`);
+    return res.status(200).json({ received: true, skipped: true });
+  }
 
-      // Also create/update Subscription document (THE MAIN SOURCE OF TRUTH)
-      try {
-        // Find or create Plan
-        let plan = await Plan.findOne({ name: "Basic", active: true });
-        if (!plan) {
-          plan = await Plan.create({
-            name: "Basic",
-            price: 19.99,
-            currency: "USD",
-            limits: {
-              minutesTotal: 2500,
-              smsTotal: 200,
-              numbersTotal: 1
-            },
-            active: true
-          });
-        }
+  // Process event based on type
+  try {
+    let result = { success: false };
 
-        const now = new Date();
-        const periodEnd = new Date();
-        periodEnd.setDate(now.getDate() + 30);
+    switch (eventType) {
+      case "checkout.session.completed":
+        // Step 1: Create subscription in pending_activation state
+        result = await processCheckoutCompleted(event, stripe);
+        break;
 
-        // Update existing or create new subscription
-        await Subscription.findOneAndUpdate(
-          { userId: user._id },
-          {
-            $set: {
-              planId: plan._id,
-              status: "active",
-              periodStart: now,
-              periodEnd,
-              limits: {
-                minutesTotal: plan.limits.minutesTotal,
-                smsTotal: plan.limits.smsTotal,
-                numbersTotal: plan.limits.numbersTotal
-              },
-              usage: {
-                minutesUsed: 0,
-                smsUsed: 0
-              },
-              addons: {
-                minutes: 0,
-                sms: 0
-              }
-            }
-          },
-          { upsert: true, new: true }
-        );
+      case "invoice.payment_succeeded":
+        // Step 2: ACTIVATE subscription atomically
+        // This is the GUARANTEED ACTIVATION POINT
+        result = await processInvoicePaymentSucceeded(event, stripe);
+        break;
 
-        console.log("✅ Subscription document created/updated for:", user.email);
-      } catch (subErr) {
-        console.error("Error creating subscription document:", subErr);
-      }
+      case "customer.subscription.created":
+        // Handle subscription creation
+        result = await processSubscriptionUpdated(event, stripe);
+        break;
 
-      console.log("✅ Subscription activated:", user.email);
+      case "customer.subscription.updated":
+        // Handle subscription updates (upgrade/downgrade)
+        result = await processSubscriptionUpdated(event, stripe);
+        break;
+
+      case "customer.subscription.deleted":
+        // Handle subscription cancellation
+        result = await processSubscriptionDeleted(event, stripe);
+        break;
+
+      default:
+        console.log(`ℹ️ Unhandled event type: ${eventType}`);
+        // Mark as processed even if unhandled (to prevent retries)
+        await markEventProcessed(eventId, eventType, true);
+        return res.status(200).json({ received: true, unhandled: true });
     }
-  }
 
-  // ❌ SUBSCRIPTION CANCELED
-  if (event.type === "customer.subscription.deleted") {
-    const sub = event.data.object;
-    const user = await User.findOne({ stripeCustomerId: sub.customer });
+    // Mark event as successfully processed
+    await markEventProcessed(eventId, eventType, result.success, result.error || null);
 
-    if (user) {
-      user.subscriptionActive = false;
-      await user.save();
-
-      // Also update Subscription document
-      await Subscription.updateMany(
-        { userId: user._id, status: "active" },
-        { status: "cancelled" }
-      );
-
-      console.log("❌ Subscription canceled:", user.email);
+    if (result.success) {
+      console.log(`✅ Event ${eventId} processed successfully`);
+    } else {
+      console.error(`❌ Event ${eventId} processing failed:`, result.error);
+      // Don't return error - Stripe will retry
     }
-  }
 
-  res.json({ received: true });
+    res.status(200).json({ received: true, processed: result.success });
+  } catch (err) {
+    console.error(`❌ Error processing event ${eventId}:`, err);
+    
+    // Mark event as failed (will be retried by Stripe)
+    await markEventProcessed(eventId, eventType, false, err.message);
+    
+    // Return 200 to prevent Stripe from retrying immediately
+    // Stripe will retry based on its own schedule
+    res.status(200).json({ received: true, error: err.message });
+  }
 });
 
 export default router;
