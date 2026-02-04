@@ -15,44 +15,58 @@ class SoundManager {
   }
 
   getContext() {
-    if (!this.audioContext || this.audioContext.state === 'closed') {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    try {
+      if (!this.audioContext || this.audioContext.state === 'closed') {
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      // Resume if suspended (browser autoplay policy)
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume().catch(() => {
+          // Ignore resume errors - they're usually just autoplay policy issues
+        });
+      }
+      return this.audioContext;
+    } catch (err) {
+      console.warn('Error getting audio context (non-critical):', err);
+      // Return null if we can't create context
+      return null;
     }
-    // Resume if suspended (browser autoplay policy)
-    if (this.audioContext.state === 'suspended') {
-      this.audioContext.resume();
-    }
-    return this.audioContext;
   }
 
   // WhatsApp-style incoming ringtone pattern
   // Plays a pleasant ascending melody that repeats
   playRingtoneNote(frequency, startTime, duration, volume = 0.4) {
-    const ctx = this.getContext();
-    const oscillator = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(ctx.destination);
-    
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(frequency, startTime);
-    
-    // Smooth envelope
-    gainNode.gain.setValueAtTime(0, startTime);
-    gainNode.gain.linearRampToValueAtTime(volume, startTime + 0.02);
-    gainNode.gain.setValueAtTime(volume, startTime + duration - 0.05);
-    gainNode.gain.linearRampToValueAtTime(0, startTime + duration);
-    
-    oscillator.start(startTime);
-    oscillator.stop(startTime + duration);
-    
-    this.ringtoneOscillators.push(oscillator);
-    
-    oscillator.onended = () => {
-      const idx = this.ringtoneOscillators.indexOf(oscillator);
-      if (idx > -1) this.ringtoneOscillators.splice(idx, 1);
-    };
+    try {
+      const ctx = this.getContext();
+      if (!ctx) return; // Can't play without context
+      
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(frequency, startTime);
+      
+      // Smooth envelope
+      gainNode.gain.setValueAtTime(0, startTime);
+      gainNode.gain.linearRampToValueAtTime(volume, startTime + 0.02);
+      gainNode.gain.setValueAtTime(volume, startTime + duration - 0.05);
+      gainNode.gain.linearRampToValueAtTime(0, startTime + duration);
+      
+      oscillator.start(startTime);
+      oscillator.stop(startTime + duration);
+      
+      this.ringtoneOscillators.push(oscillator);
+      
+      oscillator.onended = () => {
+        const idx = this.ringtoneOscillators.indexOf(oscillator);
+        if (idx > -1) this.ringtoneOscillators.splice(idx, 1);
+      };
+    } catch (err) {
+      console.warn('Error playing ringtone note (non-critical):', err);
+    }
   }
 
   // WhatsApp incoming call melody
@@ -81,18 +95,27 @@ class SoundManager {
   }
 
   startRingtone() {
-    if (this.isPlayingRingtone) return;
-    this.isPlayingRingtone = true;
-    
-    // Play immediately
-    this.playRingtonePattern();
-    
-    // Repeat every 2.5 seconds
-    this.ringtoneInterval = setInterval(() => {
-      if (this.isPlayingRingtone) {
-        this.playRingtonePattern();
-      }
-    }, 2500);
+    try {
+      if (this.isPlayingRingtone) return;
+      this.isPlayingRingtone = true;
+      
+      // Play immediately
+      this.playRingtonePattern();
+      
+      // Repeat every 2.5 seconds
+      this.ringtoneInterval = setInterval(() => {
+        try {
+          if (this.isPlayingRingtone) {
+            this.playRingtonePattern();
+          }
+        } catch (err) {
+          console.warn('Error in ringtone interval (non-critical):', err);
+        }
+      }, 2500);
+    } catch (err) {
+      console.warn('Error starting ringtone (non-critical):', err);
+      this.isPlayingRingtone = false;
+    }
   }
 
   stopRingtone() {
@@ -113,49 +136,68 @@ class SoundManager {
   // Ringback tone (what caller hears while waiting)
   // Standard US ringback: dual tone 440Hz + 480Hz
   playRingbackTone() {
-    const ctx = this.getContext();
-    const now = ctx.currentTime;
-    const duration = 2; // 2 seconds on
-    
-    [440, 480].forEach(freq => {
-      const oscillator = ctx.createOscillator();
-      const gainNode = ctx.createGain();
+    try {
+      const ctx = this.getContext();
+      if (!ctx) return; // Can't play without context
       
-      oscillator.connect(gainNode);
-      gainNode.connect(ctx.destination);
+      const now = ctx.currentTime;
+      const duration = 2; // 2 seconds on
       
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(freq, now);
-      
-      gainNode.gain.setValueAtTime(0.15, now);
-      gainNode.gain.setValueAtTime(0.15, now + duration - 0.05);
-      gainNode.gain.linearRampToValueAtTime(0, now + duration);
-      
-      oscillator.start(now);
-      oscillator.stop(now + duration);
-      
-      this.ringbackOscillators.push(oscillator);
-      
-      oscillator.onended = () => {
-        const idx = this.ringbackOscillators.indexOf(oscillator);
-        if (idx > -1) this.ringbackOscillators.splice(idx, 1);
-      };
-    });
+      [440, 480].forEach(freq => {
+        try {
+          const oscillator = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+          
+          oscillator.connect(gainNode);
+          gainNode.connect(ctx.destination);
+          
+          oscillator.type = 'sine';
+          oscillator.frequency.setValueAtTime(freq, now);
+          
+          gainNode.gain.setValueAtTime(0.15, now);
+          gainNode.gain.setValueAtTime(0.15, now + duration - 0.05);
+          gainNode.gain.linearRampToValueAtTime(0, now + duration);
+          
+          oscillator.start(now);
+          oscillator.stop(now + duration);
+          
+          this.ringbackOscillators.push(oscillator);
+          
+          oscillator.onended = () => {
+            const idx = this.ringbackOscillators.indexOf(oscillator);
+            if (idx > -1) this.ringbackOscillators.splice(idx, 1);
+          };
+        } catch (err) {
+          console.warn('Error creating ringback oscillator (non-critical):', err);
+        }
+      });
+    } catch (err) {
+      console.warn('Error playing ringback tone (non-critical):', err);
+    }
   }
 
   startRingback() {
-    if (this.isPlayingRingback) return;
-    this.isPlayingRingback = true;
-    
-    // Play immediately
-    this.playRingbackTone();
-    
-    // US ringback pattern: 2s on, 4s off
-    this.ringbackInterval = setInterval(() => {
-      if (this.isPlayingRingback) {
-        this.playRingbackTone();
-      }
-    }, 6000);
+    try {
+      if (this.isPlayingRingback) return;
+      this.isPlayingRingback = true;
+      
+      // Play immediately
+      this.playRingbackTone();
+      
+      // US ringback pattern: 2s on, 4s off
+      this.ringbackInterval = setInterval(() => {
+        try {
+          if (this.isPlayingRingback) {
+            this.playRingbackTone();
+          }
+        } catch (err) {
+          console.warn('Error in ringback interval (non-critical):', err);
+        }
+      }, 6000);
+    } catch (err) {
+      console.warn('Error starting ringback (non-critical):', err);
+      this.isPlayingRingback = false;
+    }
   }
 
   stopRingback() {
@@ -174,10 +216,46 @@ class SoundManager {
 
   // Call connected sound - pleasant double beep
   playConnected() {
-    const ctx = this.getContext();
-    const now = ctx.currentTime;
-    
-    [0, 0.12].forEach((offset, i) => {
+    try {
+      const ctx = this.getContext();
+      if (!ctx) return; // Can't play without context
+      
+      const now = ctx.currentTime;
+      
+      [0, 0.12].forEach((offset, i) => {
+        try {
+          const oscillator = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+          
+          oscillator.connect(gainNode);
+          gainNode.connect(ctx.destination);
+          
+          oscillator.type = 'sine';
+          oscillator.frequency.setValueAtTime(i === 0 ? 1200 : 1500, now + offset);
+          
+          gainNode.gain.setValueAtTime(0, now + offset);
+          gainNode.gain.linearRampToValueAtTime(0.3, now + offset + 0.02);
+          gainNode.gain.linearRampToValueAtTime(0, now + offset + 0.1);
+          
+          oscillator.start(now + offset);
+          oscillator.stop(now + offset + 0.1);
+        } catch (err) {
+          console.warn('Error creating connected sound oscillator (non-critical):', err);
+        }
+      });
+    } catch (err) {
+      console.warn('Error playing connected sound (non-critical):', err);
+    }
+  }
+
+  // Call ended sound - descending tone
+  playEnded() {
+    try {
+      const ctx = this.getContext();
+      if (!ctx) return; // Can't play without context
+      
+      const now = ctx.currentTime;
+      
       const oscillator = ctx.createOscillator();
       const gainNode = ctx.createGain();
       
@@ -185,37 +263,17 @@ class SoundManager {
       gainNode.connect(ctx.destination);
       
       oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(i === 0 ? 1200 : 1500, now + offset);
+      oscillator.frequency.setValueAtTime(600, now);
+      oscillator.frequency.linearRampToValueAtTime(300, now + 0.4);
       
-      gainNode.gain.setValueAtTime(0, now + offset);
-      gainNode.gain.linearRampToValueAtTime(0.3, now + offset + 0.02);
-      gainNode.gain.linearRampToValueAtTime(0, now + offset + 0.1);
+      gainNode.gain.setValueAtTime(0.25, now);
+      gainNode.gain.linearRampToValueAtTime(0, now + 0.4);
       
-      oscillator.start(now + offset);
-      oscillator.stop(now + offset + 0.1);
-    });
-  }
-
-  // Call ended sound - descending tone
-  playEnded() {
-    const ctx = this.getContext();
-    const now = ctx.currentTime;
-    
-    const oscillator = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(ctx.destination);
-    
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(600, now);
-    oscillator.frequency.linearRampToValueAtTime(300, now + 0.4);
-    
-    gainNode.gain.setValueAtTime(0.25, now);
-    gainNode.gain.linearRampToValueAtTime(0, now + 0.4);
-    
-    oscillator.start(now);
-    oscillator.stop(now + 0.4);
+      oscillator.start(now);
+      oscillator.stop(now + 0.4);
+    } catch (err) {
+      console.warn('Error playing ended sound (non-critical):', err);
+    }
   }
 
   // Dialpad DTMF tones

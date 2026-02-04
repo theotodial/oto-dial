@@ -86,6 +86,7 @@ export const CallProvider = ({ children }) => {
   const isClientReadyRef = useRef(isClientReady);
   const isInitializingRef = useRef(isInitializing);
   const notificationRef = useRef(null);
+  const applyAudioRoutingRef = useRef(null);
   
   // Keep refs in sync with state
   useEffect(() => {
@@ -154,149 +155,279 @@ export const CallProvider = ({ children }) => {
 
   // Start call duration timer
   const startDurationTimer = useCallback(() => {
-    setCallDuration(0);
-    callDurationRef.current = 0;
-    if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
-    durationIntervalRef.current = setInterval(() => {
-      callDurationRef.current += 1;
-      setCallDuration(callDurationRef.current);
-    }, 1000);
+    try {
+      setCallDuration(0);
+      callDurationRef.current = 0;
+      if (durationIntervalRef.current) {
+        clearInterval(durationIntervalRef.current);
+        durationIntervalRef.current = null;
+      }
+      durationIntervalRef.current = setInterval(() => {
+        try {
+          callDurationRef.current += 1;
+          setCallDuration(callDurationRef.current);
+        } catch (err) {
+          console.warn('Error updating call duration (non-critical):', err);
+        }
+      }, 1000);
+    } catch (err) {
+      console.error('Error starting duration timer (handled):', err);
+    }
   }, []);
 
   // Handle call end
   const handleCallEnd = useCallback(async () => {
-    console.log('📱 Call ended, cleaning up...');
-    soundManager.stopAll();
-    soundManager.playEnded();
-
-    // Update call record in database
-    if (currentCallRef.current?._dbCallId) {
-      const duration = callDurationRef.current;
+    try {
+      console.log('📱 Call ended, cleaning up...');
+      
+      // Stop sounds safely
       try {
-        await API.patch(`/api/calls/${currentCallRef.current._dbCallId}`, {
+        soundManager.stopAll();
+        soundManager.playEnded();
+      } catch (soundErr) {
+        console.warn('Error stopping sounds (non-critical):', soundErr);
+      }
+
+      // Update call record in database (non-blocking)
+      if (currentCallRef.current?._dbCallId) {
+        const duration = callDurationRef.current;
+        API.patch(`/api/calls/${currentCallRef.current._dbCallId}`, {
           status: 'completed',
           durationSeconds: duration,
           callEndedAt: new Date().toISOString()
+        }).then(() => {
+          console.log('📱 Call record updated with completion status');
+        }).catch(err => {
+          console.warn('📱 Failed to update call record on end (non-critical):', err);
         });
-        console.log('📱 Call record updated with completion status');
-      } catch (err) {
-        console.warn('📱 Failed to update call record on end:', err);
+      }
+
+      // Clean up timer
+      try {
+        if (durationIntervalRef.current) {
+          clearInterval(durationIntervalRef.current);
+          durationIntervalRef.current = null;
+        }
+      } catch (timerErr) {
+        console.warn('Error clearing timer (non-critical):', timerErr);
+      }
+
+      // Clean up audio
+      try {
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = null;
+        }
+      } catch (audioErr) {
+        console.warn('Error cleaning up audio (non-critical):', audioErr);
+      }
+
+      // Reset all state
+      try {
+        currentCallRef.current = null;
+        setCallState(CALL_STATES.IDLE);
+        setCallDuration(0);
+        callDurationRef.current = 0;
+        setIsMuted(false);
+        setIsOnHold(false);
+        setRemoteNumber('');
+        setError(null);
+        setIncomingCall(null);
+        setIsMinimized(false);
+      } catch (stateErr) {
+        console.error('Error resetting call state (handled):', stateErr);
+        // Try to at least set to idle
+        try {
+          setCallState(CALL_STATES.IDLE);
+        } catch (e) {
+          console.error('Critical: Failed to reset call state:', e);
+        }
+      }
+    } catch (err) {
+      console.error('Error in handleCallEnd (handled):', err);
+      // Try to reset state even if cleanup fails
+      try {
+        setCallState(CALL_STATES.IDLE);
+        if (durationIntervalRef.current) {
+          clearInterval(durationIntervalRef.current);
+          durationIntervalRef.current = null;
+        }
+      } catch (e) {
+        console.error('Critical: Failed to reset call state:', e);
       }
     }
-
-    if (durationIntervalRef.current) {
-      clearInterval(durationIntervalRef.current);
-      durationIntervalRef.current = null;
-    }
-
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = null;
-    }
-
-    currentCallRef.current = null;
-    setCallState(CALL_STATES.IDLE);
-    setCallDuration(0);
-    callDurationRef.current = 0;
-    setIsMuted(false);
-    setIsOnHold(false);
-    setRemoteNumber('');
-    setError(null);
-    setIncomingCall(null);
-    setIsMinimized(false);
   }, []);
 
   // Handle call state updates from Telnyx
   const handleCallStateChange = useCallback(async (call) => {
     if (!call) return;
     
-    console.log('📱 Call state changed:', call.state, call);
-    currentCallRef.current = call;
+    // Wrap entire function in try-catch to prevent any errors from propagating
+    try {
+      console.log('📱 Call state changed:', call.state, call);
+      currentCallRef.current = call;
 
-    // Attach remote audio stream when available
-    if (call.remoteStream && remoteAudioRef.current) {
-      if (remoteAudioRef.current.srcObject !== call.remoteStream) {
-        console.log('📱 Attaching remote audio stream');
-        remoteAudioRef.current.srcObject = call.remoteStream;
-        
-        // Set initial audio routing based on speaker state (use ref with safety)
-        setTimeout(() => {
-          try {
-            if (remoteAudioRef.current && applyAudioRoutingRef.current) {
-              applyAudioRoutingRef.current(remoteAudioRef.current, isSpeakerRef.current);
+      // Attach remote audio stream when available
+      try {
+      if (call.remoteStream && remoteAudioRef.current) {
+        if (remoteAudioRef.current.srcObject !== call.remoteStream) {
+          console.log('📱 Attaching remote audio stream');
+          remoteAudioRef.current.srcObject = call.remoteStream;
+          
+          // Set initial audio routing based on speaker state (use ref with safety)
+          setTimeout(() => {
+            try {
+              if (remoteAudioRef.current && applyAudioRoutingRef.current) {
+                applyAudioRoutingRef.current(remoteAudioRef.current, isSpeakerRef.current);
+              }
+            } catch (err) {
+              console.warn('Audio routing error (handled):', err);
             }
-          } catch (err) {
-            console.warn('Audio routing error (handled):', err);
-          }
-        }, 50);
-        
-        remoteAudioRef.current.play().catch(e => console.warn('Audio play failed:', e));
+          }, 50);
+          
+          remoteAudioRef.current.play().catch(e => console.warn('Audio play failed:', e));
+        }
       }
+    } catch (audioErr) {
+      console.warn('Error attaching audio stream (non-critical):', audioErr);
     }
     
     // Check if this is an incoming call that we haven't handled yet (use ref)
     if (call.state === 'ringing' && call.direction === 'incoming' && callStateRef.current !== CALL_STATES.INCOMING) {
-      console.log('📱 Detected incoming call in state change handler');
-      handleIncomingCallEventRef.current(call);
-      return; // Don't process state change further, incoming call handler will do it
+      try {
+        console.log('📱 Detected incoming call in state change handler');
+        handleIncomingCallEventRef.current(call);
+        return; // Don't process state change further, incoming call handler will do it
+      } catch (err) {
+        console.error('Error handling incoming call (handled):', err);
+        // Continue to process state change even if incoming call handler fails
+      }
     }
 
-    switch (call.state) {
+    try {
+      switch (call.state) {
       case 'new':
       case 'trying':
       case 'requesting':
-        setCallState(CALL_STATES.CONNECTING);
+        try {
+          setCallState(CALL_STATES.CONNECTING);
+        } catch (err) {
+          console.error('Error setting connecting state (handled):', err);
+        }
         break;
       case 'ringing':
       case 'early':
-        setCallState(CALL_STATES.RINGING);
-        soundManager.startRingback();
-        // Update call record to ringing
-        if (call._dbCallId) {
+        try {
+          setCallState(CALL_STATES.RINGING);
           try {
-            await API.patch(`/api/calls/${call._dbCallId}`, { status: 'ringing' });
-          } catch (e) {}
+            soundManager.startRingback();
+          } catch (soundErr) {
+            console.warn('Sound manager error (non-critical):', soundErr);
+          }
+          // Update call record to ringing (non-blocking)
+          if (call._dbCallId) {
+            API.patch(`/api/calls/${call._dbCallId}`, { status: 'ringing' }).catch(e => {
+              console.warn('Failed to update call record (non-critical):', e);
+            });
+          }
+        } catch (err) {
+          console.error('Error in ringing state (handled):', err);
+          setCallState(CALL_STATES.RINGING); // Still set state even if other operations fail
         }
         break;
       case 'active':
-        setCallState(CALL_STATES.ACTIVE);
-        soundManager.stopRingback();
-        soundManager.stopRingtone();
-        soundManager.playConnected();
-        startDurationTimer();
-        
-        // Ensure audio routing is applied when call becomes active
-        if (remoteAudioRef.current && call.remoteStream) {
-          // Apply current speaker state
-          setTimeout(() => {
-            if (remoteAudioRef.current && applyAudioRoutingRef.current) {
-              try {
-                applyAudioRoutingRef.current(remoteAudioRef.current, isSpeakerRef.current);
-              } catch (err) {
-                console.warn('Error applying audio routing on active call (non-critical):', err);
-              }
-            }
-          }, 100);
-        }
-        
-        // Update call record to in-progress
-        if (call._dbCallId) {
+        try {
+          setCallState(CALL_STATES.ACTIVE);
+          
+          // Stop sounds safely
           try {
-            await API.patch(`/api/calls/${call._dbCallId}`, { 
+            soundManager.stopRingback();
+            soundManager.stopRingtone();
+            soundManager.playConnected();
+          } catch (soundErr) {
+            console.warn('Sound manager error (non-critical):', soundErr);
+          }
+          
+          // Start duration timer safely
+          try {
+            startDurationTimer();
+          } catch (timerErr) {
+            console.warn('Duration timer error (non-critical):', timerErr);
+          }
+          
+          // Ensure audio routing is applied when call becomes active
+          if (remoteAudioRef.current && call.remoteStream) {
+            // Apply current speaker state
+            setTimeout(() => {
+              if (remoteAudioRef.current && applyAudioRoutingRef.current) {
+                try {
+                  applyAudioRoutingRef.current(remoteAudioRef.current, isSpeakerRef.current);
+                } catch (err) {
+                  console.warn('Error applying audio routing on active call (non-critical):', err);
+                }
+              }
+            }, 100);
+          }
+          
+          // Update call record to in-progress (non-blocking)
+          if (call._dbCallId) {
+            API.patch(`/api/calls/${call._dbCallId}`, { 
               status: 'in-progress',
               callStartedAt: new Date().toISOString()
+            }).catch(e => {
+              console.warn('Failed to update call record (non-critical):', e);
             });
-          } catch (e) {}
+          }
+        } catch (err) {
+          // Catch any unexpected errors to prevent ErrorBoundary from triggering
+          console.error('Error in active call state handler (handled):', err);
+          // Still set the state to active even if other operations fail
+          setCallState(CALL_STATES.ACTIVE);
         }
         break;
       case 'held':
-        setCallState(CALL_STATES.HELD);
+        try {
+          setCallState(CALL_STATES.HELD);
+        } catch (err) {
+          console.error('Error setting held state (handled):', err);
+        }
         break;
       case 'hangup':
       case 'destroy':
       case 'done':
       case 'purge':
-        handleCallEnd();
+        try {
+          handleCallEnd();
+        } catch (err) {
+          console.error('Error in handleCallEnd (handled):', err);
+        }
         break;
+      default:
+        console.log('📱 Unknown call state:', call.state);
+        break;
+    }
+    } catch (switchErr) {
+      console.error('Error in call state switch (handled):', switchErr);
+      // Set state to active as fallback if we're in an active call
+      if (call.state === 'active') {
+        try {
+          setCallState(CALL_STATES.ACTIVE);
+        } catch (e) {
+          console.error('Failed to set call state (critical):', e);
+        }
+      }
+    }
+    } catch (outerErr) {
+      // Catch any errors that weren't caught by inner try-catch blocks
+      console.error('Unhandled error in handleCallStateChange (handled):', outerErr);
+      // Try to set state based on call.state as fallback
+      if (call?.state === 'active') {
+        try {
+          setCallState(CALL_STATES.ACTIVE);
+        } catch (e) {
+          // If even setting state fails, log it but don't throw
+          console.error('Critical: Failed to set call state:', e);
+        }
+      }
     }
   }, [startDurationTimer, handleCallEnd]); // Removed applyAudioRouting - use ref instead
 
@@ -797,62 +928,94 @@ export const CallProvider = ({ children }) => {
 
   // Answer incoming call
   const answerCall = useCallback(async () => {
-    console.log('📱 Answering call...');
-    soundManager.stopRingtone();
-    
-    // Close notification if it exists
-    if (notificationRef.current) {
-      notificationRef.current.close();
-      notificationRef.current = null;
-    }
-    
-    // Ensure call is not minimized
-    setIsMinimized(false);
-    
-    // Try to answer via WebRTC first
-    if (currentCallRef.current) {
-      try {
-        // Answer the call via WebRTC
-        currentCallRef.current.answer();
-        console.log('📱 Call answered via WebRTC');
-      } catch (e) {
-        console.warn('📱 WebRTC answer failed, trying alternative method:', e);
-        // If WebRTC answer fails, we'll still update the record
-      }
-    } else {
-      console.log('📱 No WebRTC call object, call may have been detected via polling');
-    }
-    
-    // Update backend call record
     try {
+      console.log('📱 Answering call...');
+      
+      // Stop ringtone safely
+      try {
+        soundManager.stopRingtone();
+      } catch (soundErr) {
+        console.warn('Error stopping ringtone (non-critical):', soundErr);
+      }
+      
+      // Close notification if it exists
+      try {
+        if (notificationRef.current) {
+          notificationRef.current.close();
+          notificationRef.current = null;
+        }
+      } catch (notifErr) {
+        console.warn('Error closing notification (non-critical):', notifErr);
+      }
+      
+      // Ensure call is not minimized
+      setIsMinimized(false);
+      
+      // Try to answer via WebRTC first
+      if (currentCallRef.current) {
+        try {
+          // Answer the call via WebRTC
+          currentCallRef.current.answer();
+          console.log('📱 Call answered via WebRTC');
+        } catch (e) {
+          console.warn('📱 WebRTC answer failed, trying alternative method:', e);
+          // If WebRTC answer fails, we'll still update the record
+        }
+      } else {
+        console.log('📱 No WebRTC call object, call may have been detected via polling');
+      }
+      
+      // Update backend call record (non-blocking)
       let callRecordId = polledCallIdRef.current;
       
       // If we don't have a polled call ID, try to find it
       if (!callRecordId) {
-        const callsResponse = await API.get('/api/calls?status=ringing&direction=inbound&limit=1');
-        if (callsResponse.data?.calls && callsResponse.data.calls.length > 0) {
-          callRecordId = callsResponse.data.calls[0].id || callsResponse.data.calls[0]._id;
+        try {
+          const callsResponse = await API.get('/api/calls?status=ringing&direction=inbound&limit=1');
+          if (callsResponse.data?.calls && callsResponse.data.calls.length > 0) {
+            callRecordId = callsResponse.data.calls[0].id || callsResponse.data.calls[0]._id;
+          }
+        } catch (fetchErr) {
+          console.warn('Failed to fetch call record (non-critical):', fetchErr);
         }
       }
       
       if (callRecordId) {
-        // Update to answered status
-        await API.patch(`/api/calls/${callRecordId}`, {
+        // Update to answered status (non-blocking)
+        API.patch(`/api/calls/${callRecordId}`, {
           status: 'answered',
           callStartedAt: new Date().toISOString()
+        }).then(() => {
+          console.log('📱 Call record updated to answered');
+          polledCallIdRef.current = null; // Clear after use
+        }).catch(updateErr => {
+          console.warn('📱 Failed to update call record (non-critical):', updateErr);
         });
-        console.log('📱 Call record updated to answered');
-        polledCallIdRef.current = null; // Clear after use
       }
-    } catch (updateErr) {
-      console.warn('📱 Failed to update call record:', updateErr);
-      // Don't fail the call if record update fails
+      
+      // Set call state and start timer
+      setIncomingCall(null);
+      setCallState(CALL_STATES.ACTIVE);
+      
+      // Start duration timer safely
+      try {
+        startDurationTimer();
+      } catch (timerErr) {
+        console.warn('Error starting duration timer (non-critical):', timerErr);
+      }
+      
+      console.log('✅ Call answered successfully');
+    } catch (err) {
+      // Catch any unexpected errors
+      console.error('Error in answerCall (handled):', err);
+      // Still try to set state to active
+      try {
+        setIncomingCall(null);
+        setCallState(CALL_STATES.ACTIVE);
+      } catch (stateErr) {
+        console.error('Critical: Failed to set call state:', stateErr);
+      }
     }
-    
-    setIncomingCall(null);
-    setCallState(CALL_STATES.ACTIVE);
-    startDurationTimer();
-    console.log('✅ Call answered successfully');
   }, [startDurationTimer]);
 
   // Reject incoming call
@@ -959,7 +1122,8 @@ export const CallProvider = ({ children }) => {
     try {
       if (speakerOn) {
         // Speaker mode - route to speaker
-        audioElement.setAttribute('playsinline', 'false');
+        // Remove playsinline to allow speaker output
+        audioElement.removeAttribute('playsinline');
         if (audioElement.playsInline !== undefined) {
           audioElement.playsInline = false;
         }
@@ -967,13 +1131,18 @@ export const CallProvider = ({ children }) => {
         console.log('📱 Audio set to speaker mode');
       } else {
         // Earpiece mode - route to earpiece (default on mobile)
+        // Set playsinline='true' to force earpiece on mobile
         audioElement.setAttribute('playsinline', 'true');
         if (audioElement.playsInline !== undefined) {
           audioElement.playsInline = true;
         }
+        // Lower volume for earpiece
         audioElement.volume = 0.8;
         console.log('📱 Audio set to earpiece mode');
       }
+      
+      // Ensure audio element is properly configured
+      audioElement.autoplay = true;
       
       // Try to play audio if stream is available (with error handling)
       if (audioElement.srcObject) {
@@ -989,6 +1158,11 @@ export const CallProvider = ({ children }) => {
       console.warn('Audio routing error (handled):', err);
     }
   }, []);
+
+  // Update applyAudioRoutingRef whenever applyAudioRouting changes
+  useEffect(() => {
+    applyAudioRoutingRef.current = applyAudioRouting;
+  }, [applyAudioRouting]);
 
   // Toggle speaker - actually control audio output
   const toggleSpeaker = useCallback(() => {
