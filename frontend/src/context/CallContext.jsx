@@ -218,10 +218,16 @@ export const CallProvider = ({ children }) => {
         console.log('📱 Attaching remote audio stream');
         remoteAudioRef.current.srcObject = call.remoteStream;
         
-        // Set initial audio routing based on speaker state (use ref)
-        if (applyAudioRoutingRef.current) {
-          applyAudioRoutingRef.current(remoteAudioRef.current, isSpeakerRef.current);
-        }
+        // Set initial audio routing based on speaker state (use ref with safety)
+        setTimeout(() => {
+          try {
+            if (remoteAudioRef.current && applyAudioRoutingRef.current) {
+              applyAudioRoutingRef.current(remoteAudioRef.current, isSpeakerRef.current);
+            }
+          } catch (err) {
+            console.warn('Audio routing error (handled):', err);
+          }
+        }, 50);
         
         remoteAudioRef.current.play().catch(e => console.warn('Audio play failed:', e));
       }
@@ -263,7 +269,11 @@ export const CallProvider = ({ children }) => {
           // Apply current speaker state
           setTimeout(() => {
             if (remoteAudioRef.current && applyAudioRoutingRef.current) {
-              applyAudioRoutingRef.current(remoteAudioRef.current, isSpeakerRef.current);
+              try {
+                applyAudioRoutingRef.current(remoteAudioRef.current, isSpeakerRef.current);
+              } catch (err) {
+                console.warn('Error applying audio routing on active call (non-critical):', err);
+              }
             }
           }, 100);
         }
@@ -939,100 +949,44 @@ export const CallProvider = ({ children }) => {
     }
   }, [isOnHold]);
 
-  // Helper function to apply audio routing
+  // Helper function to apply audio routing - simplified to prevent errors
   const applyAudioRouting = useCallback((audioElement, speakerOn) => {
     if (!audioElement) {
-      console.warn('Audio element not available for routing');
       return;
     }
     
+    // Use a simple approach that works on all devices
     try {
-      // For mobile devices, use playsinline attribute
-      // For desktop, try to use setSinkId if available
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      
       if (speakerOn) {
         // Speaker mode - route to speaker
         audioElement.setAttribute('playsinline', 'false');
-        audioElement.playsInline = false;
-        audioElement.volume = 1.0;
-        
-        console.log('📱 Setting audio to speaker mode');
-        
-        // Try to use setSinkId API if available (for desktop browsers)
-        // Only try this on desktop, mobile uses playsinline attribute
-        if (!isMobile && audioElement.setSinkId && typeof audioElement.setSinkId === 'function') {
-          try {
-            navigator.mediaDevices?.enumerateDevices().then(devices => {
-              const speakers = devices.filter(d => d.kind === 'audiooutput');
-              if (speakers.length > 0) {
-                const speakerDevice = speakers.find(d => 
-                  !d.label.toLowerCase().includes('earpiece') && 
-                  !d.label.toLowerCase().includes('headphone')
-                ) || speakers[0];
-                
-                if (speakerDevice && speakerDevice.deviceId) {
-                  audioElement.setSinkId(speakerDevice.deviceId).catch(err => {
-                    console.warn('Failed to set audio sink to speaker (non-critical):', err);
-                  });
-                }
-              }
-            }).catch(err => {
-              // Non-critical error, just log
-              console.warn('Failed to enumerate audio devices (non-critical):', err);
-            });
-          } catch (err) {
-            console.warn('Error in speaker routing (non-critical):', err);
-          }
+        if (audioElement.playsInline !== undefined) {
+          audioElement.playsInline = false;
         }
+        audioElement.volume = 1.0;
+        console.log('📱 Audio set to speaker mode');
       } else {
         // Earpiece mode - route to earpiece (default on mobile)
         audioElement.setAttribute('playsinline', 'true');
-        audioElement.playsInline = true;
-        audioElement.volume = 0.8;
-        
-        console.log('📱 Setting audio to earpiece mode');
-        
-        // For mobile devices, playsinline='true' routes to earpiece by default
-        // On desktop, try to use setSinkId if available
-        if (!isMobile && audioElement.setSinkId && typeof audioElement.setSinkId === 'function') {
-          try {
-            navigator.mediaDevices?.enumerateDevices().then(devices => {
-              const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
-              if (audioOutputs.length > 0) {
-                // Prefer earpiece, default, or communications device
-                const earpieceDevice = audioOutputs.find(d => 
-                  d.label.toLowerCase().includes('earpiece')
-                ) || audioOutputs.find(d => d.deviceId === 'default') ||
-                   audioOutputs.find(d => d.deviceId === 'communications') ||
-                   audioOutputs[0];
-                
-                if (earpieceDevice && earpieceDevice.deviceId) {
-                  audioElement.setSinkId(earpieceDevice.deviceId).catch(err => {
-                    console.warn('Failed to set audio sink to earpiece (non-critical):', err);
-                  });
-                }
-              }
-            }).catch(err => {
-              // Non-critical error, just log
-              console.warn('Failed to enumerate audio devices (non-critical):', err);
-            });
-          } catch (err) {
-            console.warn('Error in earpiece routing (non-critical):', err);
-          }
+        if (audioElement.playsInline !== undefined) {
+          audioElement.playsInline = true;
         }
+        audioElement.volume = 0.8;
+        console.log('📱 Audio set to earpiece mode');
       }
       
-      // Force re-play to apply changes (with error handling)
+      // Try to play audio if stream is available (with error handling)
       if (audioElement.srcObject) {
-        audioElement.play().catch(e => {
-          // This is often just a browser autoplay policy issue, not critical
-          console.warn('Audio play failed (may need user interaction):', e);
-        });
+        const playPromise = audioElement.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(() => {
+            // Ignore play errors - they're usually just autoplay policy issues
+          });
+        }
       }
     } catch (err) {
-      // Don't throw errors, just log them
-      console.error('Error applying audio routing (non-critical):', err);
+      // Silently handle any errors to prevent ErrorBoundary from catching them
+      console.warn('Audio routing error (handled):', err);
     }
   }, []);
 
@@ -1041,13 +995,17 @@ export const CallProvider = ({ children }) => {
     const newSpeakerState = !isSpeaker;
     setIsSpeaker(newSpeakerState);
     
-    // Apply audio routing
-    if (remoteAudioRef.current) {
-      applyAudioRouting(remoteAudioRef.current, newSpeakerState);
+    // Apply audio routing using ref to avoid dependency issues
+    if (remoteAudioRef.current && applyAudioRoutingRef.current) {
+      try {
+        applyAudioRoutingRef.current(remoteAudioRef.current, newSpeakerState);
+      } catch (err) {
+        console.error('Error in toggleSpeaker (non-critical):', err);
+      }
     }
     
     console.log('📱 Speaker toggled:', newSpeakerState ? 'ON' : 'OFF');
-  }, [isSpeaker, applyAudioRouting]);
+  }, [isSpeaker]);
 
   // Send DTMF
   const sendDTMF = useCallback((digit) => {
@@ -1257,8 +1215,12 @@ export const CallProvider = ({ children }) => {
   // Apply audio routing when speaker state changes during active call
   useEffect(() => {
     if (callState === CALL_STATES.ACTIVE && remoteAudioRef.current && applyAudioRoutingRef.current) {
-      console.log('📱 Applying audio routing for speaker state:', isSpeaker);
-      applyAudioRoutingRef.current(remoteAudioRef.current, isSpeaker);
+      try {
+        console.log('📱 Applying audio routing for speaker state:', isSpeaker);
+        applyAudioRoutingRef.current(remoteAudioRef.current, isSpeaker);
+      } catch (err) {
+        console.warn('Error applying audio routing on speaker change (handled):', err);
+      }
     }
   }, [isSpeaker, callState]);
 
