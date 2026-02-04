@@ -131,14 +131,23 @@ export const CallProvider = ({ children }) => {
       audio.setAttribute('playsinline', 'true');
       // Set default to earpiece (not speaker) - lower volume for earpiece
       audio.volume = 0.8;
+      // Prevent errors from being thrown
+      audio.onerror = (e) => {
+        console.warn('Audio element error (non-critical):', e);
+      };
       document.body.appendChild(audio);
       remoteAudioRef.current = audio;
+      console.log('📱 Audio element created and configured for earpiece');
     }
     return () => {
       if (remoteAudioRef.current) {
-        remoteAudioRef.current.srcObject = null;
-        remoteAudioRef.current.remove();
-        remoteAudioRef.current = null;
+        try {
+          remoteAudioRef.current.srcObject = null;
+          remoteAudioRef.current.remove();
+          remoteAudioRef.current = null;
+        } catch (err) {
+          console.warn('Error cleaning up audio element:', err);
+        }
       }
     };
   }, []);
@@ -932,70 +941,98 @@ export const CallProvider = ({ children }) => {
 
   // Helper function to apply audio routing
   const applyAudioRouting = useCallback((audioElement, speakerOn) => {
-    if (!audioElement) return;
+    if (!audioElement) {
+      console.warn('Audio element not available for routing');
+      return;
+    }
     
     try {
+      // For mobile devices, use playsinline attribute
+      // For desktop, try to use setSinkId if available
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      
       if (speakerOn) {
         // Speaker mode - route to speaker
         audioElement.setAttribute('playsinline', 'false');
+        audioElement.playsInline = false;
         audioElement.volume = 1.0;
         
+        console.log('📱 Setting audio to speaker mode');
+        
         // Try to use setSinkId API if available (for desktop browsers)
-        if (audioElement.setSinkId && typeof audioElement.setSinkId === 'function') {
-          // Get available audio devices and try to set to speaker
-          navigator.mediaDevices?.enumerateDevices().then(devices => {
-            const speakers = devices.filter(d => d.kind === 'audiooutput');
-            if (speakers.length > 0) {
-              // Try to find a speaker device (not earpiece/headphones)
-              const speakerDevice = speakers.find(d => 
-                !d.label.toLowerCase().includes('earpiece') && 
-                !d.label.toLowerCase().includes('headphone')
-              ) || speakers[0];
-              
-              audioElement.setSinkId(speakerDevice.deviceId).catch(err => {
-                console.warn('Failed to set audio sink to speaker:', err);
-              });
-            }
-          }).catch(err => {
-            console.warn('Failed to enumerate audio devices:', err);
-          });
+        // Only try this on desktop, mobile uses playsinline attribute
+        if (!isMobile && audioElement.setSinkId && typeof audioElement.setSinkId === 'function') {
+          try {
+            navigator.mediaDevices?.enumerateDevices().then(devices => {
+              const speakers = devices.filter(d => d.kind === 'audiooutput');
+              if (speakers.length > 0) {
+                const speakerDevice = speakers.find(d => 
+                  !d.label.toLowerCase().includes('earpiece') && 
+                  !d.label.toLowerCase().includes('headphone')
+                ) || speakers[0];
+                
+                if (speakerDevice && speakerDevice.deviceId) {
+                  audioElement.setSinkId(speakerDevice.deviceId).catch(err => {
+                    console.warn('Failed to set audio sink to speaker (non-critical):', err);
+                  });
+                }
+              }
+            }).catch(err => {
+              // Non-critical error, just log
+              console.warn('Failed to enumerate audio devices (non-critical):', err);
+            });
+          } catch (err) {
+            console.warn('Error in speaker routing (non-critical):', err);
+          }
         }
       } else {
         // Earpiece mode - route to earpiece (default on mobile)
         audioElement.setAttribute('playsinline', 'true');
+        audioElement.playsInline = true;
         audioElement.volume = 0.8;
         
-        // For mobile devices, ensure audio goes to earpiece by default
-        // On iOS/Android, playsinline='true' with proper setup routes to earpiece
+        console.log('📱 Setting audio to earpiece mode');
         
-        // Try to use setSinkId API if available
-        if (audioElement.setSinkId && typeof audioElement.setSinkId === 'function') {
-          // Try to set to default/earpiece device
-          navigator.mediaDevices?.enumerateDevices().then(devices => {
-            const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
-            if (audioOutputs.length > 0) {
-              // Prefer earpiece or default device
-              const earpieceDevice = audioOutputs.find(d => 
-                d.label.toLowerCase().includes('earpiece') || 
-                d.deviceId === 'default'
-              ) || audioOutputs.find(d => d.deviceId === 'communications');
-              
-              if (earpieceDevice) {
-                audioElement.setSinkId(earpieceDevice.deviceId).catch(err => {
-                  console.warn('Failed to set audio sink to earpiece:', err);
-                });
+        // For mobile devices, playsinline='true' routes to earpiece by default
+        // On desktop, try to use setSinkId if available
+        if (!isMobile && audioElement.setSinkId && typeof audioElement.setSinkId === 'function') {
+          try {
+            navigator.mediaDevices?.enumerateDevices().then(devices => {
+              const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
+              if (audioOutputs.length > 0) {
+                // Prefer earpiece, default, or communications device
+                const earpieceDevice = audioOutputs.find(d => 
+                  d.label.toLowerCase().includes('earpiece')
+                ) || audioOutputs.find(d => d.deviceId === 'default') ||
+                   audioOutputs.find(d => d.deviceId === 'communications') ||
+                   audioOutputs[0];
+                
+                if (earpieceDevice && earpieceDevice.deviceId) {
+                  audioElement.setSinkId(earpieceDevice.deviceId).catch(err => {
+                    console.warn('Failed to set audio sink to earpiece (non-critical):', err);
+                  });
+                }
               }
-            }
-          }).catch(err => {
-            console.warn('Failed to enumerate audio devices:', err);
-          });
+            }).catch(err => {
+              // Non-critical error, just log
+              console.warn('Failed to enumerate audio devices (non-critical):', err);
+            });
+          } catch (err) {
+            console.warn('Error in earpiece routing (non-critical):', err);
+          }
         }
       }
       
-      // Force re-play to apply changes
-      audioElement.play().catch(e => console.warn('Audio play failed:', e));
+      // Force re-play to apply changes (with error handling)
+      if (audioElement.srcObject) {
+        audioElement.play().catch(e => {
+          // This is often just a browser autoplay policy issue, not critical
+          console.warn('Audio play failed (may need user interaction):', e);
+        });
+      }
     } catch (err) {
-      console.error('Error applying audio routing:', err);
+      // Don't throw errors, just log them
+      console.error('Error applying audio routing (non-critical):', err);
     }
   }, []);
 
