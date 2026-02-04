@@ -48,6 +48,13 @@ export default function GlobalCallOverlay() {
     return null;
   }
 
+  // On Recents desktop: don't show full-screen overlay; call UI is shown inside Recents' dialer panel
+  // This prevents duplicate call windows
+  if (location.pathname === '/recents' && isDesktop) {
+    console.log('📞 GlobalCallOverlay: Hiding on Recents desktop to prevent duplicate with dialer panel');
+    return null;
+  }
+
   const getStatusText = () => {
     switch (callState) {
       case CALL_STATES.CONNECTING:
@@ -64,6 +71,11 @@ export default function GlobalCallOverlay() {
   };
 
   const isActive = callState === CALL_STATES.ACTIVE;
+
+  // On Recents desktop: don't show minimized banner either (call is in dialer panel)
+  if (location.pathname === '/recents' && isDesktop) {
+    return null;
+  }
 
   // If minimized, show floating banner - Lower z-index to not cover header
   if (isMinimized) {
@@ -145,11 +157,6 @@ export default function GlobalCallOverlay() {
         </div>
       </div>
     );
-  }
-
-  // On Recents desktop: don't show full-screen overlay; call UI is shown inside Recents' dialer panel
-  if (location.pathname === '/recents' && isDesktop) {
-    return null;
   }
 
   // If expanded, show full-screen call window overlay

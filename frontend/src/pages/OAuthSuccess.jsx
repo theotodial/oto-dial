@@ -12,11 +12,14 @@ function OAuthSuccess() {
 
     if (token) {
       try {
-        // Set auth state via context so ProtectedRoute sees it immediately
+        // Set auth state via context and localStorage
         setAuthFromToken(token, {});
 
-        // Hard redirect so AuthProvider re-initializes cleanly on first mount
-        window.location.replace('/recents');
+        // Small delay to ensure localStorage is written, then hard redirect
+        // This ensures AuthProvider picks up the token on remount
+        setTimeout(() => {
+          window.location.href = '/recents';
+        }, 100);
       } catch (e) {
         console.error('Failed to store OAuth token', e);
         navigate('/login', { replace: true });

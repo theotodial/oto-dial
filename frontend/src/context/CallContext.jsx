@@ -85,6 +85,7 @@ export const CallProvider = ({ children }) => {
   const callDurationRef = useRef(0);
   const isClientReadyRef = useRef(isClientReady);
   const isInitializingRef = useRef(isInitializing);
+  const notificationRef = useRef(null);
   
   // Keep refs in sync with state
   useEffect(() => {
@@ -308,6 +309,11 @@ export const CallProvider = ({ children }) => {
     if ('Notification' in window) {
       if (Notification.permission === 'granted') {
         try {
+          // Close any existing notification
+          if (notificationRef.current) {
+            notificationRef.current.close();
+          }
+          
           const notification = new Notification('📞 Incoming Call', {
             body: `Call from ${callerNumber}`,
             icon: '/logo.svg',
@@ -317,10 +323,42 @@ export const CallProvider = ({ children }) => {
             vibrate: [200, 100, 200] // Vibrate pattern for mobile
           });
           
-          // Close notification when call is answered/rejected
+          notificationRef.current = notification;
+          
+          // When notification is clicked, ensure call UI is visible
           notification.onclick = () => {
+            console.log('📱 Notification clicked - ensuring call UI is visible');
             window.focus();
+            
+            // Ensure call is not minimized and state is visible
+            setIsMinimized(false);
+            
+            // Always restore/ensure incoming call state is set
+            if (currentCallRef.current) {
+              console.log('📱 Ensuring incoming call state is visible from notification click');
+              setCallState(CALL_STATES.INCOMING);
+              setRemoteNumber(callerNumber);
+              setIncomingCall(currentCallRef.current);
+              setIsMinimized(false); // Explicitly ensure not minimized
+            }
+            
+            // Navigate to recents if not already there
+            if (window.location.pathname !== '/recents') {
+              window.location.href = '/recents';
+            } else {
+              // If already on recents, just ensure the UI updates
+              // Force a small delay to ensure state updates are processed
+              setTimeout(() => {
+                setIsMinimized(false);
+                if (currentCallRef.current) {
+                  setCallState(CALL_STATES.INCOMING);
+                  setRemoteNumber(callerNumber);
+                }
+              }, 100);
+            }
+            
             notification.close();
+            notificationRef.current = null;
           };
         } catch (err) {
           console.warn('Failed to show notification:', err);
@@ -733,6 +771,15 @@ export const CallProvider = ({ children }) => {
     console.log('📱 Answering call...');
     soundManager.stopRingtone();
     
+    // Close notification if it exists
+    if (notificationRef.current) {
+      notificationRef.current.close();
+      notificationRef.current = null;
+    }
+    
+    // Ensure call is not minimized
+    setIsMinimized(false);
+    
     // Try to answer via WebRTC first
     if (currentCallRef.current) {
       try {
@@ -783,6 +830,12 @@ export const CallProvider = ({ children }) => {
   const rejectCall = useCallback(async () => {
     console.log('📱 Rejecting call...');
     soundManager.stopRingtone();
+    
+    // Close notification if it exists
+    if (notificationRef.current) {
+      notificationRef.current.close();
+      notificationRef.current = null;
+    }
     
     // Try to hangup via WebRTC if call object exists
     if (currentCallRef.current) {
@@ -1075,6 +1128,30 @@ export const CallProvider = ({ children }) => {
     return () => clearInterval(pollInterval);
   }, []); // Empty deps - use refs instead
 
+  // Ensure call UI is visible when user returns to tab (e.g., after clicking notification)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        // User returned to tab - ensure call UI is visible if there's an active/incoming call
+        const currentState = callStateRef.current;
+        if (currentState === CALL_STATES.INCOMING || currentState === CALL_STATES.ACTIVE) {
+          console.log('📱 Page visible - ensuring call UI is visible for state:', currentState);
+          setIsMinimized(false);
+          
+          // If we have an incoming call but state was lost, try to restore it
+          if (currentState === CALL_STATES.INCOMING && !currentCallRef.current && remoteNumber) {
+            console.log('📱 Attempting to restore incoming call state');
+            // The call might still be active in the backend, but we can't restore the WebRTC call object
+            // The user will need to answer/reject via the UI if it's still available
+          }
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [remoteNumber]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -1082,6 +1159,9 @@ export const CallProvider = ({ children }) => {
         clearInterval(durationIntervalRef.current);
       }
       soundManager.stopAll();
+      if (notificationRef.current) {
+        notificationRef.current.close();
+      }
       if (telnyxClientRef.current) {
         try {
           telnyxClientRef.current.disconnect();

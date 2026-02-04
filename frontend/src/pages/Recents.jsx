@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { useAuth } from '../context/AuthContext';
-import { useCall } from '../context/CallContext';
+import { useCall, CALL_STATES } from '../context/CallContext';
 import CallWindow from '../components/CallWindow';
 
 const ClockIcon = () => (
@@ -137,12 +137,16 @@ function Recents() {
   // WebRTC call context - with safe defaults
   const callContext = useCall();
   const isInCall = callContext?.isInCall || false;
+  const hasIncomingCall = callContext?.hasIncomingCall || false;
+  const callState = callContext?.callState;
   const webrtcMakeCall = callContext?.makeCall || (async () => false);
   const callError = callContext?.error || null;
   const isMinimized = callContext?.isMinimized || false;
   const minimizeCall = callContext?.minimizeCall || (() => {});
   const remoteNumber = callContext?.remoteNumber || '';
   const initializeClient = callContext?.initializeClient || (async () => false);
+  const answerCall = callContext?.answerCall || (() => {});
+  const rejectCall = callContext?.rejectCall || (() => {});
 
   const [activeTab, setActiveTab] = useState('all'); // 'all' (recents), 'chats'
   const [selectedChat, setSelectedChat] = useState(null); // For inline chat on mobile
@@ -1355,7 +1359,9 @@ function Recents() {
 
         {/* Right Panel - Dialer or in-call UI (desktop: call stays in this panel only) */}
         <div className="hidden xl:flex w-80 flex-col bg-gray-50 dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 min-h-0 overflow-hidden">
-          {isInCall && !isMinimized ? (
+          {/* Show call window for any active call (including incoming) when not minimized */}
+          {/* Only show for non-IDLE states to prevent duplicate windows with GlobalCallOverlay */}
+          {isInCall && !isMinimized && callState && callState !== CALL_STATES.IDLE ? (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <CallWindow
                 contactName={remoteNumber || 'Unknown'}
