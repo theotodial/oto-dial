@@ -26,6 +26,8 @@ import Signup from './pages/Signup';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
 import OAuthConsent from './pages/OAuthConsent';
+import OAuthSuccess from './pages/OAuthSuccess';
+import OAuthSuccess from './pages/OAuthSuccess';
 import Recents from './pages/Recents';
 import Dashboard from './pages/Dashboard';
 import Billing from './pages/Billing';
@@ -125,8 +127,17 @@ function App() {
               }
             />
             
-            {/* OAuth consent page - public but special */}
+            {/* OAuth pages - public but special */}
             <Route path="/oauth/consent" element={<OAuthConsent />} />
+            <Route
+              path="/oauth-success"
+              element={
+                <>
+                  <Navbar />
+                  <OAuthSuccess />
+                </>
+              }
+            />
 
             {/* Admin Routes - Separate from user routes */}
             <Route path="/adminbobby" element={<AdminLogin />} />
