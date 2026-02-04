@@ -128,6 +128,9 @@ export const CallProvider = ({ children }) => {
       audio.id = 'telnyx-remote-audio';
       audio.autoplay = true;
       audio.playsInline = true;
+      audio.setAttribute('playsinline', 'true');
+      // Set default to earpiece (not speaker) - lower volume for earpiece
+      audio.volume = 0.8;
       document.body.appendChild(audio);
       remoteAudioRef.current = audio;
     }
@@ -207,12 +210,8 @@ export const CallProvider = ({ children }) => {
         remoteAudioRef.current.srcObject = call.remoteStream;
         
         // Set initial audio routing based on speaker state (use ref)
-        if (isSpeakerRef.current) {
-          remoteAudioRef.current.setAttribute('playsinline', 'false');
-          remoteAudioRef.current.volume = 1.0;
-        } else {
-          remoteAudioRef.current.setAttribute('playsinline', 'true');
-          remoteAudioRef.current.volume = 0.8;
+        if (applyAudioRoutingRef.current) {
+          applyAudioRoutingRef.current(remoteAudioRef.current, isSpeakerRef.current);
         }
         
         remoteAudioRef.current.play().catch(e => console.warn('Audio play failed:', e));
@@ -249,6 +248,17 @@ export const CallProvider = ({ children }) => {
         soundManager.stopRingtone();
         soundManager.playConnected();
         startDurationTimer();
+        
+        // Ensure audio routing is applied when call becomes active
+        if (remoteAudioRef.current && call.remoteStream) {
+          // Apply current speaker state
+          setTimeout(() => {
+            if (remoteAudioRef.current && applyAudioRoutingRef.current) {
+              applyAudioRoutingRef.current(remoteAudioRef.current, isSpeakerRef.current);
+            }
+          }, 100);
+        }
+        
         // Update call record to in-progress
         if (call._dbCallId) {
           try {
@@ -269,7 +279,7 @@ export const CallProvider = ({ children }) => {
         handleCallEnd();
         break;
     }
-  }, [startDurationTimer, handleCallEnd]); // Removed handleIncomingCallEvent - use ref instead
+  }, [startDurationTimer, handleCallEnd]); // Removed applyAudioRouting - use ref instead
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
@@ -920,32 +930,87 @@ export const CallProvider = ({ children }) => {
     }
   }, [isOnHold]);
 
+  // Helper function to apply audio routing
+  const applyAudioRouting = useCallback((audioElement, speakerOn) => {
+    if (!audioElement) return;
+    
+    try {
+      if (speakerOn) {
+        // Speaker mode - route to speaker
+        audioElement.setAttribute('playsinline', 'false');
+        audioElement.volume = 1.0;
+        
+        // Try to use setSinkId API if available (for desktop browsers)
+        if (audioElement.setSinkId && typeof audioElement.setSinkId === 'function') {
+          // Get available audio devices and try to set to speaker
+          navigator.mediaDevices?.enumerateDevices().then(devices => {
+            const speakers = devices.filter(d => d.kind === 'audiooutput');
+            if (speakers.length > 0) {
+              // Try to find a speaker device (not earpiece/headphones)
+              const speakerDevice = speakers.find(d => 
+                !d.label.toLowerCase().includes('earpiece') && 
+                !d.label.toLowerCase().includes('headphone')
+              ) || speakers[0];
+              
+              audioElement.setSinkId(speakerDevice.deviceId).catch(err => {
+                console.warn('Failed to set audio sink to speaker:', err);
+              });
+            }
+          }).catch(err => {
+            console.warn('Failed to enumerate audio devices:', err);
+          });
+        }
+      } else {
+        // Earpiece mode - route to earpiece (default on mobile)
+        audioElement.setAttribute('playsinline', 'true');
+        audioElement.volume = 0.8;
+        
+        // For mobile devices, ensure audio goes to earpiece by default
+        // On iOS/Android, playsinline='true' with proper setup routes to earpiece
+        
+        // Try to use setSinkId API if available
+        if (audioElement.setSinkId && typeof audioElement.setSinkId === 'function') {
+          // Try to set to default/earpiece device
+          navigator.mediaDevices?.enumerateDevices().then(devices => {
+            const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
+            if (audioOutputs.length > 0) {
+              // Prefer earpiece or default device
+              const earpieceDevice = audioOutputs.find(d => 
+                d.label.toLowerCase().includes('earpiece') || 
+                d.deviceId === 'default'
+              ) || audioOutputs.find(d => d.deviceId === 'communications');
+              
+              if (earpieceDevice) {
+                audioElement.setSinkId(earpieceDevice.deviceId).catch(err => {
+                  console.warn('Failed to set audio sink to earpiece:', err);
+                });
+              }
+            }
+          }).catch(err => {
+            console.warn('Failed to enumerate audio devices:', err);
+          });
+        }
+      }
+      
+      // Force re-play to apply changes
+      audioElement.play().catch(e => console.warn('Audio play failed:', e));
+    } catch (err) {
+      console.error('Error applying audio routing:', err);
+    }
+  }, []);
+
   // Toggle speaker - actually control audio output
   const toggleSpeaker = useCallback(() => {
     const newSpeakerState = !isSpeaker;
     setIsSpeaker(newSpeakerState);
     
-    // Control audio output device
+    // Apply audio routing
     if (remoteAudioRef.current) {
-      // On mobile, we can't directly control speaker vs earpiece
-      // But we can set volume and ensure proper routing
-      if (newSpeakerState) {
-        // Speaker mode - ensure audio is routed to speaker
-        remoteAudioRef.current.setAttribute('playsinline', 'false');
-        // Try to set volume higher for speaker
-        remoteAudioRef.current.volume = 1.0;
-      } else {
-        // Earpiece mode - ensure audio is routed to earpiece
-        remoteAudioRef.current.setAttribute('playsinline', 'true');
-        remoteAudioRef.current.volume = 0.8;
-      }
-      
-      // Force re-play to apply changes
-      remoteAudioRef.current.play().catch(e => console.warn('Audio play failed:', e));
+      applyAudioRouting(remoteAudioRef.current, newSpeakerState);
     }
     
     console.log('📱 Speaker toggled:', newSpeakerState ? 'ON' : 'OFF');
-  }, [isSpeaker]);
+  }, [isSpeaker, applyAudioRouting]);
 
   // Send DTMF
   const sendDTMF = useCallback((digit) => {
@@ -1151,6 +1216,14 @@ export const CallProvider = ({ children }) => {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [remoteNumber]);
+
+  // Apply audio routing when speaker state changes during active call
+  useEffect(() => {
+    if (callState === CALL_STATES.ACTIVE && remoteAudioRef.current && applyAudioRoutingRef.current) {
+      console.log('📱 Applying audio routing for speaker state:', isSpeaker);
+      applyAudioRoutingRef.current(remoteAudioRef.current, isSpeaker);
+    }
+  }, [isSpeaker, callState]);
 
   // Cleanup on unmount
   useEffect(() => {

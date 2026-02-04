@@ -17,6 +17,8 @@ function AdminSupport() {
   });
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [error, setError] = useState('');
+  const [adminReply, setAdminReply] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
 
   useEffect(() => {
     fetchTickets();
@@ -106,6 +108,34 @@ function AdminSupport() {
       }
     } catch (err) {
       alert(err?.error || 'Failed to update notes');
+    }
+  };
+
+  const handleAdminReply = async (ticketId) => {
+    if (!adminReply.trim() || sendingReply) return;
+    
+    setSendingReply(true);
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.patch(`/api/admin/support/${ticketId}`, {
+        reply: adminReply
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (response.error) {
+        alert(response.error);
+      } else if (response.data?.success) {
+        setAdminReply('');
+        await fetchTickets();
+        if (selectedTicket?.id === ticketId) {
+          setSelectedTicket(response.data.ticket);
+        }
+      }
+    } catch (err) {
+      alert(err?.error || 'Failed to send reply');
+    } finally {
+      setSendingReply(false);
     }
   };
 
@@ -313,6 +343,60 @@ function AdminSupport() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Message</label>
                   <p className="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">{selectedTicket.message}</p>
+                </div>
+
+                {/* Replies/Conversation */}
+                {selectedTicket.replies && selectedTicket.replies.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Conversation</label>
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {selectedTicket.replies.map((reply, idx) => (
+                        <div
+                          key={idx}
+                          className={`p-3 rounded-lg ${
+                            reply.from === 'admin'
+                              ? 'bg-indigo-50 dark:bg-indigo-900/20 border-l-4 border-indigo-500'
+                              : 'bg-gray-50 dark:bg-slate-700 border-l-4 border-gray-400'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                              {reply.from === 'admin' ? 'Admin' : reply.fromName || 'User'}
+                            </span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                              {new Date(reply.createdAt).toLocaleString()}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">
+                            {reply.message}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Admin Reply Form */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Reply to User</label>
+                  <textarea
+                    value={adminReply}
+                    onChange={(e) => setAdminReply(e.target.value)}
+                    placeholder="Type your reply to the user..."
+                    rows={3}
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white mb-2"
+                  />
+                  <button
+                    onClick={() => handleAdminReply(selectedTicket.id)}
+                    disabled={!adminReply.trim() || sendingReply}
+                    className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                      !adminReply.trim() || sendingReply
+                        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                    }`}
+                  >
+                    {sendingReply ? 'Sending...' : 'Send Reply'}
+                  </button>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Status</label>

@@ -67,7 +67,26 @@ const supportTicketSchema = new mongoose.Schema(
     businessCategory: String,
     businessDescription: String,
     serviceRequest: String,
-    isUrgent: Boolean
+    isUrgent: Boolean,
+
+    // Replies/conversation thread
+    replies: [{
+      message: {
+        type: String,
+        required: true
+      },
+      from: {
+        type: String,
+        enum: ["user", "admin"],
+        required: true
+      },
+      fromName: String,
+      fromEmail: String,
+      createdAt: {
+        type: Date,
+        default: Date.now
+      }
+    }]
   },
   { timestamps: true }
 );

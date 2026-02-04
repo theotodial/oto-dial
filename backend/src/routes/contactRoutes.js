@@ -1,13 +1,32 @@
 import express from "express";
 import SupportTicket from "../models/SupportTicket.js";
+import jwt from "jsonwebtoken";
+import User from "../models/User.js";
 
 const router = express.Router();
 
 /**
  * POST /api/contact
  * Contact form handler (NO nodemailer)
+ * Links ticket to user if logged in (authentication optional)
  */
 router.post("/", async (req, res) => {
+  // Try to get user if authenticated, but don't require it
+  let userId = null;
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (token) {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      if (decoded.userId) {
+        const user = await User.findById(decoded.userId);
+        if (user) {
+          userId = user._id;
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore auth errors - form can be submitted without login
+  }
   try {
     const {
       name,
@@ -26,8 +45,12 @@ router.post("/", async (req, res) => {
       });
     }
 
+    // If user is logged in, link ticket to user account
+    const userId = req.userId || null;
+
     // Create support ticket in MongoDB
     const ticket = await SupportTicket.create({
+      user: userId,
       name,
       email,
       phone: phone || "",
@@ -38,7 +61,8 @@ router.post("/", async (req, res) => {
       serviceRequest,
       isUrgent: isUrgent || false,
       priority: isUrgent ? "urgent" : "medium",
-      status: "open"
+      status: "open",
+      replies: [] // Initialize empty replies array
     });
 
     console.log("📩 CONTACT FORM SUBMISSION - Ticket Created:", {

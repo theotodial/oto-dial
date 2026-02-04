@@ -75,6 +75,7 @@ router.get("/", requireAdmin, async (req, res) => {
         resolvedBy: ticket.resolvedBy?._id,
         resolvedByName: ticket.resolvedBy?.name,
         resolvedAt: ticket.resolvedAt,
+        replies: ticket.replies || [],
         createdAt: ticket.createdAt,
         updatedAt: ticket.updatedAt
       })),
@@ -133,6 +134,7 @@ router.get("/:id", requireAdmin, async (req, res) => {
         businessDescription: ticket.businessDescription,
         serviceRequest: ticket.serviceRequest,
         isUrgent: ticket.isUrgent,
+        replies: ticket.replies || [],
         createdAt: ticket.createdAt,
         updatedAt: ticket.updatedAt
       }
@@ -152,23 +154,9 @@ router.get("/:id", requireAdmin, async (req, res) => {
  */
 router.patch("/:id", requireAdmin, async (req, res) => {
   try {
-    const { status, adminNotes, priority } = req.body;
+    const { status, adminNotes, priority, reply } = req.body;
 
-    const update = {};
-    if (status) update.status = status;
-    if (adminNotes !== undefined) update.adminNotes = adminNotes;
-    if (priority) update.priority = priority;
-
-    if (status === "resolved" || status === "closed") {
-      update.resolvedAt = new Date();
-      update.resolvedBy = req.userId;
-    }
-
-    const ticket = await SupportTicket.findByIdAndUpdate(
-      req.params.id,
-      update,
-      { new: true }
-    ).populate("resolvedBy", "email name");
+    const ticket = await SupportTicket.findById(req.params.id);
 
     if (!ticket) {
       return res.status(404).json({
@@ -177,10 +165,70 @@ router.patch("/:id", requireAdmin, async (req, res) => {
       });
     }
 
+    // Handle admin reply
+    if (reply && reply.trim()) {
+      ticket.replies = ticket.replies || [];
+      ticket.replies.push({
+        message: reply.trim(),
+        from: "admin",
+        fromName: req.adminUser?.name || "Admin",
+        fromEmail: req.adminUser?.email || "admin@otodial.com",
+        createdAt: new Date()
+      });
+    }
+
+    // Handle status update
+    if (status) {
+      ticket.status = status;
+      if (status === "resolved" || status === "closed") {
+        ticket.resolvedAt = new Date();
+        ticket.resolvedBy = req.userId;
+      }
+    }
+
+    // Handle admin notes
+    if (adminNotes !== undefined) {
+      ticket.adminNotes = adminNotes;
+    }
+
+    // Handle priority
+    if (priority) {
+      ticket.priority = priority;
+    }
+
+    await ticket.save();
+
+    const updatedTicket = await SupportTicket.findById(req.params.id)
+      .populate("resolvedBy", "email name")
+      .populate("user", "email name");
+
     res.json({
       success: true,
       message: "Ticket updated successfully",
-      ticket
+      ticket: {
+        id: updatedTicket._id,
+        userId: updatedTicket.user?._id,
+        userEmail: updatedTicket.user?.email || updatedTicket.email,
+        userName: updatedTicket.user?.name || updatedTicket.name,
+        name: updatedTicket.name,
+        email: updatedTicket.email,
+        phone: updatedTicket.phone,
+        subject: updatedTicket.subject,
+        message: updatedTicket.message,
+        status: updatedTicket.status,
+        priority: updatedTicket.priority,
+        adminNotes: updatedTicket.adminNotes,
+        resolvedBy: updatedTicket.resolvedBy?._id,
+        resolvedByName: updatedTicket.resolvedBy?.name,
+        resolvedAt: updatedTicket.resolvedAt,
+        businessCategory: updatedTicket.businessCategory,
+        businessDescription: updatedTicket.businessDescription,
+        serviceRequest: updatedTicket.serviceRequest,
+        isUrgent: updatedTicket.isUrgent,
+        replies: updatedTicket.replies || [],
+        createdAt: updatedTicket.createdAt,
+        updatedAt: updatedTicket.updatedAt
+      }
     });
   } catch (err) {
     console.error("Admin support update error:", err);

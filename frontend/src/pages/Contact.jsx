@@ -1,12 +1,14 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 import API from '../api';
 import logo from '../assets/otodial-logo.png';
 
 function Contact() {
+  const { user, token, isAuthenticated } = useAuth();
   const [formData, setFormData] = useState({
     businessCategory: '',
-    name: '',
-    email: '',
+    name: user?.name || user?.email || '',
+    email: user?.email || '',
     phone: '',
     businessDescription: '',
     serviceRequest: '',
@@ -15,7 +17,33 @@ function Contact() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  const [userTickets, setUserTickets] = useState([]);
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [replyMessage, setReplyMessage] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
+  const [loadingTickets, setLoadingTickets] = useState(false);
   const isMountedRef = useRef(true);
+
+  // Load user tickets if authenticated
+  useEffect(() => {
+    if (isAuthenticated && token) {
+      fetchUserTickets();
+    }
+  }, [isAuthenticated, token]);
+
+  const fetchUserTickets = async () => {
+    setLoadingTickets(true);
+    try {
+      const response = await API.get('/api/support/tickets');
+      if (response.data?.success) {
+        setUserTickets(response.data.tickets || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch tickets:', err);
+    } finally {
+      setLoadingTickets(false);
+    }
+  };
 
   const businessCategories = [
     'E-commerce',
@@ -60,13 +88,18 @@ function Contact() {
       // Reset form
       setFormData({
         businessCategory: '',
-        name: '',
-        email: '',
+        name: user?.name || user?.email || '',
+        email: user?.email || '',
         phone: '',
         businessDescription: '',
         serviceRequest: '',
         isUrgent: false
       });
+
+      // Refresh tickets if user is logged in
+      if (isAuthenticated) {
+        fetchUserTickets();
+      }
 
       setTimeout(() => {
         if (isMountedRef.current) {
@@ -80,6 +113,43 @@ function Contact() {
       if (isMountedRef.current) {
         setLoading(false);
       }
+    }
+  };
+
+  const handleReply = async (ticketId) => {
+    if (!replyMessage.trim() || sendingReply) return;
+    
+    setSendingReply(true);
+    try {
+      const response = await API.post(`/api/support/tickets/${ticketId}/reply`, {
+        message: replyMessage
+      });
+
+      if (response.error) {
+        throw new Error(response.error);
+      }
+
+      setReplyMessage('');
+      await fetchUserTickets();
+      // Update selected ticket
+      if (selectedTicket?.id === ticketId) {
+        const updated = userTickets.find(t => t.id === ticketId);
+        if (updated) setSelectedTicket(updated);
+      }
+    } catch (err) {
+      alert(err.message || 'Failed to send reply');
+    } finally {
+      setSendingReply(false);
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'open': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
+      case 'in_progress': return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+      case 'resolved': return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+      case 'closed': return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+      default: return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
     }
   };
 
@@ -298,6 +368,112 @@ function Contact() {
             info@otodial.com
           </a>
         </div>
+
+        {/* User Tickets Section (if logged in) */}
+        {isAuthenticated && (
+          <div className="mt-12">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
+              Your Support Tickets
+            </h2>
+            
+            {loadingTickets ? (
+              <div className="text-center py-8">
+                <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-gray-600 dark:text-gray-400">Loading tickets...</p>
+              </div>
+            ) : userTickets.length === 0 ? (
+              <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-lg border border-gray-200 dark:border-slate-700 text-center">
+                <p className="text-gray-600 dark:text-gray-400">You don't have any support tickets yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {userTickets.map((ticket) => (
+                  <div
+                    key={ticket.id}
+                    className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-slate-700"
+                  >
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                            {ticket.subject || 'Support Request'}
+                          </h3>
+                          <span className={`px-3 py-1 text-xs font-semibold rounded-full ${getStatusColor(ticket.status)}`}>
+                            {ticket.status.replace('_', ' ')}
+                          </span>
+                          {ticket.isUrgent && (
+                            <span className="px-3 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                              Urgent
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+                          Created: {new Date(ticket.createdAt).toLocaleString()}
+                        </p>
+                        <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                          {ticket.message}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Replies */}
+                    {ticket.replies && ticket.replies.length > 0 && (
+                      <div className="mt-4 space-y-3 border-t border-gray-200 dark:border-slate-700 pt-4">
+                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Conversation:</h4>
+                        {ticket.replies.map((reply, idx) => (
+                          <div
+                            key={idx}
+                            className={`p-3 rounded-lg ${
+                              reply.from === 'admin'
+                                ? 'bg-indigo-50 dark:bg-indigo-900/20 border-l-4 border-indigo-500'
+                                : 'bg-gray-50 dark:bg-slate-700 border-l-4 border-gray-400'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                                {reply.from === 'admin' ? 'Support Team' : 'You'}
+                              </span>
+                              <span className="text-xs text-gray-500 dark:text-gray-400">
+                                {new Date(reply.createdAt).toLocaleString()}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">
+                              {reply.message}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Reply Form */}
+                    {ticket.status !== 'closed' && (
+                      <div className="mt-4 border-t border-gray-200 dark:border-slate-700 pt-4">
+                        <textarea
+                          value={replyMessage}
+                          onChange={(e) => setReplyMessage(e.target.value)}
+                          placeholder="Type your reply here..."
+                          rows={3}
+                          className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none mb-3"
+                        />
+                        <button
+                          onClick={() => handleReply(ticket.id)}
+                          disabled={!replyMessage.trim() || sendingReply}
+                          className={`px-6 py-2 rounded-xl font-medium transition-all ${
+                            !replyMessage.trim() || sendingReply
+                              ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                              : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                          }`}
+                        >
+                          {sendingReply ? 'Sending...' : 'Send Reply'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
