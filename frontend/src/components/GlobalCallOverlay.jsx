@@ -37,22 +37,39 @@ export default function GlobalCallOverlay() {
   } = useCall();
 
   // Don't render anything if no call is active
-  if (!isInCall || callState === CALL_STATES.IDLE) {
+  // But allow INCOMING calls to show (isInCall should be true for INCOMING, but double-check)
+  if (callState === CALL_STATES.IDLE) {
     return null;
   }
-
-  // Don't show if it's an incoming call (handled by IncomingCallNotification)
-  // Incoming calls should ONLY show IncomingCallNotification, not this overlay
+  
+  // Ensure incoming calls are considered "in call"
   if (callState === CALL_STATES.INCOMING) {
-    console.log('📞 GlobalCallOverlay: Hiding because incoming call is handled by IncomingCallNotification');
-    return null;
+    console.log('📞 GlobalCallOverlay: Incoming call detected, showing call window');
   }
 
   // On Recents desktop: don't show full-screen overlay; call UI is shown inside Recents' dialer panel
-  // This prevents duplicate call windows
+  // This prevents duplicate call windows (for both incoming and active calls)
   if (location.pathname === '/recents' && isDesktop) {
     console.log('📞 GlobalCallOverlay: Hiding on Recents desktop to prevent duplicate with dialer panel');
     return null;
+  }
+
+  // On mobile: show incoming call window full screen
+  // On desktop (not on Recents): show incoming call window as overlay
+  if (callState === CALL_STATES.INCOMING && !isDesktop) {
+    // Mobile: show full screen incoming call window
+    return (
+      <div className="fixed inset-0 z-[70] bg-gray-50 dark:bg-slate-900">
+        <div className="h-full w-full">
+          <CallWindow 
+            contactName={remoteNumber} 
+            contactAvatar={null}
+            onCallEnd={() => {}}
+            onMinimize={minimizeCall}
+          />
+        </div>
+      </div>
+    );
   }
 
   const getStatusText = () => {
@@ -75,6 +92,24 @@ export default function GlobalCallOverlay() {
   // On Recents desktop: don't show minimized banner either (call is in dialer panel)
   if (location.pathname === '/recents' && isDesktop) {
     return null;
+  }
+
+  // For incoming calls on desktop (not on Recents), show full screen overlay
+  if (callState === CALL_STATES.INCOMING && isDesktop) {
+    return (
+      <div className="fixed inset-0 z-[70] bg-gray-50 dark:bg-slate-900">
+        <div className="h-full w-full lg:flex lg:items-center lg:justify-center lg:p-6">
+          <div className="h-full lg:h-auto lg:w-[400px] lg:max-h-[700px] lg:rounded-3xl lg:overflow-hidden lg:shadow-2xl">
+            <CallWindow 
+              contactName={remoteNumber} 
+              contactAvatar={null}
+              onCallEnd={() => {}}
+              onMinimize={minimizeCall}
+            />
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // If minimized, show floating banner - Lower z-index to not cover header

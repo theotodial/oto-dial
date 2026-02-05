@@ -951,21 +951,7 @@ export const CallProvider = ({ children }) => {
       // Ensure call is not minimized
       setIsMinimized(false);
       
-      // Try to answer via WebRTC first
-      if (currentCallRef.current) {
-        try {
-          // Answer the call via WebRTC
-          currentCallRef.current.answer();
-          console.log('📱 Call answered via WebRTC');
-        } catch (e) {
-          console.warn('📱 WebRTC answer failed, trying alternative method:', e);
-          // If WebRTC answer fails, we'll still update the record
-        }
-      } else {
-        console.log('📱 No WebRTC call object, call may have been detected via polling');
-      }
-      
-      // Update backend call record (non-blocking)
+      // Get call record ID (for Voice API, this is from polling)
       let callRecordId = polledCallIdRef.current;
       
       // If we don't have a polled call ID, try to find it
@@ -980,17 +966,37 @@ export const CallProvider = ({ children }) => {
         }
       }
       
+      // For Voice API: Answer via Call Control API endpoint
       if (callRecordId) {
-        // Update to answered status (non-blocking)
-        API.patch(`/api/calls/${callRecordId}`, {
-          status: 'answered',
-          callStartedAt: new Date().toISOString()
-        }).then(() => {
-          console.log('📱 Call record updated to answered');
-          polledCallIdRef.current = null; // Clear after use
-        }).catch(updateErr => {
-          console.warn('📱 Failed to update call record (non-critical):', updateErr);
-        });
+        try {
+          console.log('📱 Answering call via Voice API Call Control:', callRecordId);
+          const answerResponse = await API.post(`/api/calls/${callRecordId}/answer`);
+          if (answerResponse.data?.success) {
+            console.log('✅ Call answered via Voice API Call Control');
+            polledCallIdRef.current = null; // Clear after use
+          }
+        } catch (answerErr) {
+          console.error('📱 Failed to answer via Call Control API:', answerErr);
+          // Fallback: Try to update status manually
+          try {
+            await API.patch(`/api/calls/${callRecordId}`, {
+              status: 'answered',
+              callStartedAt: new Date().toISOString()
+            });
+          } catch (updateErr) {
+            console.warn('📱 Failed to update call record:', updateErr);
+          }
+        }
+      }
+      
+      // Try to answer via WebRTC if call object exists (for SIP trunking)
+      if (currentCallRef.current) {
+        try {
+          currentCallRef.current.answer();
+          console.log('📱 Call answered via WebRTC');
+        } catch (e) {
+          console.warn('📱 WebRTC answer failed (may be Voice API call):', e);
+        }
       }
       
       // Set call state and start timer
@@ -1291,10 +1297,11 @@ export const CallProvider = ({ children }) => {
   // Store polled call ID for answering
   const polledCallIdRef = useRef(null);
   
-  // Poll for incoming calls as a fallback (in case WebRTC events don't fire)
+  // Poll for incoming calls (CRITICAL for Voice API - webhooks create call records, frontend polls to detect them)
   useEffect(() => {
     // Use refs to check state without causing re-renders
-    if (!isClientReadyRef.current || callStateRef.current === CALL_STATES.INCOMING || callStateRef.current === CALL_STATES.ACTIVE) {
+    // NOTE: For Voice API, we don't need WebRTC client ready - webhooks create call records, we poll for them
+    if (callStateRef.current === CALL_STATES.INCOMING || callStateRef.current === CALL_STATES.ACTIVE) {
       return; // Don't poll if already handling a call
     }
     
@@ -1302,7 +1309,8 @@ export const CallProvider = ({ children }) => {
     
     const pollForIncomingCalls = async () => {
       // Check refs again inside the polling function
-      if (!isClientReadyRef.current || callStateRef.current === CALL_STATES.INCOMING || callStateRef.current === CALL_STATES.ACTIVE) {
+      // For Voice API, we poll even without WebRTC client ready
+      if (callStateRef.current === CALL_STATES.INCOMING || callStateRef.current === CALL_STATES.ACTIVE) {
         return;
       }
       

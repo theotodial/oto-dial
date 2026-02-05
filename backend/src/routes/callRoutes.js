@@ -199,6 +199,66 @@ router.delete("/", async (req, res) => {
 });
 
 /**
+ * POST /api/calls/:id/answer
+ * Answer an incoming call using Telnyx Call Control API (for Voice API)
+ */
+router.post("/:id/answer", requireActiveSubscription, async (req, res) => {
+  try {
+    const call = await Call.findOne({
+      _id: req.params.id,
+      user: req.userId,
+      direction: "inbound",
+      status: "ringing"
+    });
+
+    if (!call) {
+      return res.status(404).json({
+        success: false,
+        error: "Call not found or not answerable"
+      });
+    }
+
+    if (!call.telnyxCallControlId) {
+      return res.status(400).json({
+        success: false,
+        error: "Call control ID not found"
+      });
+    }
+
+    // Answer the call using Telnyx Call Control API
+    const response = await axios.post(
+      `https://api.telnyx.com/v2/calls/${call.telnyxCallControlId}/actions/answer`,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    // Update call status
+    call.status = "answered";
+    call.callStartedAt = new Date();
+    await call.save();
+
+    console.log(`✅ Answered incoming call ${call._id} via Call Control API`);
+
+    res.json({ 
+      success: true, 
+      call,
+      telnyxResponse: response.data 
+    });
+  } catch (err) {
+    console.error("ANSWER CALL ERROR:", err.response?.data || err.message);
+    res.status(500).json({
+      success: false,
+      error: err.response?.data?.errors?.[0]?.detail || "Failed to answer call"
+    });
+  }
+});
+
+/**
  * DELETE /api/calls/:id
  * Delete a single call record
  */

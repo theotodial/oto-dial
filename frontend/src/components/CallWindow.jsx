@@ -126,21 +126,32 @@ const Dialpad = ({ onDigitPress, onClose }) => {
   );
 };
 
+// Accept call icon
+const AcceptCallIcon = () => (
+  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+    <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56a.977.977 0 00-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/>
+  </svg>
+);
+
+// Reject call icon
+const RejectCallIcon = () => (
+  <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" />
+  </svg>
+);
+
 export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMinimize }) {
   const callContext = useCall();
   
   // Safely destructure with defaults
   const callState = callContext?.callState || CALL_STATES.IDLE;
-  
-  // Don't show call window for incoming calls - that's handled by IncomingCallNotification
-  if (callState === CALL_STATES.INCOMING) {
-    return null;
-  }
   const callDuration = callContext?.callDuration || 0;
   const isMuted = callContext?.isMuted || false;
   const isOnHold = callContext?.isOnHold || false;
   const isSpeaker = callContext?.isSpeaker || false;
   const remoteNumber = callContext?.remoteNumber || '';
+  const answerCall = callContext?.answerCall || (() => {});
+  const rejectCall = callContext?.rejectCall || (() => {});
   const hangUp = callContext?.hangUp || (() => {});
   const toggleMute = callContext?.toggleMute || (() => {});
   const toggleHold = callContext?.toggleHold || (() => {});
@@ -152,6 +163,8 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
     const secs = s % 60;
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   });
+  
+  const isIncoming = callState === CALL_STATES.INCOMING;
 
   const [showDialpad, setShowDialpad] = useState(false);
   const statusText = getStatusText(callState);
@@ -221,8 +234,8 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
               {getInitials(remoteNumber)}
             </div>
           )}
-          {/* Pulsing ring when ringing/connecting */}
-          {(callState === CALL_STATES.RINGING || callState === CALL_STATES.CONNECTING) && (
+          {/* Pulsing ring when ringing/connecting/incoming */}
+          {(callState === CALL_STATES.RINGING || callState === CALL_STATES.CONNECTING || isIncoming) && (
             <div className="absolute inset-0 rounded-full border-4 border-emerald-400 animate-ping opacity-30" />
           )}
         </div>
@@ -234,84 +247,120 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
 
         {/* Duration or Status */}
         <div className="text-emerald-400 text-3xl font-medium tracking-wider">
-          {statusText || formatDuration(callDuration)}
+          {isIncoming ? 'Incoming Call' : (statusText || formatDuration(callDuration))}
         </div>
       </div>
 
-      {/* Control Buttons - 2 rows of 3 */}
-      <div className="px-6 pb-4 relative z-10">
-        <div className="grid grid-cols-3 gap-6 mb-6">
-          {/* Mute */}
-          <button
-            onClick={toggleMute}
-            className={`flex flex-col items-center gap-2 p-3 rounded-2xl transition-all ${
-              isMuted 
-                ? 'bg-red-500/30 text-red-400' 
-                : 'bg-white/10 text-white hover:bg-white/20'
-            }`}
-          >
-            <MuteIcon muted={isMuted} />
-            <span className="text-xs font-medium">{isMuted ? 'Unmute' : 'Mute'}</span>
-          </button>
+      {/* Incoming Call UI - Accept/Reject Buttons */}
+      {isIncoming ? (
+        <div className="px-6 pb-8 relative z-10">
+          <div className="flex justify-center items-center gap-8">
+            {/* Decline Button */}
+            <div className="flex flex-col items-center gap-3">
+              <button
+                onClick={() => {
+                  rejectCall();
+                  if (onCallEnd) onCallEnd();
+                }}
+                className="w-20 h-20 bg-rose-500 hover:bg-rose-600 active:bg-rose-700 rounded-full flex items-center justify-center shadow-lg shadow-rose-500/40 transition-all active:scale-95"
+              >
+                <RejectCallIcon />
+              </button>
+              <span className="text-white text-sm font-medium">Decline</span>
+            </div>
 
-          {/* Hold */}
-          <button
-            onClick={toggleHold}
-            className={`flex flex-col items-center gap-2 p-3 rounded-2xl transition-all ${
-              isOnHold 
-                ? 'bg-amber-500/30 text-amber-400' 
-                : 'bg-white/10 text-white hover:bg-white/20'
-            }`}
-          >
-            <HoldIcon />
-            <span className="text-xs font-medium">{isOnHold ? 'Resume' : 'Hold'}</span>
-          </button>
-
-          {/* Dial Pad */}
-          <button
-            onClick={() => setShowDialpad(!showDialpad)}
-            className={`flex flex-col items-center gap-2 p-3 rounded-2xl transition-all ${
-              showDialpad 
-                ? 'bg-indigo-500/30 text-indigo-400' 
-                : 'bg-white/10 text-white hover:bg-white/20'
-            }`}
-          >
-            <DialpadIcon />
-            <span className="text-xs font-medium">Keypad</span>
-          </button>
+            {/* Accept Button */}
+            <div className="flex flex-col items-center gap-3">
+              <button
+                onClick={() => {
+                  answerCall();
+                }}
+                className="w-20 h-20 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 rounded-full flex items-center justify-center shadow-lg shadow-emerald-500/40 transition-all active:scale-95 animate-pulse"
+              >
+                <AcceptCallIcon />
+              </button>
+              <span className="text-white text-sm font-medium">Accept</span>
+            </div>
+          </div>
         </div>
+      ) : (
+        <>
+          {/* Control Buttons - 2 rows of 3 */}
+          <div className="px-6 pb-4 relative z-10">
+            <div className="grid grid-cols-3 gap-6 mb-6">
+              {/* Mute */}
+              <button
+                onClick={toggleMute}
+                className={`flex flex-col items-center gap-2 p-3 rounded-2xl transition-all ${
+                  isMuted 
+                    ? 'bg-red-500/30 text-red-400' 
+                    : 'bg-white/10 text-white hover:bg-white/20'
+                }`}
+              >
+                <MuteIcon muted={isMuted} />
+                <span className="text-xs font-medium">{isMuted ? 'Unmute' : 'Mute'}</span>
+              </button>
 
-        <div className="grid grid-cols-3 gap-6 mb-8">
-          {/* Speaker */}
-          <button
-            onClick={toggleSpeaker}
-            className={`flex flex-col items-center gap-2 p-3 rounded-2xl transition-all ${
-              isSpeaker 
-                ? 'bg-emerald-500/30 text-emerald-400' 
-                : 'bg-white/10 text-white hover:bg-white/20'
-            }`}
-          >
-            <SpeakerIcon on={isSpeaker} />
-            <span className="text-xs font-medium">Speaker</span>
-          </button>
+              {/* Hold */}
+              <button
+                onClick={toggleHold}
+                className={`flex flex-col items-center gap-2 p-3 rounded-2xl transition-all ${
+                  isOnHold 
+                    ? 'bg-amber-500/30 text-amber-400' 
+                    : 'bg-white/10 text-white hover:bg-white/20'
+                }`}
+              >
+                <HoldIcon />
+                <span className="text-xs font-medium">{isOnHold ? 'Resume' : 'Hold'}</span>
+              </button>
 
-          {/* Empty slot for symmetry */}
-          <div />
+              {/* Dial Pad */}
+              <button
+                onClick={() => setShowDialpad(!showDialpad)}
+                className={`flex flex-col items-center gap-2 p-3 rounded-2xl transition-all ${
+                  showDialpad 
+                    ? 'bg-indigo-500/30 text-indigo-400' 
+                    : 'bg-white/10 text-white hover:bg-white/20'
+                }`}
+              >
+                <DialpadIcon />
+                <span className="text-xs font-medium">Keypad</span>
+              </button>
+            </div>
 
-          {/* Empty slot for symmetry */}
-          <div />
-        </div>
-      </div>
+            <div className="grid grid-cols-3 gap-6 mb-8">
+              {/* Speaker */}
+              <button
+                onClick={toggleSpeaker}
+                className={`flex flex-col items-center gap-2 p-3 rounded-2xl transition-all ${
+                  isSpeaker 
+                    ? 'bg-emerald-500/30 text-emerald-400' 
+                    : 'bg-white/10 text-white hover:bg-white/20'
+                }`}
+              >
+                <SpeakerIcon on={isSpeaker} />
+                <span className="text-xs font-medium">Speaker</span>
+              </button>
 
-      {/* End Call Button */}
-      <div className="flex justify-center pb-8 relative z-10">
-        <button
-          onClick={handleEndCall}
-          className="w-16 h-16 bg-rose-500 hover:bg-rose-600 active:bg-rose-700 rounded-full flex items-center justify-center shadow-lg shadow-rose-500/40 transition-all active:scale-95"
-        >
-          <EndCallIcon />
-        </button>
-      </div>
+              {/* Empty slot for symmetry */}
+              <div />
+
+              {/* Empty slot for symmetry */}
+              <div />
+            </div>
+          </div>
+
+          {/* End Call Button */}
+          <div className="flex justify-center pb-8 relative z-10">
+            <button
+              onClick={handleEndCall}
+              className="w-16 h-16 bg-rose-500 hover:bg-rose-600 active:bg-rose-700 rounded-full flex items-center justify-center shadow-lg shadow-rose-500/40 transition-all active:scale-95"
+            >
+              <EndCallIcon />
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Dialpad Overlay */}
       {showDialpad && (

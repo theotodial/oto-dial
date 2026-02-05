@@ -1361,7 +1361,13 @@ function Recents() {
         <div className="hidden xl:flex w-80 flex-col bg-gray-50 dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 min-h-0 overflow-hidden">
           {/* Show call window for any active call (including incoming) when not minimized */}
           {/* Only show for non-IDLE states to prevent duplicate windows with GlobalCallOverlay */}
-          {isInCall && !isMinimized && callState && callState !== CALL_STATES.IDLE ? (
+          {(() => {
+            const shouldShow = !isMinimized && callState && (callState === CALL_STATES.INCOMING || callState !== CALL_STATES.IDLE);
+            if (callState === CALL_STATES.INCOMING) {
+              console.log('📞 Recents: Incoming call detected, shouldShow:', shouldShow, 'isMinimized:', isMinimized, 'callState:', callState);
+            }
+            return shouldShow;
+          })() ? (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <CallWindow
                 contactName={remoteNumber || 'Unknown'}
