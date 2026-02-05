@@ -14,66 +14,129 @@ function Billing() {
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-
-  const plans = [
-    {
-      id: 'starter',
-      name: "BASIC PLAN",
-      price: "19.99",
-      description: "Perfect for individuals and small teams",
-      features: [
-        "1 Local Phone Number",
-        "2500 Upcoming/Incoming Minutes",
-        "200 SMS Incoming/Outgoing",
-        "Email Support"
-      ],
-      popular: true,
-      available: true
-    },
-    {
-      id: 'professional',
-      name: "Professional",
-      price: "49",
-      description: "For growing businesses",
-      features: [
-        "2 Local Numbers",
-        "10000 Minutes/Month",
-        "Advanced Call Routing",
-        "Priority Support",
-        "Team Collaboration"
-      ],
-      popular: false,
-      available: false,
-      status: "upcoming"
-    },
-    {
-      id: 'enterprise',
-      name: "Enterprise",
-      price: "Custom",
-      description: "For large organizations",
-      features: [
-        "Max 10 Phone Numbers",
-        "Unlimited Minutes",
-        "Dedicated Account Manager",
-        "Custom Integrations",
-        "24/7 Priority Support",
-        "Advanced Security",
-        "SLA Guarantee"
-      ],
-      popular: false
-    }
-  ];
+  const [plans, setPlans] = useState([]);
+  const [addonPlans, setAddonPlans] = useState([]);
+  const [currentSubscription, setCurrentSubscription] = useState(null);
+  const [buyingAddonId, setBuyingAddonId] = useState(null);
 
   const isMountedRef = useRef(true);
 
   useEffect(() => {
     isMountedRef.current = true;
     fetchBalance();
+    fetchPlans();
+    fetchAddonPlans();
+    fetchCurrentSubscription();
     
     return () => {
       isMountedRef.current = false;
     };
   }, []);
+
+  const fetchPlans = async () => {
+    if (!isMountedRef.current) return;
+    
+    try {
+      const response = await API.get('/api/subscription/plans');
+      
+      if (!isMountedRef.current) return;
+      
+      if (response.data?.success && response.data?.plans) {
+        // Transform plans for display
+        const transformedPlans = response.data.plans.map(plan => ({
+          _id: plan._id,
+          name: plan.name,
+          price: plan.price.toFixed(2),
+          description: plan.name === "Basic Plan" 
+            ? "Perfect for individuals and small teams"
+            : "For growing businesses and power users",
+          features: [
+            `${plan.limits.numbersTotal} Local Phone Number${plan.limits.numbersTotal > 1 ? 's' : ''}`,
+            `${plan.limits.minutesTotal.toLocaleString()} Voice Minutes`,
+            `${plan.limits.smsTotal} SMS`,
+            "Email Support"
+          ],
+          popular: plan.name === "Basic Plan",
+          available: true
+        }));
+        
+        setPlans(transformedPlans);
+      }
+    } catch (err) {
+      console.error('Failed to fetch plans:', err);
+      // Fallback to default plans if API fails
+      setPlans([
+        {
+          _id: 'basic',
+          name: "Basic Plan",
+          price: "19.99",
+          description: "Perfect for individuals and small teams",
+          features: [
+            "1 Local Phone Number",
+            "1,500 Voice Minutes",
+            "100 SMS",
+            "Email Support"
+          ],
+          popular: true,
+          available: true
+        },
+        {
+          _id: 'super',
+          name: "Super Plan",
+          price: "29.99",
+          description: "For growing businesses and power users",
+          features: [
+            "1 Local Phone Number",
+            "2,500 Voice Minutes",
+            "200 SMS",
+            "Email Support"
+          ],
+          popular: false,
+          available: true
+        }
+      ]);
+    }
+  };
+
+  const fetchAddonPlans = async () => {
+    if (!isMountedRef.current) return;
+
+    try {
+      const response = await API.get('/api/subscription/addons');
+
+      if (!isMountedRef.current) return;
+
+      if (response.data?.success && response.data?.addons) {
+        const transformed = response.data.addons.map((addon) => ({
+          _id: addon._id,
+          name: addon.name,
+          type: addon.type,
+          price: addon.price.toFixed(2),
+          quantity: addon.quantity,
+        }));
+        setAddonPlans(transformed);
+      }
+    } catch (err) {
+      console.error('Failed to fetch add-ons:', err);
+      // Non-fatal – just hide add-ons section if it fails
+    }
+  };
+
+  const fetchCurrentSubscription = async () => {
+    if (!isMountedRef.current) return;
+    
+    try {
+      const response = await API.get('/api/subscription');
+      
+      if (!isMountedRef.current) return;
+      
+      if (response.data && response.data.planName !== "No Plan") {
+        setCurrentSubscription(response.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch current subscription:', err);
+    }
+  };
 
   const fetchBalance = async () => {
     if (!isMountedRef.current) return;
@@ -100,26 +163,29 @@ function Billing() {
    * UI IS 100% UNTOUCHED
    */
   const handleSelectPlan = async (plan) => {
-    // Skip if plan is not available (upcoming status)
-    if (plan.status === 'upcoming' || plan.available === false) {
-      return;
-    }
-
-    if (plan.price === "Custom") {
-      window.location.href = '/contact';
+    // Skip if plan is not available
+    if (plan.available === false) {
       return;
     }
 
     if (!isMountedRef.current) return;
 
-    setSelectedPlan(plan.id);
+    // Use MongoDB planId (_id) instead of plan.id
+    const planId = plan._id || plan.id;
+    
+    if (!planId) {
+      setError('Invalid plan selected. Please try again.');
+      return;
+    }
+
+    setSelectedPlan(planId);
     setProcessing(true);
     setError('');
     setSuccess('');
 
     try {
       const response = await API.post('/api/stripe/checkout', {
-        planId: plan.id
+        planId: planId // Send MongoDB planId
       });
 
       if (!isMountedRef.current) return;
@@ -137,9 +203,50 @@ function Billing() {
       }
     } catch (err) {
       if (!isMountedRef.current) return;
-      setError('Failed to start checkout. Please try again.');
+      const errorMsg = err?.response?.data?.error || err?.message || 'Failed to start checkout. Please try again.';
+      setError(errorMsg);
       setProcessing(false);
       setSelectedPlan(null);
+    }
+  };
+
+  const handleBuyAddon = async (addon) => {
+    if (!addon || !addon._id) return;
+    if (!currentSubscription) {
+      setError('You need an active subscription before purchasing add-ons.');
+      return;
+    }
+
+    if (!isMountedRef.current) return;
+
+    setBuyingAddonId(addon._id);
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await API.post('/api/stripe/checkout/addon', {
+        addonId: addon._id,
+      });
+
+      if (!isMountedRef.current) return;
+
+      if (response.error) {
+        setError(response.error);
+        setBuyingAddonId(null);
+      } else if (response.data?.url) {
+        window.location.href = response.data.url;
+      } else {
+        setError('Unable to start add-on checkout.');
+        setBuyingAddonId(null);
+      }
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      const errorMsg =
+        err?.response?.data?.error ||
+        err?.message ||
+        'Failed to start add-on checkout. Please try again.';
+      setError(errorMsg);
+      setBuyingAddonId(null);
     }
   };
 
@@ -147,106 +254,265 @@ function Billing() {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-slate-900">
         <div className="text-center">
-          <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-500 dark:text-gray-400">Loading pricing plans...</p>
+          <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-500 dark:text-gray-400">Loading billing...</p>
         </div>
       </div>
     );
   }
 
+  const effectivePlans = plans || [];
+  const defaultSelectedId =
+    selectedPlan ||
+    effectivePlans.find((p) => p.name === "Basic Plan")?._id ||
+    effectivePlans[0]?._id ||
+    null;
+  const activePlan =
+    effectivePlans.find((p) => p._id === defaultSelectedId) || effectivePlans[0] || null;
+
   return (
     <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900">
       <div className="max-w-7xl mx-auto p-6 lg:p-8">
-        {/* Header with Balance */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-            Choose Your Plan
-          </h1>
-          <p className="text-xl text-gray-600 dark:text-gray-400 mb-4">
-            Select the perfect plan for your calling needs
-          </p>
-
-          <div className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full shadow-lg">
-            <span className="text-white font-medium mr-2">Current Balance:</span>
-            <span className="text-2xl font-bold text-white">
-              ${balance !== null ? balance.toFixed(2) : '0.00'}
-            </span>
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white">
+              Select your subscription
+            </h1>
+            <p className="mt-2 text-gray-600 dark:text-gray-400 max-w-xl">
+              Choose the plan that fits your team's calling volume. Your card is charged monthly and
+              managed securely by Stripe.
+            </p>
+          </div>
+          <div className="flex flex-col items-start md:items-end gap-2">
+            <div className="inline-flex items-center px-4 py-2 rounded-full bg-emerald-600 text-white shadow">
+              <span className="text-sm font-medium mr-2">Wallet balance</span>
+              <span className="text-lg font-semibold">
+                ${balance !== null ? balance.toFixed(2) : "0.00"}
+              </span>
+            </div>
+            {currentSubscription && (
+              <div className="text-xs text-gray-600 dark:text-gray-400 text-right">
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                  Current plan: {currentSubscription.planName}
+                </span>
+                <span className="block mt-0.5">
+                  {currentSubscription.minutesRemaining?.toFixed(1) || 0} minutes •{" "}
+                  {currentSubscription.smsRemaining || 0} SMS remaining
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
         {error && (
-          <div className="mb-6 max-w-2xl mx-auto px-4 py-3 bg-red-100 dark:bg-red-500/20 border border-red-300 dark:border-red-500/50 text-red-700 dark:text-red-400 rounded-xl text-sm">
+          <div className="mb-4 max-w-3xl mx-auto px-4 py-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 text-red-700 dark:text-red-300 rounded-xl text-sm">
             {error}
           </div>
         )}
 
         {success && (
-          <div className="mb-6 max-w-2xl mx-auto px-4 py-3 bg-green-100 dark:bg-green-500/20 border border-green-300 dark:border-green-500/50 text-green-700 dark:text-green-400 rounded-xl text-sm flex items-center">
+          <div className="mb-4 max-w-3xl mx-auto px-4 py-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 rounded-xl text-sm flex items-center">
             <CheckIcon />
             <span className="ml-2">{success}</span>
           </div>
         )}
 
-        <div className="grid md:grid-cols-3 gap-8 mb-12">
-          {(plans || []).map((plan) => (
-            <div
-              key={plan.id}
-              className={`relative bg-white dark:bg-slate-800 rounded-2xl ${
-                plan.popular
-                  ? 'border-2 border-indigo-600 shadow-2xl md:scale-105'
-                  : 'border border-gray-200 dark:border-slate-700 shadow-lg'
-              } p-8 hover:shadow-2xl transition-all duration-300`}
-            >
-              {plan.popular && (
-                <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
-                  <span className="bg-indigo-600 text-white px-4 py-1 rounded-full text-sm font-semibold shadow-lg">
-                    Most Popular
+        <div className="grid lg:grid-cols-[minmax(0,2.2fr)_minmax(0,1.3fr)] gap-6 items-start">
+          {/* Main billing card */}
+          <div className="bg-slate-900 text-slate-50 rounded-2xl shadow-xl border border-slate-800 overflow-hidden">
+            <div className="px-6 sm:px-8 py-5 border-b border-slate-800 flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-emerald-500/20 text-emerald-400 text-xs font-bold">
+                    ●
+                  </span>
+                  Select your plan
+                </h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  Two simple plans. No setup fees, no long-term contracts.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-6 sm:px-8 py-6 space-y-6">
+              {/* Plan dropdown */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 tracking-wide mb-2">
+                  PLAN
+                </label>
+                <div className="relative">
+                  <select
+                    className="w-full rounded-xl bg-slate-800 border border-slate-700 text-slate-50 text-sm py-3 pl-3 pr-9 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 appearance-none"
+                    value={defaultSelectedId || ""}
+                    onChange={(e) => setSelectedPlan(e.target.value)}
+                  >
+                    {effectivePlans.map((plan) => (
+                      <option key={plan._id} value={plan._id}>
+                        {plan.name} — ${plan.price}/month
+                      </option>
+                    ))}
+                  </select>
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-400">
+                    ▾
                   </span>
                 </div>
-              )}
-
-              <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{plan.name}</h3>
-              <p className="text-gray-600 dark:text-gray-400 mb-6">{plan.description}</p>
-
-              <div className="mb-8">
-                {plan.price === "Custom" ? (
-                  <div className="text-4xl font-bold text-gray-900 dark:text-white">{plan.price}</div>
-                ) : (
-                  <div className="flex items-baseline">
-                    <span className="text-5xl font-bold text-gray-900 dark:text-white">${plan.price}</span>
-                    <span className="text-gray-600 dark:text-gray-400 ml-2">/month</span>
-                  </div>
-                )}
               </div>
 
-              <ul className="space-y-4 mb-8">
-                {(plan?.features || []).map((feature, idx) => (
-                  <li key={idx} className="flex items-start">
-                    <CheckIcon />
-                    <span className="ml-3 text-gray-700 dark:text-gray-300">{feature}</span>
-                  </li>
-                ))}
-              </ul>
-
-              {plan.status === 'upcoming' || plan.available === false ? (
-                <div className="text-center py-3 px-6 rounded-xl bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-gray-400 font-semibold cursor-not-allowed">
-                  Coming Soon
+              {/* Selected plan summary */}
+              {activePlan && (
+                <div className="rounded-xl border border-slate-700 bg-slate-950/40 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-slate-50">{activePlan.name}</p>
+                      {activePlan.popular && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 uppercase tracking-wide">
+                          Most Popular
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">{activePlan.description}</p>
+                    <ul className="mt-3 space-y-1.5 text-xs text-slate-300">
+                      {(activePlan.features || []).map((feature, idx) => (
+                        <li key={idx} className="flex items-center gap-2">
+                          <span className="inline-flex w-4 h-4 rounded-full bg-emerald-500/10 text-emerald-400 items-center justify-center text-[10px]">
+                            ✓
+                          </span>
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="text-right sm:text-center sm:pr-2">
+                    <div className="text-3xl font-bold text-slate-50">
+                      ${activePlan.price}
+                      <span className="ml-1 text-xs font-normal text-slate-400">/month</span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Billed monthly. Cancel anytime.
+                    </p>
+                  </div>
                 </div>
-              ) : (
-                <button
-                  onClick={() => handleSelectPlan(plan)}
-                  disabled={processing && selectedPlan === plan.id}
-                  className={`block w-full py-3 px-6 rounded-xl font-semibold transition-all duration-200 ${
-                    plan.popular
-                      ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                      : 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-slate-600'
-                  }`}
-                >
-                  {processing && selectedPlan === plan.id ? 'Processing…' : plan.price === 'Custom' ? 'Contact Sales' : 'Get Started'}
-                </button>
+              )}
+
+              {/* Billing preferences */}
+              <div className="space-y-3">
+                <label className="flex items-start gap-3 text-xs text-slate-200">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-800 text-emerald-500 focus:ring-emerald-500"
+                    checked
+                    readOnly
+                  />
+                  <span>
+                    <span className="font-semibold">Save card for automatic renewals</span>
+                    <span className="block text-slate-400 mt-0.5">
+                      Your card details are stored securely by Stripe so your subscription renews
+                      without interruptions.
+                    </span>
+                  </span>
+                </label>
+
+                <p className="text-[11px] text-slate-500">
+                  By continuing, you authorize OTO Dial to charge this card every month until you
+                  cancel. You can cancel anytime from your billing settings.
+                </p>
+              </div>
+
+              {/* Primary action */}
+              <button
+                type="button"
+                onClick={() => activePlan && handleSelectPlan(activePlan)}
+                disabled={!activePlan || processing}
+                className="mt-2 w-full inline-flex justify-center items-center px-4 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed text-slate-950 font-semibold text-sm shadow-lg shadow-emerald-500/30 transition-colors"
+              >
+                {processing ? "Processing…" : "Secure Checkout"}
+              </button>
+
+              <p className="mt-3 text-[11px] text-slate-500 text-center">
+                Payments are processed securely by Stripe. OTO Dial never stores your full card
+                number.
+              </p>
+            </div>
+          </div>
+
+          {/* Right-hand benefits column */}
+          <div className="space-y-4">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                Why teams choose OTO Dial
+              </h3>
+              <ul className="space-y-3 text-sm text-gray-700 dark:text-gray-300">
+                <li className="flex gap-3">
+                  <span className="mt-1 h-5 w-5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-xs font-bold">
+                    ✓
+                  </span>
+                  <span>
+                    <span className="font-medium">Predictable monthly pricing.</span>{" "}
+                    No per-minute surprises—know exactly how many minutes and SMS you get.
+                  </span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="mt-1 h-5 w-5 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 flex items-center justify-center text-xs font-bold">
+                    ✓
+                  </span>
+                  <span>
+                    <span className="font-medium">No lock-in.</span> Cancel anytime; your access
+                    remains active until the end of the billing period.
+                  </span>
+                </li>
+                <li className="flex gap-3">
+                  <span className="mt-1 h-5 w-5 rounded-full bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-300 flex items-center justify-center text-xs font-bold">
+                    ✓
+                  </span>
+                  <span>
+                    <span className="font-medium">Bank‑grade security.</span> Card details are
+                    encrypted and handled by Stripe only.
+                  </span>
+                </li>
+              </ul>
+            </div>
+
+            <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl border border-emerald-100 dark:border-emerald-800 p-5 text-sm text-emerald-900 dark:text-emerald-100">
+              <p className="font-semibold mb-1">Need more minutes or SMS?</p>
+              <p className="text-xs opacity-80 mb-3">
+                When you hit your monthly limits, you can top up with add-ons. Each add-on lasts 30
+                days from purchase and is applied on top of your current subscription.
+              </p>
+
+              {addonPlans.length > 0 && currentSubscription && (
+                <div className="space-y-2">
+                  {addonPlans.map((addon) => (
+                    <button
+                      key={addon._id}
+                      type="button"
+                      onClick={() => handleBuyAddon(addon)}
+                      disabled={buyingAddonId === addon._id}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-900 dark:text-emerald-50 text-xs font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <span>
+                        {addon.type === 'minutes'
+                          ? `${addon.quantity.toLocaleString()} extra minutes`
+                          : `${addon.quantity.toLocaleString()} extra SMS`}
+                        <span className="block text-[10px] text-emerald-800/80 dark:text-emerald-100/80">
+                          Expires 30 days after purchase
+                        </span>
+                      </span>
+                      <span className="ml-3 whitespace-nowrap">
+                        {buyingAddonId === addon._id ? 'Processing…' : `$${addon.price}`}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {!currentSubscription && (
+                <p className="mt-2 text-[11px] opacity-80">
+                  Activate a subscription above to unlock add-ons for extra minutes and SMS.
+                </p>
               )}
             </div>
-          ))}
+          </div>
         </div>
       </div>
     </div>

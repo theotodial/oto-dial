@@ -18,6 +18,17 @@ const planSchema = new mongoose.Schema(
       default: "USD"
     },
 
+    // Stripe integration fields
+    stripeProductId: {
+      type: String,
+      default: null
+    },
+
+    stripePriceId: {
+      type: String,
+      default: null
+    },
+
     limits: {
       minutesTotal: {
         type: Number,
@@ -33,10 +44,10 @@ const planSchema = new mongoose.Schema(
       }
     },
 
-    status: {
-      type: String,
-      enum: ["active", "inactive"],
-      default: "active"
+    // Use active boolean instead of status enum for consistency
+    active: {
+      type: Boolean,
+      default: true
     }
   },
   { timestamps: true }

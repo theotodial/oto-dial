@@ -1,52 +1,71 @@
 import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import API from '../../api';
 
 function NewPricingSection() {
-  const plans = [
+  const [plans, setPlans] = useState([
     {
-      name: "Starter",
+      name: "Basic Plan",
       price: "19.99",
       description: "Perfect for individuals and small teams",
       features: [
         "1 Local Phone Number",
-        "2500 Minutes/Month",
+        "1,500 Voice Minutes",
+        "100 SMS",
+        "Email Support"
+      ],
+      cta: "Get Started Instantly",
+      popular: true,
+      available: true
+    },
+    {
+      name: "Super Plan",
+      price: "29.99",
+      description: "For growing businesses and power users",
+      features: [
+        "1 Local Phone Number",
+        "2,500 Voice Minutes",
         "200 SMS",
         "Email Support"
       ],
       cta: "Get Started Instantly",
-      popular: true
-    },
-    {
-      name: "Professional",
-      price: "49",
-      description: "For growing businesses",
-      features: [
-        "2 Local Numbers",
-        "10000 Minutes/Month",
-        "Advanced Call Routing",
-        "Priority Support",
-        "Team Collaboration"
-      ],
-      cta: "Coming Soon",
       popular: false,
-      comingSoon: true
-    },
-    {
-      name: "Enterprise",
-      price: "Custom",
-      description: "For large organizations",
-      features: [
-        "Max 10 Phone Numbers",
-        "Unlimited Minutes",
-        "Dedicated Account Manager",
-        "Custom Integrations",
-        "24/7 Priority Support",
-        "Advanced Security",
-        "SLA Guarantee"
-      ],
-      cta: "Contact Sales",
-      popular: false
+      available: true
     }
-  ];
+  ]);
+
+  useEffect(() => {
+    // Fetch plans from API
+    const fetchPlans = async () => {
+      try {
+        const response = await API.get('/api/subscription/plans');
+        if (response.data?.success && response.data?.plans) {
+          const transformedPlans = response.data.plans.map(plan => ({
+            name: plan.name,
+            price: plan.price.toFixed(2),
+            description: plan.name === "Basic Plan" 
+              ? "Perfect for individuals and small teams"
+              : "For growing businesses and power users",
+            features: [
+              `${plan.limits.numbersTotal} Local Phone Number${plan.limits.numbersTotal > 1 ? 's' : ''}`,
+              `${plan.limits.minutesTotal.toLocaleString()} Voice Minutes`,
+              `${plan.limits.smsTotal} SMS`,
+              "Email Support"
+            ],
+            cta: "Get Started Instantly",
+            popular: plan.name === "Basic Plan",
+            available: true
+          }));
+          setPlans(transformedPlans);
+        }
+      } catch (err) {
+        console.error('Failed to fetch plans:', err);
+        // Keep default plans if API fails
+      }
+    };
+
+    fetchPlans();
+  }, []);
 
   return (
     <section id="pricing" className="py-24 px-4 bg-white dark:bg-slate-900">
@@ -62,15 +81,13 @@ function NewPricingSection() {
         </div>
 
         {/* Pricing Cards */}
-        <div className="grid md:grid-cols-3 gap-8">
+        <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
           {plans.map((plan, index) => (
             <div
               key={index}
               className={`relative bg-white dark:bg-slate-800 rounded-2xl ${
                 plan.popular
                   ? 'border-2 border-indigo-600 shadow-2xl md:scale-105'
-                  : plan.comingSoon
-                  ? 'border border-gray-300 dark:border-slate-600 shadow-lg opacity-75'
                   : 'border border-gray-200 dark:border-slate-700 shadow-lg'
               } p-8 hover:shadow-2xl transition-all duration-300`}
             >
@@ -89,14 +106,10 @@ function NewPricingSection() {
 
               {/* Price */}
               <div className="mb-8">
-                {plan.price === "Custom" ? (
-                  <div className="text-4xl font-bold text-gray-900 dark:text-white">{plan.price}</div>
-                ) : (
-                  <div className="flex items-baseline">
-                    <span className="text-5xl font-bold text-gray-900 dark:text-white">${plan.price}</span>
-                    <span className="text-gray-600 dark:text-gray-400 ml-2">/month</span>
-                  </div>
-                )}
+                <div className="flex items-baseline">
+                  <span className="text-5xl font-bold text-gray-900 dark:text-white">${plan.price}</span>
+                  <span className="text-gray-600 dark:text-gray-400 ml-2">/month</span>
+                </div>
               </div>
 
               {/* Features */}
@@ -122,22 +135,16 @@ function NewPricingSection() {
               </ul>
 
               {/* CTA Button */}
-              {plan.comingSoon ? (
-                <div className="block w-full text-center py-3 px-6 rounded-xl font-semibold bg-gray-200 dark:bg-slate-600 text-gray-500 dark:text-gray-400 cursor-not-allowed">
-                  {plan.cta}
-                </div>
-              ) : (
-                <Link
-                  to={plan.price === "Custom" ? "/contact" : "/billing"}
-                  className={`block w-full text-center py-3 px-6 rounded-xl font-semibold transition-all duration-200 ${
-                    plan.popular
-                      ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg hover:shadow-xl'
-                      : 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-slate-600'
-                  }`}
-                >
-                  {plan.cta}
-                </Link>
-              )}
+              <Link
+                to="/billing"
+                className={`block w-full text-center py-3 px-6 rounded-xl font-semibold transition-all duration-200 ${
+                  plan.popular
+                    ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg hover:shadow-xl'
+                    : 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-slate-600'
+                }`}
+              >
+                {plan.cta}
+              </Link>
             </div>
           ))}
         </div>

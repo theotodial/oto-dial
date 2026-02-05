@@ -232,6 +232,24 @@ function SubscriptionDetails() {
             </div>
           </div>
 
+          {/* Add-on showcase */}
+          <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl shadow-lg border border-emerald-100 dark:border-emerald-800 p-6">
+            <h2 className="text-xl font-semibold text-emerald-900 dark:text-emerald-100 mb-2">
+              Need more minutes or SMS?
+            </h2>
+            <p className="text-sm text-emerald-800/90 dark:text-emerald-100/80 mb-3">
+              If you’re running close to your plan limits, you can purchase add-ons for extra minutes and
+              SMS. Add-ons are applied on top of your current subscription and last for 30 days from
+              purchase.
+            </p>
+            <button
+              onClick={() => navigate('/billing')}
+              className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium shadow-sm"
+            >
+              Open Billing to buy add-ons
+            </button>
+          </div>
+
           {/* Call Statistics Card */}
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-gray-200 dark:border-slate-700 p-6">
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Call Statistics</h2>

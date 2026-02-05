@@ -22,13 +22,94 @@ export async function processCheckoutCompleted(event, stripe) {
     return { success: false, error: "Payment not completed" };
   }
 
+  // Detect if this is an add-on purchase
+  const isAddon = !!session.metadata?.addonId;
+
   // Extract metadata
   const userId = session.metadata?.userId;
-  const planKey = session.metadata?.planKey || "basic";
+  const planId = session.metadata?.planId; // MongoDB plan ID for subscription purchases
+  const planName = session.metadata?.planName;
 
   if (!userId) {
     console.error(`❌ Checkout session ${session.id} missing userId in metadata`);
     return { success: false, error: "Missing userId in metadata" };
+  }
+
+  // Handle add-on purchases separately
+  if (isAddon) {
+    const addonId = session.metadata.addonId;
+    const addonType = session.metadata.addonType; // "minutes" or "sms"
+    const addonQuantityRaw = session.metadata.addonQuantity;
+    const addonQuantity = addonQuantityRaw ? parseInt(addonQuantityRaw, 10) : NaN;
+
+    if (!addonId || !addonType || Number.isNaN(addonQuantity)) {
+      console.error(`❌ Add-on checkout ${session.id} missing addon metadata`);
+      return { success: false, error: "Missing addon metadata" };
+    }
+
+    // Find user
+    const user = await User.findById(userId);
+    if (!user) {
+      console.error(`❌ User ${userId} not found for add-on checkout ${session.id}`);
+      return { success: false, error: "User not found" };
+    }
+
+    // Find active subscription
+    const subscription = await Subscription.findOne({
+      userId: user._id,
+      status: "active"
+    });
+
+    if (!subscription) {
+      console.error(`❌ No active subscription for user ${user._id} when processing add-on ${addonId}`);
+      return { success: false, error: "No active subscription for add-on" };
+    }
+
+    const now = new Date();
+
+    // Apply 30-day expiry logic per add-on type
+    if (addonType === "minutes") {
+      const baseDate =
+        subscription.addonsMinutesExpiry && subscription.addonsMinutesExpiry > now
+          ? subscription.addonsMinutesExpiry
+          : now;
+      const newExpiry = new Date(baseDate);
+      newExpiry.setDate(newExpiry.getDate() + 30);
+
+      subscription.addons.minutes = (subscription.addons?.minutes || 0) + addonQuantity;
+      subscription.addonsMinutesExpiry = newExpiry;
+    } else if (addonType === "sms") {
+      const baseDate =
+        subscription.addonsSmsExpiry && subscription.addonsSmsExpiry > now
+          ? subscription.addonsSmsExpiry
+          : now;
+      const newExpiry = new Date(baseDate);
+      newExpiry.setDate(newExpiry.getDate() + 30);
+
+      subscription.addons.sms = (subscription.addons?.sms || 0) + addonQuantity;
+      subscription.addonsSmsExpiry = newExpiry;
+    } else {
+      console.error(`❌ Unknown addonType "${addonType}" on checkout ${session.id}`);
+      return { success: false, error: "Unknown addon type" };
+    }
+
+    await subscription.save();
+
+    console.log(
+      `✅ Applied add-on ${addonType} (+${addonQuantity}) for user ${user.email} on subscription ${subscription._id}`
+    );
+
+    return {
+      success: true,
+      userId: user._id,
+      subscriptionId: subscription._id
+    };
+  }
+
+  // Subscription purchases must include planId
+  if (!planId) {
+    console.error(`❌ Checkout session ${session.id} missing planId in metadata`);
+    return { success: false, error: "Missing planId in metadata" };
   }
 
   // Find user
@@ -44,21 +125,11 @@ export async function processCheckoutCompleted(event, stripe) {
     await user.save();
   }
 
-  // Find or create plan
-  let plan = await Plan.findOne({ name: planKey, active: true });
-  if (!plan) {
-    // Create default plan
-    plan = await Plan.create({
-      name: planKey,
-      price: 19.99,
-      currency: "USD",
-      limits: {
-        minutesTotal: 2500,
-        smsTotal: 200,
-        numbersTotal: 1
-      },
-      active: true
-    });
+  // Fetch plan from MongoDB using planId - SINGLE SOURCE OF TRUTH
+  const plan = await Plan.findById(planId);
+  if (!plan || !plan.active) {
+    console.error(`❌ Plan ${planId} not found or inactive for checkout ${session.id}`);
+    return { success: false, error: `Plan not found or inactive` };
   }
 
   // Create subscription in pending_activation state
@@ -74,13 +145,14 @@ export async function processCheckoutCompleted(event, stripe) {
     },
     {
       userId: user._id,
-      planId: plan._id,
+      planId: plan._id, // MongoDB plan ID
       stripeSubscriptionId: session.subscription || null,
-      stripePriceId: session.line_items?.data?.[0]?.price?.id || null,
-      planKey: planKey,
+      stripePriceId: plan.stripePriceId, // From MongoDB plan
+      planKey: plan.name, // Keep for backward compatibility
       status: "pending_activation",
       periodStart: now,
       periodEnd: periodEnd,
+      // Limits from MongoDB plan - SINGLE SOURCE OF TRUTH
       limits: {
         minutesTotal: plan.limits.minutesTotal,
         smsTotal: plan.limits.smsTotal,
@@ -98,7 +170,7 @@ export async function processCheckoutCompleted(event, stripe) {
     { upsert: true, new: true }
   );
 
-  console.log(`✅ Subscription ${subscription._id} created (pending_activation) for user ${user.email}`);
+  console.log(`✅ Subscription ${subscription._id} created (pending_activation) for user ${user.email} with plan ${plan.name} (${planId})`);
 
   return {
     success: true,
@@ -194,6 +266,12 @@ export async function processSubscriptionUpdated(event, stripe) {
   const customerId = stripeSubscription.customer;
   const subscriptionId = stripeSubscription.id;
 
+  // Ignore pure add-on Stripe subscriptions (these are handled via checkout.session.completed)
+  if (stripeSubscription.metadata?.isAddon === "true" || stripeSubscription.metadata?.addonId) {
+    console.log(`ℹ️ Skipping add-on Stripe subscription update ${subscriptionId}`);
+    return { success: true };
+  }
+
   const user = await User.findOne({ stripeCustomerId: customerId });
   if (!user) {
     console.error(`❌ User not found for Stripe customer ${customerId}`);
@@ -208,21 +286,30 @@ export async function processSubscriptionUpdated(event, stripe) {
   });
 
   // If subscription doesn't exist, create it (for customer.subscription.created events)
+  // Try to find plan from customer metadata first
   if (!subscription) {
-    // Find or create plan
-    let plan = await Plan.findOne({ name: "basic", active: true });
+    let plan = null;
+    
+    // Try to get planId from customer metadata
+    if (customerId) {
+      try {
+        const customer = await stripe.customers.retrieve(customerId);
+        const planIdFromMetadata = customer.metadata?.planId;
+        if (planIdFromMetadata) {
+          plan = await Plan.findById(planIdFromMetadata);
+        }
+      } catch (err) {
+        console.warn(`Could not fetch customer ${customerId} metadata:`, err.message);
+      }
+    }
+    
+    // Fallback to Basic Plan if no plan found in metadata
     if (!plan) {
-      plan = await Plan.create({
-        name: "basic",
-        price: 19.99,
-        currency: "USD",
-        limits: {
-          minutesTotal: 2500,
-          smsTotal: 200,
-          numbersTotal: 1
-        },
-        active: true
-      });
+      plan = await Plan.findOne({ name: "Basic Plan", active: true });
+      if (!plan) {
+        console.error(`❌ Basic Plan not found - cannot create subscription`);
+        return { success: false, error: "Default plan not found" };
+      }
     }
 
     const now = new Date();
@@ -237,7 +324,7 @@ export async function processSubscriptionUpdated(event, stripe) {
       userId: user._id,
       planId: plan._id,
       stripeSubscriptionId: subscriptionId,
-      planKey: "basic",
+      planKey: plan.name, // Use plan name instead of hardcoded "basic"
       status: stripeSubscription.status === "active" ? "active" : "pending_activation",
       periodStart: stripeSubscription.current_period_start 
         ? new Date(stripeSubscription.current_period_start * 1000)
@@ -310,6 +397,12 @@ export async function processSubscriptionDeleted(event, stripe) {
   const stripeSubscription = event.data.object;
   const customerId = stripeSubscription.customer;
   const subscriptionId = stripeSubscription.id;
+
+  // Ignore pure add-on Stripe subscriptions
+  if (stripeSubscription.metadata?.isAddon === "true" || stripeSubscription.metadata?.addonId) {
+    console.log(`ℹ️ Skipping add-on Stripe subscription deletion ${subscriptionId}`);
+    return { success: true };
+  }
 
   const user = await User.findOne({ stripeCustomerId: customerId });
   if (!user) {

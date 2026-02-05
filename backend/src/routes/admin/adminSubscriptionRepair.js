@@ -53,10 +53,21 @@ router.post("/resync/:userId", async (req, res) => {
       });
 
       if (!subscription) {
-        // Create new subscription
-        const plan = await Plan.findOne({ name: "basic", active: true });
+        // Try to get planId from Stripe subscription metadata
+        let plan = null;
+        const planIdFromMetadata = stripeSub.metadata?.planId;
+        
+        if (planIdFromMetadata) {
+          plan = await Plan.findById(planIdFromMetadata);
+        }
+        
+        // Fallback to Basic Plan if no planId in metadata
         if (!plan) {
-          results.push({ error: "Default plan not found" });
+          plan = await Plan.findOne({ name: "Basic Plan", active: true });
+        }
+        
+        if (!plan) {
+          results.push({ error: "Plan not found - cannot create subscription" });
           continue;
         }
 
@@ -64,7 +75,7 @@ router.post("/resync/:userId", async (req, res) => {
           userId: user._id,
           planId: plan._id,
           stripeSubscriptionId: stripeSub.id,
-          planKey: "basic",
+          planKey: plan.name, // Use plan name instead of hardcoded "basic"
           status: stripeSub.status === "active" ? "active" : "pending_activation",
           periodStart: new Date(stripeSub.current_period_start * 1000),
           periodEnd: new Date(stripeSub.current_period_end * 1000),

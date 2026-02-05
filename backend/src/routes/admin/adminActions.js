@@ -19,6 +19,7 @@ const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SEC
 /**
  * POST /api/admin/actions/subscription/assign
  * Assign subscription to user
+ * Creates Stripe subscription if Stripe is configured
  */
 router.post("/subscription/assign", requireAdmin, async (req, res) => {
   try {
@@ -40,20 +41,90 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
     }
 
     const plan = await Plan.findById(planId);
-    if (!plan) {
+    if (!plan || !plan.active) {
       return res.status(404).json({
         success: false,
-        error: "Plan not found"
+        error: "Plan not found or inactive"
       });
     }
 
-    // Cancel existing subscription
+    // Verify plan has Stripe configuration
+    if (!plan.stripeProductId || !plan.stripePriceId) {
+      return res.status(400).json({
+        success: false,
+        error: "Plan is missing Stripe configuration"
+      });
+    }
+
+    // Cancel existing subscriptions
     await Subscription.updateMany(
       { userId },
       { status: "cancelled" }
     );
 
-    // Create new subscription
+    // Cancel existing Stripe subscriptions if user has Stripe customer ID
+    let stripeSubscriptionId = null;
+    if (stripe && user.stripeCustomerId) {
+      try {
+        // Cancel existing active Stripe subscriptions
+        const existingSubscriptions = await stripe.subscriptions.list({
+          customer: user.stripeCustomerId,
+          status: "active"
+        });
+
+        for (const sub of existingSubscriptions.data) {
+          await stripe.subscriptions.cancel(sub.id);
+        }
+
+        // Create new Stripe subscription
+        const stripeSubscription = await stripe.subscriptions.create({
+          customer: user.stripeCustomerId,
+          items: [{ price: plan.stripePriceId }],
+          metadata: {
+            userId: userId.toString(),
+            planId: planId.toString(),
+            planName: plan.name
+          }
+        });
+
+        stripeSubscriptionId = stripeSubscription.id;
+        console.log(`✅ Created Stripe subscription ${stripeSubscriptionId} for user ${userId}`);
+      } catch (stripeErr) {
+        console.error("Stripe subscription creation error:", stripeErr);
+        // Continue with MongoDB-only subscription if Stripe fails
+      }
+    } else if (!user.stripeCustomerId && stripe) {
+      // Create Stripe customer if doesn't exist
+      try {
+        const customer = await stripe.customers.create({
+          email: user.email,
+          metadata: {
+            userId: userId.toString(),
+            planId: planId.toString()
+          }
+        });
+        user.stripeCustomerId = customer.id;
+        await user.save();
+
+        // Create Stripe subscription
+        const stripeSubscription = await stripe.subscriptions.create({
+          customer: customer.id,
+          items: [{ price: plan.stripePriceId }],
+          metadata: {
+            userId: userId.toString(),
+            planId: planId.toString(),
+            planName: plan.name
+          }
+        });
+
+        stripeSubscriptionId = stripeSubscription.id;
+        console.log(`✅ Created Stripe customer and subscription for user ${userId}`);
+      } catch (stripeErr) {
+        console.error("Stripe customer/subscription creation error:", stripeErr);
+      }
+    }
+
+    // Create new subscription in MongoDB
     const now = new Date();
     const periodEnd = new Date(now);
     periodEnd.setMonth(periodEnd.getMonth() + 1);
@@ -61,12 +132,27 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
     const subscription = await Subscription.create({
       userId,
       planId,
+      stripeSubscriptionId: stripeSubscriptionId,
+      stripePriceId: plan.stripePriceId,
       status: "active",
       periodStart: now,
       periodEnd,
-      limits: plan.limits,
-      ratePerMinute: 0.0065 // Default rate, can be customized per plan if needed
+      limits: plan.limits, // From MongoDB plan - SINGLE SOURCE OF TRUTH
+      usage: {
+        minutesUsed: 0,
+        smsUsed: 0
+      },
+      addons: {
+        minutes: 0,
+        sms: 0
+      },
+      ratePerMinute: 0.0065 // Default rate
     });
+
+    // Update user's active subscription
+    user.activeSubscriptionId = subscription._id;
+    user.subscriptionActive = true;
+    await user.save();
 
     res.json({
       success: true,
@@ -77,7 +163,8 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
     console.error("Assign subscription error:", err);
     res.status(500).json({
       success: false,
-      error: "Failed to assign subscription"
+      error: "Failed to assign subscription",
+      details: err.message
     });
   }
 });
@@ -163,6 +250,7 @@ router.post("/subscription/resume", requireAdmin, async (req, res) => {
 /**
  * POST /api/admin/actions/subscription/change-plan
  * Change user's subscription plan
+ * Updates Stripe subscription if exists
  */
 router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
   try {
@@ -184,10 +272,18 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
     }
 
     const plan = await Plan.findById(planId);
-    if (!plan) {
+    if (!plan || !plan.active) {
       return res.status(404).json({
         success: false,
-        error: "Plan not found"
+        error: "Plan not found or inactive"
+      });
+    }
+
+    // Verify plan has Stripe configuration
+    if (!plan.stripeProductId || !plan.stripePriceId) {
+      return res.status(400).json({
+        success: false,
+        error: "Plan is missing Stripe configuration"
       });
     }
 
@@ -204,9 +300,36 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
       });
     }
 
-    // Update subscription plan
+    // Update Stripe subscription if exists
+    if (stripe && subscription.stripeSubscriptionId) {
+      try {
+        // Update Stripe subscription to use new price
+        const stripeSub = await stripe.subscriptions.retrieve(subscription.stripeSubscriptionId);
+        
+        // Update subscription items
+        await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
+          items: [{
+            id: stripeSub.items.data[0].id,
+            price: plan.stripePriceId
+          }],
+          metadata: {
+            userId: userId.toString(),
+            planId: planId.toString(),
+            planName: plan.name
+          }
+        });
+
+        console.log(`✅ Updated Stripe subscription ${subscription.stripeSubscriptionId} to plan ${plan.name}`);
+      } catch (stripeErr) {
+        console.error("Stripe subscription update error:", stripeErr);
+        // Continue with MongoDB update even if Stripe fails
+      }
+    }
+
+    // Update subscription plan in MongoDB - SINGLE SOURCE OF TRUTH
     subscription.planId = planId;
-    subscription.limits = plan.limits;
+    subscription.limits = plan.limits; // Update limits from MongoDB plan
+    subscription.stripePriceId = plan.stripePriceId;
     await subscription.save();
 
     res.json({

@@ -67,6 +67,16 @@ const subscriptionSchema = new mongoose.Schema(
       sms: { type: Number, default: 0 }
     },
 
+    // Optional expiry dates for add-ons (e.g. 30 days after purchase)
+    addonsMinutesExpiry: {
+      type: Date,
+      default: null
+    },
+    addonsSmsExpiry: {
+      type: Date,
+      default: null
+    },
+
     hardStop: {
       type: Boolean,
       default: true

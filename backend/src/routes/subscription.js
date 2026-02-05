@@ -1,9 +1,38 @@
 import express from "express";
 import Subscription from "../models/Subscription.js";
 import Plan from "../models/Plan.js";
+import AddonPlan from "../models/AddonPlan.js";
 import authMiddleware from "../middleware/authenticateUser.js";
 
 const router = express.Router();
+
+/**
+ * GET /api/subscription/plans
+ * Get all available subscription plans (public endpoint)
+ */
+router.get("/plans", async (req, res) => {
+  try {
+    const plans = await Plan.find({ active: true }).sort({ price: 1 }).select('-__v');
+    res.json({
+      success: true,
+      plans: plans.map(plan => ({
+        _id: plan._id,
+        name: plan.name,
+        price: plan.price,
+        currency: plan.currency,
+        limits: plan.limits,
+        stripeProductId: plan.stripeProductId,
+        stripePriceId: plan.stripePriceId
+      }))
+    });
+  } catch (err) {
+    console.error("Fetch plans error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch plans"
+    });
+  }
+});
 
 // Default limits for subscription
 const DEFAULT_LIMITS = {
@@ -39,17 +68,33 @@ router.get("/", authMiddleware, async (req, res) => {
 
     // minutesUsed field stores SECONDS internally
     const secondsUsed = subscription.usage?.minutesUsed || 0;
-    const minutesTotal = (subscription.limits?.minutesTotal || 0) + (subscription.addons?.minutes || 0);
+
+    // Apply add-ons only if not expired
+    const now = new Date();
+    const addonMinutesActive =
+      subscription.addonsMinutesExpiry &&
+      subscription.addonsMinutesExpiry > now
+        ? subscription.addons?.minutes || 0
+        : 0;
+
+    const minutesTotal =
+      (subscription.limits?.minutesTotal || 0) + addonMinutesActive;
     const secondsTotal = minutesTotal * 60;
     const secondsRemaining = Math.max(0, secondsTotal - secondsUsed);
     
     // Convert remaining seconds to minutes for display (with decimals)
     const minutesRemaining = secondsRemaining / 60;
 
+    const addonSmsActive =
+      subscription.addonsSmsExpiry &&
+      subscription.addonsSmsExpiry > now
+        ? subscription.addons?.sms || 0
+        : 0;
+
     const smsRemaining = Math.max(
       0,
       (subscription.limits?.smsTotal || 0) +
-        (subscription.addons?.sms || 0) -
+        addonSmsActive -
         (subscription.usage?.smsUsed || 0)
     );
 
@@ -273,5 +318,33 @@ router.post("/reset-usage", authMiddleware, async (req, res) => {
     res.status(500).json({ error: "Failed to reset usage" });
   }
 });
+
+/**
+ * GET /api/subscription/addons
+ * Public endpoint listing available add-on plans
+ */
+router.get("/addons", async (req, res) => {
+  try {
+    const addons = await AddonPlan.find({ active: true }).sort({ price: 1 }).select("-__v");
+    res.json({
+      success: true,
+      addons: addons.map((addon) => ({
+        _id: addon._id,
+        name: addon.name,
+        type: addon.type,
+        price: addon.price,
+        currency: addon.currency,
+        quantity: addon.quantity
+      }))
+    });
+  } catch (err) {
+    console.error("Fetch addons error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch add-ons"
+    });
+  }
+});
+
 
 export default router;

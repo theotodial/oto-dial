@@ -63,6 +63,8 @@ function Dashboard() {
   const [success, setSuccess] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [copyNotification, setCopyNotification] = useState(false);
+  const [addonPlans, setAddonPlans] = useState([]);
+  const [buyingAddonId, setBuyingAddonId] = useState(null);
   const isMountedRef = useRef(true);
 
   /* ================= FETCH DASHBOARD ================= */
@@ -72,10 +74,11 @@ function Dashboard() {
     setError('');
     setSuccess('');
 
-    const [walletRes, numbersRes, subscriptionRes] = await Promise.all([
+    const [walletRes, numbersRes, subscriptionRes, addonsRes] = await Promise.all([
       API.get('/api/wallet'),
       API.get('/api/numbers'),
-      API.get('/api/subscription').catch(() => ({ error: true }))
+      API.get('/api/subscription').catch(() => ({ error: true })),
+      API.get('/api/subscription/addons').catch(() => ({ error: true }))
     ]);
 
     // Wallet - handle gracefully, don't block render
@@ -110,6 +113,19 @@ function Dashboard() {
       setNumbers(numbersRes.data?.numbers || numbersRes.data || []);
     }
 
+    // Add-ons - handle gracefully
+    if (!addonsRes.error && addonsRes.data?.success && addonsRes.data?.addons) {
+      setAddonPlans(addonsRes.data.addons.map(addon => ({
+        _id: addon._id,
+        name: addon.name,
+        type: addon.type,
+        price: addon.price.toFixed(2),
+        quantity: addon.quantity
+      })));
+    } else {
+      setAddonPlans([]);
+    }
+
     if (isMountedRef.current) {
       setLoading(false);
     }
@@ -132,6 +148,47 @@ function Dashboard() {
 
   const handleBuyNumber = () => {
     navigate('/buy-number');
+  };
+
+  const handleBuyAddon = async (addon) => {
+    if (!addon || !addon._id) return;
+    
+    if (packageDetails.planName === 'No Plan') {
+      setError('You need an active subscription before purchasing add-ons.');
+      return;
+    }
+
+    if (!isMountedRef.current) return;
+
+    setBuyingAddonId(addon._id);
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await API.post('/api/stripe/checkout/addon', {
+        addonId: addon._id,
+      });
+
+      if (!isMountedRef.current) return;
+
+      if (response.error) {
+        setError(response.error);
+        setBuyingAddonId(null);
+      } else if (response.data?.url) {
+        window.location.href = response.data.url;
+      } else {
+        setError('Unable to start add-on checkout.');
+        setBuyingAddonId(null);
+      }
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      const errorMsg =
+        err?.response?.data?.error ||
+        err?.message ||
+        'Failed to start add-on checkout. Please try again.';
+      setError(errorMsg);
+      setBuyingAddonId(null);
+    }
   };
 
   /* ================= LOADING ================= */
@@ -256,6 +313,51 @@ function Dashboard() {
         </div>
         )}
       </div>
+
+      {/* Add-on showcase - Only show if user has active subscription */}
+      {packageDetails.planName !== 'No Plan' && addonPlans.length > 0 && (
+        <div className="mb-8">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-6">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+              Need more minutes or SMS?
+            </h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Top up your subscription with extra minutes or SMS. Each add-on lasts 30 days from purchase.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {addonPlans.map((addon) => (
+                <button
+                  key={addon._id}
+                  type="button"
+                  onClick={() => handleBuyAddon(addon)}
+                  disabled={buyingAddonId === addon._id}
+                  className="flex items-center justify-between px-4 py-3 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                >
+                  <span>
+                    <span className="font-semibold block">
+                      {addon.type === 'minutes'
+                        ? `${addon.quantity.toLocaleString()} extra minutes`
+                        : `${addon.quantity.toLocaleString()} extra SMS`}
+                    </span>
+                    <span className="text-xs opacity-80">
+                      Expires 30 days after purchase
+                    </span>
+                  </span>
+                  <span className="ml-3 whitespace-nowrap font-bold">
+                    {buyingAddonId === addon._id ? 'Processing…' : `$${addon.price}`}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => navigate('/billing')}
+              className="mt-4 w-full text-center px-4 py-2 rounded-xl bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-300 text-sm font-medium transition-colors"
+            >
+              View all plans in Billing →
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* NUMBERS LIST */}
       <div className="bg-white dark:bg-slate-700 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-600">
