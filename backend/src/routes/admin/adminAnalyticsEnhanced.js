@@ -18,7 +18,45 @@ function getDateRange(filter) {
   const now = new Date();
   let startDate = null;
 
+  // Handle custom date ranges
+  if (filter.startsWith('range:')) {
+    const parts = filter.split(':');
+    if (parts.length === 3) {
+      startDate = new Date(parts[1]);
+      const endDate = new Date(parts[2]);
+      return { startDate, endDate };
+    }
+  }
+
+  // Handle custom hours/days (e.g., "5h", "10d")
+  if (filter.endsWith('h')) {
+    const hours = parseInt(filter.replace('h', ''));
+    if (!isNaN(hours)) {
+      startDate = new Date(now.getTime() - hours * 60 * 60 * 1000);
+      return { startDate, endDate: now };
+    }
+  }
+  if (filter.endsWith('d')) {
+    const days = parseInt(filter.replace('d', ''));
+    if (!isNaN(days)) {
+      startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+      return { startDate, endDate: now };
+    }
+  }
+
   switch (filter) {
+    case "1h":
+      startDate = new Date(now.getTime() - 1 * 60 * 60 * 1000);
+      break;
+    case "4h":
+      startDate = new Date(now.getTime() - 4 * 60 * 60 * 1000);
+      break;
+    case "24h":
+      startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      break;
+    case "3d":
+      startDate = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+      break;
     case "7d":
       startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       break;
@@ -125,6 +163,42 @@ router.get("/", requireAdmin, async (req, res) => {
       sum + (c.totalAnsweredSeconds * (c.totalCost / (c.totalSeconds || 1))), 0
     );
 
+    // FALLBACK: If TelnyxCost is empty, calculate from Call records directly
+    if (telnyxCallCost === 0 && allCalls.length > 0) {
+      const callCostsFromRecords = allCalls.reduce((acc, call) => {
+        const callCost = call.cost || 0;
+        const billedSecs = call.billedSeconds || call.duration || 0;
+        const ringingSecs = call.ringingDuration || 0;
+        const answeredSecs = call.answeredDuration || (billedSecs - ringingSecs);
+        
+        acc.totalCost += callCost;
+        acc.totalBilledSeconds += billedSecs;
+        acc.totalRingingSeconds += ringingSecs;
+        acc.totalAnsweredSeconds += answeredSecs;
+        
+        if (call.direction === "inbound") {
+          acc.inboundCost += callCost;
+        } else if (call.direction === "outbound") {
+          acc.outboundCost += callCost;
+        }
+        
+        return acc;
+      }, { totalCost: 0, inboundCost: 0, outboundCost: 0, totalBilledSeconds: 0, totalRingingSeconds: 0, totalAnsweredSeconds: 0 });
+      
+      telnyxCallCost = callCostsFromRecords.totalCost;
+      telnyxCallCostInbound = callCostsFromRecords.inboundCost;
+      telnyxCallCostOutbound = callCostsFromRecords.outboundCost;
+      totalBilledSeconds = callCostsFromRecords.totalBilledSeconds;
+      totalRingingSeconds = callCostsFromRecords.totalRingingSeconds;
+      totalAnsweredSeconds = callCostsFromRecords.totalAnsweredSeconds;
+      
+      totalCallMinutes = totalBilledSeconds / 60;
+      if (totalBilledSeconds > 0) {
+        avgCostPerSecond = telnyxCallCost / totalBilledSeconds;
+        avgCostPerMinute = avgCostPerSecond * 60;
+      }
+    }
+
     // SMS COSTS - Aggregate from TelnyxCost ledger
     const smsCosts = await TelnyxCost.aggregate([
       {
@@ -171,6 +245,36 @@ router.get("/", requireAdmin, async (req, res) => {
       avgCostPerSms = telnyxSmsCost / totalSmsCount;
     }
 
+    // FALLBACK: If TelnyxCost is empty, calculate from SMS records directly
+    if (telnyxSmsCost === 0 && allSms.length > 0) {
+      const smsCostsFromRecords = allSms.reduce((acc, sms) => {
+        const smsCost = sms.cost || 0;
+        const carrierFee = sms.carrierFees || 0;
+        const totalSmsCost = smsCost + carrierFee;
+        
+        acc.totalCost += totalSmsCost;
+        acc.totalCarrierFees += carrierFee;
+        acc.count += 1;
+        
+        if (sms.direction === "inbound") {
+          acc.inboundCost += totalSmsCost;
+        } else if (sms.direction === "outbound") {
+          acc.outboundCost += totalSmsCost;
+        }
+        
+        return acc;
+      }, { totalCost: 0, inboundCost: 0, outboundCost: 0, totalCarrierFees: 0, count: 0 });
+      
+      telnyxSmsCost = smsCostsFromRecords.totalCost;
+      telnyxSmsCostInbound = smsCostsFromRecords.inboundCost;
+      telnyxSmsCostOutbound = smsCostsFromRecords.outboundCost;
+      totalSmsCarrierFees = smsCostsFromRecords.totalCarrierFees;
+      
+      if (smsCostsFromRecords.count > 0) {
+        avgCostPerSms = telnyxSmsCost / smsCostsFromRecords.count;
+      }
+    }
+
     // PHONE NUMBER COSTS - Aggregate from TelnyxCost ledger
     const numberCosts = await TelnyxCost.aggregate([
       {
@@ -195,9 +299,67 @@ router.get("/", requireAdmin, async (req, res) => {
     // Calculate monthly equivalent (for display)
     const daysInPeriod = startDate ? Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) : 365;
     const monthlyCostForPeriod = totalNumberCost; // Already accrued daily
-    const totalNumberMonthlyCost = (totalNumberCost * 30) / daysInPeriod; // Estimate monthly
-    const totalNumberOneTimeCost = 0; // One-time costs handled separately if needed
-    const totalNumberExtraFees = 0;
+    let totalNumberMonthlyCost = (totalNumberCost * 30) / daysInPeriod; // Estimate monthly
+    let totalNumberOneTimeCost = 0; // One-time costs handled separately if needed
+    let totalNumberExtraFees = 0;
+
+    // FALLBACK: If TelnyxCost is empty, calculate from PhoneNumber records directly
+    // Phone number pricing: $1/month base + $1/month Telnyx recurring fee = $2/month total
+    if (totalNumberCost === 0 && allNumbers.length > 0) {
+      const BASE_MONTHLY_COST = 1.00; // $1 per month per number
+      const TELNYX_RECURRING_FEE = 1.00; // $1 per month Telnyx recurring fee
+      const TOTAL_MONTHLY_COST_PER_NUMBER = BASE_MONTHLY_COST + TELNYX_RECURRING_FEE; // $2/month total
+      const DAILY_COST_PER_NUMBER = TOTAL_MONTHLY_COST_PER_NUMBER / 30; // $0.0667 per day per number
+      
+      const periodStart = startDate || new Date(0); // If no start date, use epoch (all time)
+      const periodEnd = endDate || new Date();
+      
+      const numberCostsFromRecords = allNumbers.reduce((acc, number) => {
+        // Use stored cost if available, otherwise use default pricing
+        const monthlyCost = number.monthlyCost || TOTAL_MONTHLY_COST_PER_NUMBER;
+        const oneTimeFees = number.oneTimeFees || 0;
+        const extraFees = number.extraFees || 0;
+        
+        // Calculate how many days this number was active during the period
+        const numberCreatedAt = number.createdAt ? new Date(number.createdAt) : new Date();
+        
+        // Number was active from its creation date (or period start, whichever is later) to period end
+        const numberActiveStart = numberCreatedAt > periodStart ? numberCreatedAt : periodStart;
+        const numberActiveEnd = periodEnd;
+        
+        // Calculate actual days this number was active in the period (use floor for accuracy)
+        const millisecondsActive = numberActiveEnd - numberActiveStart;
+        const actualDaysActive = Math.max(0, Math.floor(millisecondsActive / (1000 * 60 * 60 * 24)));
+        
+        // For very short periods (hours), calculate fractional days
+        const hoursActive = millisecondsActive / (1000 * 60 * 60);
+        const fractionalDays = hoursActive / 24;
+        
+        // Calculate cost for the actual time this number was active
+        // Use fractional days for accuracy (especially for short periods)
+        const periodCost = (monthlyCost / 30) * fractionalDays;
+        
+        acc.totalCost += periodCost + oneTimeFees + extraFees;
+        acc.totalOneTime += oneTimeFees;
+        acc.totalExtraFees += extraFees;
+        acc.totalMonthly += monthlyCost;
+        acc.totalDays += actualDaysActive;
+        
+        return acc;
+      }, { totalCost: 0, totalOneTime: 0, totalExtraFees: 0, totalMonthly: 0, totalDays: 0 });
+      
+      totalNumberCost = parseFloat(numberCostsFromRecords.totalCost.toFixed(4));
+      totalNumberOneTimeCost = parseFloat(numberCostsFromRecords.totalOneTime.toFixed(4));
+      totalNumberExtraFees = parseFloat(numberCostsFromRecords.totalExtraFees.toFixed(4));
+      
+      // Calculate monthly equivalent: if period is 30 days, show actual monthly cost
+      // Otherwise, prorate based on the period
+      if (daysInPeriod > 0) {
+        totalNumberMonthlyCost = parseFloat(((totalNumberCost * 30) / daysInPeriod).toFixed(2));
+      } else {
+        totalNumberMonthlyCost = parseFloat(numberCostsFromRecords.totalMonthly.toFixed(2));
+      }
+    }
 
     const totalTelnyxCost = telnyxCallCost + telnyxSmsCost + totalNumberCost;
 
