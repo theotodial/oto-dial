@@ -46,10 +46,25 @@ router.post("/send", async (req, res) => {
       });
     }
 
+    // 🔒 COUNTRY LOCK: Validate destination is in same country
     const phone = await PhoneNumber.findOne({
       userId: req.userId,
       status: "active"
     });
+    
+    if (phone && phone.lockedCountry !== false && phone.countryCode) {
+      const { validateCountryLock } = await import("../utils/countryUtils.js");
+      const validation = validateCountryLock(phone.countryCode, to);
+      
+      if (!validation.valid) {
+        console.log(`🚫 COUNTRY LOCK: Blocked SMS from ${phone.countryCode} to ${to}: ${validation.error}`);
+        return res.status(403).json({ 
+          error: validation.error,
+          countryLocked: true,
+          sourceCountry: phone.countryCode
+        });
+      }
+    }
 
     if (!phone) {
       return res.status(400).json({ error: "No phone number assigned" });

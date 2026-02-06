@@ -78,7 +78,13 @@ router.get("/", requireAdmin, async (req, res) => {
         carrierGroup: num.carrierGroup,
         extraFees: num.extraFees || 0,
         purchaseDate: num.purchaseDate || num.createdAt,
-        createdAt: num.createdAt
+        createdAt: num.createdAt,
+        // Country metadata for admin visibility
+        country: num.country || null,
+        countryCode: num.countryCode || null,
+        countryName: num.countryName || null,
+        iso2: num.iso2 || null,
+        lockedCountry: num.lockedCountry !== false
       })),
       pagination: {
         page: parseInt(page),
@@ -133,7 +139,13 @@ router.get("/:id", requireAdmin, async (req, res) => {
         purchaseDate: number.purchaseDate || number.createdAt,
         messagingProfileId: number.messagingProfileId,
         createdAt: number.createdAt,
-        updatedAt: number.updatedAt
+        updatedAt: number.updatedAt,
+        // Country metadata for admin visibility
+        country: number.country || null,
+        countryCode: number.countryCode || null,
+        countryName: number.countryName || null,
+        iso2: number.iso2 || null,
+        lockedCountry: number.lockedCountry !== false
       }
     });
   } catch (err) {

@@ -17,16 +17,29 @@ router.post("/login", async (req, res) => {
     const ADMIN_EMAIL = "theotodial@gmail.com";
     const ADMIN_PASSWORD = "otodialteam";
 
-    // Validate credentials
-    if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+    // Validate credentials - case insensitive email comparison
+    const normalizedEmail = email?.toLowerCase().trim();
+    const normalizedAdminEmail = ADMIN_EMAIL.toLowerCase().trim();
+    
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: "Email and password are required"
+      });
+    }
+
+    if (normalizedEmail !== normalizedAdminEmail || password !== ADMIN_PASSWORD) {
+      console.warn(`Admin login attempt failed for email: ${email}`);
       return res.status(401).json({
         success: false,
         error: "Invalid admin credentials"
       });
     }
 
-    // Find or create admin user
-    let adminUser = await User.findOne({ email: ADMIN_EMAIL });
+    // Find or create admin user - case insensitive search
+    let adminUser = await User.findOne({ 
+      email: { $regex: new RegExp(`^${ADMIN_EMAIL}$`, 'i') }
+    });
 
     if (!adminUser) {
       // Create admin user if doesn't exist

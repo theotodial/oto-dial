@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { getMyNumbers, searchNumbers, purchaseNumber } from '../services/numberService';
+import { SUPPORTED_COUNTRIES, getDefaultCountry } from '../utils/supportedCountries';
 
 function BuyNumber() {
   const navigate = useNavigate();
@@ -9,6 +10,7 @@ function BuyNumber() {
   const [availableNumbers, setAvailableNumbers] = useState([]);
   const [selectedNumber, setSelectedNumber] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCountry, setSelectedCountry] = useState(getDefaultCountry().code);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [buying, setBuying] = useState(false);
@@ -32,12 +34,12 @@ function BuyNumber() {
     };
   }, []);
 
-  // Load default numbers when subscription becomes active
+  // Load default numbers when subscription becomes active or country changes
   useEffect(() => {
     if (subscriptionActive && userNumbers.length === 0 && !loading && availableNumbers.length === 0) {
       loadDefaultNumbers();
     }
-  }, [subscriptionActive, userNumbers.length, loading]);
+  }, [subscriptionActive, userNumbers.length, loading, selectedCountry]);
 
   const loadDefaultNumbers = async () => {
     if (!subscriptionActive || searching) return;
@@ -46,8 +48,8 @@ function BuyNumber() {
     setError('');
     
     try {
-      // Search without area code to get default numbers
-      const numbers = await searchNumbers(null, null);
+      // Search without area code to get default numbers for selected country
+      const numbers = await searchNumbers(null, null, selectedCountry);
       
       if (!isMountedRef.current) return;
       
@@ -123,7 +125,7 @@ function BuyNumber() {
       const areaCode = /^\d{3}$/.test(searchQuery) ? searchQuery : null;
       const searchPattern = searchQuery || null;
 
-      const numbers = await searchNumbers(areaCode, searchPattern);
+      const numbers = await searchNumbers(areaCode, searchPattern, selectedCountry);
 
       if (!isMountedRef.current) return;
 
@@ -168,7 +170,7 @@ function BuyNumber() {
     setSuccess('');
 
     try {
-      const response = await purchaseNumber(selectedNumber.phone_number);
+      const response = await purchaseNumber(selectedNumber.phone_number, selectedCountry);
 
       if (!isMountedRef.current) return;
 
@@ -273,13 +275,42 @@ function BuyNumber() {
         )}
 
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-gray-200 dark:border-slate-700 p-8">
+          {/* Country Selector */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+              Select Country
+            </label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              Choose a country to search for available numbers. Numbers are locked to their country - you can only call/SMS within the same country.
+            </p>
+            <select
+              value={selectedCountry}
+              onChange={(e) => {
+                setSelectedCountry(e.target.value);
+                setAvailableNumbers([]);
+                setSelectedNumber(null);
+                setSearchQuery('');
+              }}
+              disabled={!subscriptionActive || searching}
+              className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+            >
+              {SUPPORTED_COUNTRIES.map((country) => (
+                <option key={country.code} value={country.code}>
+                  {country.flag} {country.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Search Section */}
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
               Search Available Numbers
             </label>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-              Enter a 3-digit area code (e.g., 212) or search by number pattern. Only cheapest local numbers are shown.
+              {selectedCountry === 'US' 
+                ? 'Enter a 3-digit area code (e.g., 212) or search by number pattern. Only cheapest local numbers are shown.'
+                : 'Enter a search pattern or leave blank to see available numbers. Only cheapest local numbers are shown.'}
             </p>
             <div className="flex gap-3">
               <input
@@ -287,7 +318,7 @@ function BuyNumber() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                placeholder="Area code (e.g., 212) or number pattern"
+                placeholder={selectedCountry === 'US' ? "Area code (e.g., 212) or number pattern" : "Number pattern or leave blank"}
                 disabled={!subscriptionActive || searching}
                 className="flex-1 px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
               />
@@ -342,6 +373,11 @@ function BuyNumber() {
                           {num.phone_number}
                         </div>
                         <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                          {num.country && (
+                            <span className="inline-block mr-2">
+                              {SUPPORTED_COUNTRIES.find(c => c.code === num.countryCode)?.flag || ''} {num.country}
+                            </span>
+                          )}
                           Carrier Group: {num.carrier_group} | Monthly: ${num.monthly_cost.toFixed(2)}
                         </div>
                       </div>
@@ -384,6 +420,10 @@ function BuyNumber() {
 
             <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
               Maximum 1 phone number per account. Only cheapest local numbers are available.
+              <br />
+              <span className="text-yellow-600 dark:text-yellow-400 font-semibold">
+                ⚠️ Country Lock: Numbers can only call/SMS within their own country.
+              </span>
             </p>
           </div>
         </div>

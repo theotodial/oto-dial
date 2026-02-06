@@ -8,10 +8,11 @@ export async function getMyNumbers() {
   return response.data?.numbers || response.data || [];
 }
 
-export async function searchNumbers(areaCode, searchPattern) {
+export async function searchNumbers(areaCode, searchPattern, countryCode) {
   const params = new URLSearchParams();
   if (areaCode) params.append('areaCode', areaCode);
   if (searchPattern) params.append('searchPattern', searchPattern);
+  if (countryCode) params.append('country', countryCode);
   
   const response = await API.get(`/api/numbers/search?${params.toString()}`);
   if (response.error) {
@@ -20,8 +21,12 @@ export async function searchNumbers(areaCode, searchPattern) {
   return response.data?.numbers || [];
 }
 
-export async function purchaseNumber(phoneNumber) {
-  const response = await API.post('/api/numbers/purchase', { phoneNumber });
+export async function purchaseNumber(phoneNumber, countryCode) {
+  const payload = { phoneNumber };
+  if (countryCode) {
+    payload.countryCode = countryCode;
+  }
+  const response = await API.post('/api/numbers/purchase', payload);
   if (response.error) {
     throw new Error(response.error);
   }

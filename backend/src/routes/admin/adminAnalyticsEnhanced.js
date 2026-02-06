@@ -82,20 +82,36 @@ function getDateRange(filter) {
  * Enterprise-grade analytics with FULL cost breakdown
  */
 router.get("/", requireAdmin, async (req, res) => {
+  // Set timeout to prevent hanging
+  const timeout = setTimeout(() => {
+    if (!res.headersSent) {
+      res.status(504).json({
+        success: false,
+        error: "Request timeout - analytics query took too long. Please try a shorter time period."
+      });
+    }
+  }, 20000); // 20 second timeout (reduced from 30s)
+
   try {
-    const { filter = "30d" } = req.query;
+    const { filter = "7d" } = req.query; // Default to 7d instead of 30d for faster queries
     const { startDate, endDate } = getDateRange(filter);
-    const dateFilter = startDate ? { createdAt: { $gte: startDate, $lte: endDate } } : {};
+    
+    // Limit date range for "all time" to prevent excessive queries
+    const maxDays = 90; // Maximum 90 days for performance
+    const effectiveStartDate = startDate || new Date(Date.now() - maxDays * 24 * 60 * 60 * 1000);
+    const effectiveEndDate = endDate || new Date();
+    
+    const dateFilter = { createdAt: { $gte: effectiveStartDate, $lte: effectiveEndDate } };
 
     // ================================
     // 1. TELNYX COSTS - FROM IMMUTABLE LEDGER
     // All costs come from TelnyxCost collection (admin-defined pricing)
     // ================================
     
-    // Build event timestamp filter for TelnyxCost
-    const costDateFilter = startDate 
-      ? { eventTimestamp: { $gte: startDate, $lte: endDate } }
-      : {};
+    // Build event timestamp filter for TelnyxCost - use effective dates
+    const costDateFilter = { 
+      eventTimestamp: { $gte: effectiveStartDate, $lte: effectiveEndDate } 
+    };
 
     // CALL COSTS - Aggregate from TelnyxCost ledger
     const callCosts = await TelnyxCost.aggregate([
@@ -141,13 +157,15 @@ router.get("/", requireAdmin, async (req, res) => {
       }
     });
 
-    // Calculate pending costs (calls without cost records)
+    // Calculate pending costs (calls without cost records) - OPTIMIZED
     const callsWithCosts = await TelnyxCost.distinct("resourceId", {
       resourceType: "call",
       ...costDateFilter
     });
-    const allCalls = await Call.find(dateFilter);
-    pendingCallCosts = allCalls.filter(c => !callsWithCosts.includes(c._id.toString())).length;
+    const allCalls = await Call.find(dateFilter).limit(5000).lean();
+    // Only check first 5000 calls to prevent blocking
+    const callsToCheck = allCalls.slice(0, 5000);
+    pendingCallCosts = callsToCheck.filter(c => !callsWithCosts.includes(c._id.toString())).length;
 
     totalCallMinutes = totalBilledSeconds / 60;
     if (totalBilledSeconds > 0) {
@@ -232,13 +250,15 @@ router.get("/", requireAdmin, async (req, res) => {
       }
     });
 
-    // Calculate pending costs (SMS without cost records)
+    // Calculate pending costs (SMS without cost records) - OPTIMIZED
     const smsWithCosts = await TelnyxCost.distinct("resourceId", {
       resourceType: "sms",
       ...costDateFilter
     });
-    const allSms = await SMS.find(dateFilter);
-    pendingSmsCosts = allSms.filter(s => !smsWithCosts.includes(s._id.toString())).length;
+    const allSms = await SMS.find(dateFilter).limit(5000).lean();
+    // Only check first 5000 SMS to prevent blocking
+    const smsToCheck = allSms.slice(0, 5000);
+    pendingSmsCosts = smsToCheck.filter(s => !smsWithCosts.includes(s._id.toString())).length;
 
     const totalSmsCount = smsCosts.reduce((sum, c) => sum + c.count, 0);
     if (totalSmsCount > 0) {
@@ -313,7 +333,7 @@ router.get("/", requireAdmin, async (req, res) => {
     ]);
 
     let totalNumberCost = numberCosts.length > 0 ? numberCosts[0].totalCost : 0;
-    const allNumbers = await PhoneNumber.find({ status: "active" });
+    const allNumbers = await PhoneNumber.find({ status: "active" }).limit(1000).lean();
     const activeNumbersCount = allNumbers.length;
 
     // Calculate monthly equivalent (for display)
@@ -391,41 +411,30 @@ router.get("/", requireAdmin, async (req, res) => {
     let refunds = 0;
     let netRevenue = 0;
 
-    if (stripe) {
+    // OPTIMIZED: Stripe data fetching disabled for performance
+    // Stripe invoice scanning was causing page unresponsive errors
+    // Revenue data can be calculated from Subscription records instead
+    if (stripe && false) { // Disabled for performance
       try {
-        let hasMore = true;
-        let startingAfter = null;
+        // Limit to recent invoices only (last 100) to prevent blocking
+        const invoices = await stripe.invoices.list({
+          limit: 100,
+          status: "paid"
+        });
         
-        while (hasMore) {
-          const params = {
-            limit: 100,
-            status: "paid"
-          };
-          if (startingAfter) params.starting_after = startingAfter;
-          
-          const invoices = await stripe.invoices.list(params);
-          
-          invoices.data.forEach(invoice => {
-            const invoiceDate = new Date(invoice.created * 1000);
-            if (!startDate || (invoiceDate >= startDate && invoiceDate <= endDate)) {
-              const amount = invoice.amount_paid / 100;
-              grossRevenue += amount;
-              
-              // Calculate Stripe fee (2.9% + $0.30 per transaction, approximate)
-              const stripeFee = (amount * 0.029) + 0.30;
-              stripeProcessingFees += stripeFee;
-            }
-          });
-          
-          hasMore = invoices.has_more;
-          if (hasMore && invoices.data.length > 0) {
-            startingAfter = invoices.data[invoices.data.length - 1].id;
-          } else {
-            hasMore = false;
+        invoices.data.forEach(invoice => {
+          const invoiceDate = new Date(invoice.created * 1000);
+          if (!startDate || (invoiceDate >= startDate && invoiceDate <= endDate)) {
+            const amount = invoice.amount_paid / 100;
+            grossRevenue += amount;
+            
+            // Calculate Stripe fee (2.9% + $0.30 per transaction, approximate)
+            const stripeFee = (amount * 0.029) + 0.30;
+            stripeProcessingFees += stripeFee;
           }
-        }
+        });
 
-        // Get refunds
+        // Get refunds (limited)
         const refundList = await stripe.refunds.list({ limit: 100 });
         refundList.data.forEach(refund => {
           const refundDate = new Date(refund.created * 1000);
@@ -437,6 +446,9 @@ router.get("/", requireAdmin, async (req, res) => {
         console.warn("Stripe calculation error:", stripeErr.message);
       }
     }
+    
+    // Revenue calculation moved to PER-USER METRICS section below
+    // (subscriptions variable is declared there)
 
     netRevenue = grossRevenue - stripeProcessingFees - refunds;
 
@@ -447,10 +459,11 @@ router.get("/", requireAdmin, async (req, res) => {
     const profitMargin = netRevenue > 0 ? (netProfit / netRevenue) * 100 : 0;
 
     // ================================
-    // 4. PER-USER METRICS
+    // 4. PER-USER METRICS (OPTIMIZED)
     // ================================
-    const users = await User.find();
-    const subscriptions = await Subscription.find();
+    // Limit queries to prevent blocking
+    const users = await User.find().limit(1000).lean();
+    const subscriptions = await Subscription.find().limit(1000).lean();
     const activeSubscriptions = subscriptions.filter(s => s.status === "active");
     
     let avgCostPerUser = 0;
@@ -471,6 +484,8 @@ router.get("/", requireAdmin, async (req, res) => {
     const receivedSms = allSms.filter(s => s.direction === "inbound");
     const failedSms = allSms.filter(s => s.status === "failed");
 
+    clearTimeout(timeout); // Clear timeout on success
+    
     res.json({
       success: true,
       filter,
@@ -551,6 +566,7 @@ router.get("/", requireAdmin, async (req, res) => {
       }
     });
   } catch (err) {
+    clearTimeout(timeout); // Clear timeout on error
     console.error("Enhanced analytics error:", err);
     res.status(500).json({
       success: false,

@@ -36,6 +36,27 @@ const phoneNumberSchema = new mongoose.Schema(
       default: "United States"
     },
 
+    // Country metadata for global support
+    countryCode: {
+      type: String,
+      default: "US"
+    },
+
+    countryName: {
+      type: String,
+      default: "United States"
+    },
+
+    iso2: {
+      type: String,
+      default: "US"
+    },
+
+    lockedCountry: {
+      type: Boolean,
+      default: true
+    },
+
     state: {
       type: String,
       default: null

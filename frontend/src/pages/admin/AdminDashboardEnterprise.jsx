@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
@@ -70,8 +70,21 @@ function AdminDashboardEnterprise() {
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [error, setError] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const fetchTimeoutRef = useRef(null);
+  const isFetchingRef = useRef(false);
 
   const fetchData = useCallback(async () => {
+    // Prevent multiple simultaneous requests
+    if (isFetchingRef.current) {
+      return;
+    }
+    
+    // Clear any pending debounce
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current);
+    }
+    
+    isFetchingRef.current = true;
     setLoading(true);
     setError('');
     try {
@@ -90,42 +103,78 @@ function AdminDashboardEnterprise() {
         }
       }
       
-      const [enhancedRes, timeSeriesRes] = await Promise.all([
-        API.get(`/api/admin/analytics/enhanced?filter=${filterParam}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        }),
-        API.get(`/api/admin/analytics/time-series/enhanced?filter=${filterParam}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
-      ]);
-
-      if (enhancedRes.error) {
-        setError(enhancedRes.error);
-      } else if (enhancedRes.data?.success) {
-        setAnalytics(enhancedRes.data);
-      }
+      // OPTIMIZED: Add timeout and only fetch essential data
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
       
-      if (timeSeriesRes.error) {
-        console.warn("Time-series error:", timeSeriesRes.error);
-        // Don't set error for time-series, just log it
-      } else if (timeSeriesRes.data?.success) {
-        setTimeSeries(timeSeriesRes.data);
+      try {
+        // Fetch main analytics first (critical)
+        const enhancedRes = await API.get(`/api/admin/analytics/enhanced?filter=${filterParam}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+          timeout: 20000
+        });
+        
+        clearTimeout(timeoutId);
+
+        if (enhancedRes.error) {
+          setError(enhancedRes.error);
+        } else if (enhancedRes.data?.success) {
+          setAnalytics(enhancedRes.data);
+        }
+        
+        // Fetch time-series data separately (non-blocking, optional)
+        // Don't wait for it - load it in background
+        API.get(`/api/admin/analytics/time-series/enhanced?filter=${filterParam}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 15000
+        }).then(timeSeriesRes => {
+          if (timeSeriesRes.data?.success) {
+            setTimeSeries(timeSeriesRes.data);
+          }
+        }).catch(err => {
+          console.warn("Time-series data unavailable:", err.message);
+          // Don't show error - time-series is optional
+        });
+      } catch (abortErr) {
+        clearTimeout(timeoutId);
+        if (abortErr.name === 'AbortError' || abortErr.message?.includes('timeout')) {
+          setError('Request timed out. Please try a shorter time period or refresh the page.');
+        } else {
+          throw abortErr; // Re-throw to be caught by outer catch
+        }
       }
     } catch (err) {
       if (err.response?.status === 401) {
         localStorage.removeItem('adminToken');
         navigate('/adminbobby');
+      } else if (err.name === 'AbortError' || err.message?.includes('timeout')) {
+        setError('Request timed out. The admin panel is processing a large amount of data. Please try a shorter time period.');
       } else {
         setError(err.response?.data?.error || 'Failed to load analytics');
       }
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
   }, [timeFilter, navigate]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    // Debounce rapid filter changes
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current);
+    }
+    
+    fetchTimeoutRef.current = setTimeout(() => {
+      fetchData();
+    }, 300); // 300ms debounce
+    
+    return () => {
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+      }
+    };
+  }, [timeFilter, fetchData]);
 
   if (loading) {
     return (

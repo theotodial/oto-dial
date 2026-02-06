@@ -3,6 +3,7 @@ import axios from "axios";
 import authenticateUser from "../middleware/authenticateUser.js";
 import requireActiveSubscription from "../middleware/requireActiveSubscription.js";
 import Call from "../models/Call.js";
+import { validateCallCountryLock } from "../middleware/countryLock.js";
 
 const router = express.Router();
 
@@ -27,7 +28,7 @@ router.post("/", requireActiveSubscription, async (req, res) => {
   res.json({ success: true, call });
 });
 
-router.post("/:id/start", requireActiveSubscription, async (req, res) => {
+router.post("/:id/start", requireActiveSubscription, validateCallCountryLock, async (req, res) => {
   try {
     const call = await Call.findOne({
       _id: req.params.id,

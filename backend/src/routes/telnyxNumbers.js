@@ -4,6 +4,7 @@ import loadSubscription from "../middleware/loadSubscription.js";
 import getTelnyxClient from "../services/telnyxService.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import User from "../models/User.js";
+import { isCountrySupported, getCountryByCode, getSupportedCountries } from "../utils/countryUtils.js";
 
 const router = express.Router();
 
@@ -33,12 +34,27 @@ router.get(
         return res.status(500).json({ error: "Telnyx not configured" });
       }
 
-      const { areaCode, searchPattern } = req.query;
+      const { areaCode, searchPattern, country } = req.query;
+      
+      // Validate and get country code (default to US for backward compatibility)
+      let countryCode = "US";
+      let countryInfo = getCountryByCode("US");
+      
+      if (country) {
+        const requestedCountry = getCountryByCode(country);
+        if (!requestedCountry || !isCountrySupported(country)) {
+          return res.status(400).json({ 
+            error: `Country not supported. Supported countries: ${getSupportedCountries().map(c => c.name).join(", ")}` 
+          });
+        }
+        countryCode = requestedCountry.telnyxCode;
+        countryInfo = requestedCountry;
+      }
       
       // Build filter - RELAXED to show more numbers
       // Note: Telnyx API filter structure may vary, so we filter results after fetching
       const filter = {
-        country_code: "US",
+        country_code: countryCode,
         features: ["voice", "sms"]
       };
 
@@ -47,8 +63,11 @@ router.get(
         filter.npa = areaCode; // NPA = Numbering Plan Area (area code)
       }
 
-      // If no area code, try popular area codes to show default numbers
-      const popularAreaCodes = ['212', '310', '415', '646', '213', '323', '424', '818', '347', '929'];
+      // If no area code, try popular area codes to show default numbers (US only)
+      // For other countries, search without area code filter
+      const popularAreaCodes = countryCode === "US" 
+        ? ['212', '310', '415', '646', '213', '323', '424', '818', '347', '929']
+        : [];
       let allResults = [];
 
       if (areaCode && /^\d{3}$/.test(areaCode)) {
@@ -178,7 +197,9 @@ router.get(
           monthly_cost: num.monthly_cost || num.monthly_rate || num.cost?.monthly || 0,
           carrier_group: num.carrier?.group || num.carrier_group || 'Unknown',
           region_information: num.region_information || null,
-          features: num.features || []
+          features: num.features || [],
+          country: countryInfo.name,
+          countryCode: countryInfo.code
         }))
         // Sort by monthly cost (cheapest first)
         .sort((a, b) => a.monthly_cost - b.monthly_cost)
@@ -187,7 +208,9 @@ router.get(
       res.json({ 
         success: true,
         numbers: filteredNumbers,
-        count: filteredNumbers.length
+        count: filteredNumbers.length,
+        country: countryInfo.name,
+        countryCode: countryInfo.code
       });
     } catch (err) {
       console.error("SEARCH NUMBERS ERROR:", err);
@@ -228,10 +251,47 @@ router.post(
       }
 
       // RE-VALIDATE NUMBER BEFORE PURCHASE (CRITICAL FOR COST CONTROL)
+      // Try to detect country from phone number or use provided country
+      let detectedCountryCode = null;
+      let countryInfo = null;
+      
+      // First, try to get country from request body (if provided from frontend)
+      if (req.body.countryCode) {
+        countryInfo = getCountryByCode(req.body.countryCode);
+        if (countryInfo) {
+          detectedCountryCode = countryInfo.telnyxCode;
+        }
+      }
+      
+      // If not provided, try to detect from number format
+      if (!detectedCountryCode) {
+        const { detectCountryFromPhoneNumber } = await import("../utils/countryUtils.js");
+        const detected = detectCountryFromPhoneNumber(phoneNumber);
+        if (detected) {
+          countryInfo = getCountryByCode(detected);
+          if (countryInfo) {
+            detectedCountryCode = countryInfo.telnyxCode;
+          }
+        }
+      }
+      
+      // Default to US if still not detected (backward compatibility)
+      if (!detectedCountryCode) {
+        detectedCountryCode = "US";
+        countryInfo = getCountryByCode("US");
+      }
+      
+      // Validate country is supported
+      if (!isCountrySupported(countryInfo.code)) {
+        return res.status(400).json({ 
+          error: `Country ${countryInfo.name} is not supported. Supported countries: ${getSupportedCountries().map(c => c.name).join(", ")}` 
+        });
+      }
+      
       try {
         const numberDetails = await telnyx.availablePhoneNumbers.list({
           filter: { 
-            country_code: "US",
+            country_code: detectedCountryCode,
             phone_number: phoneNumber
           }
         });
@@ -391,7 +451,7 @@ router.post(
       let oneTimeFees = 0;
       let finalCarrierGroup = carrierGroup;
       let regionInfo = num.region_information || null;
-      let country = "United States";
+      let country = countryInfo.name;
       let state = null;
       let city = null;
       
@@ -404,7 +464,15 @@ router.post(
         // Extract region information
         regionInfo = numDetails.data.region_information || num.region_information || null;
         if (regionInfo) {
-          country = regionInfo.country_name || regionInfo.country || "United States";
+          // Use detected country info, but allow Telnyx to override if it provides more specific data
+          const telnyxCountry = regionInfo.country_name || regionInfo.country;
+          if (telnyxCountry && isCountrySupported(telnyxCountry)) {
+            const telnyxCountryInfo = getCountryByCode(telnyxCountry);
+            if (telnyxCountryInfo) {
+              country = telnyxCountryInfo.name;
+              countryInfo = telnyxCountryInfo;
+            }
+          }
           state = regionInfo.region_name || regionInfo.state || regionInfo.region || null;
           city = regionInfo.locality || regionInfo.city || null;
         }
@@ -413,13 +481,20 @@ router.post(
         // Fallback to data from search
         if (num.region_information) {
           regionInfo = num.region_information;
-          country = regionInfo.country_name || regionInfo.country || "United States";
+          const telnyxCountry = regionInfo.country_name || regionInfo.country;
+          if (telnyxCountry && isCountrySupported(telnyxCountry)) {
+            const telnyxCountryInfo = getCountryByCode(telnyxCountry);
+            if (telnyxCountryInfo) {
+              country = telnyxCountryInfo.name;
+              countryInfo = telnyxCountryInfo;
+            }
+          }
           state = regionInfo.region_name || regionInfo.state || regionInfo.region || null;
           city = regionInfo.locality || regionInfo.city || null;
         }
       }
 
-      // SAVE IMMEDIATELY with cost tracking and region information
+      // SAVE IMMEDIATELY with cost tracking, region information, and country metadata
       const phoneNumberDoc = await PhoneNumber.create({
         userId: user._id,
         phoneNumber,
@@ -430,6 +505,10 @@ router.post(
         oneTimeFees: oneTimeFees,
         carrierGroup: finalCarrierGroup,
         country: country,
+        countryCode: countryInfo.code,
+        countryName: countryInfo.name,
+        iso2: countryInfo.iso2,
+        lockedCountry: true, // Always lock to country
         state: state,
         city: city,
         regionInformation: regionInfo,
@@ -923,6 +1002,25 @@ router.get(
     }
   }
 );
+
+/**
+ * GET /api/numbers/supported-countries
+ * Get list of supported countries for number purchasing
+ */
+router.get("/supported-countries", async (req, res) => {
+  try {
+    const countries = getSupportedCountries().map(c => ({
+      code: c.code,
+      name: c.name,
+      iso2: c.iso2,
+      telnyxCode: c.telnyxCode
+    }));
+    res.json({ success: true, countries });
+  } catch (err) {
+    console.error("GET SUPPORTED COUNTRIES ERROR:", err);
+    res.status(500).json({ error: "Failed to get supported countries", details: err.message });
+  }
+});
 
 /**
  * GET /api/numbers/webhook-urls

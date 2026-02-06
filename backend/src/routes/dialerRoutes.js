@@ -2,6 +2,7 @@ import express from "express";
 import { getTelnyx } from "../../config/telnyx.js";
 import Call from "../models/Call.js";
 import PhoneNumber from "../models/PhoneNumber.js";
+import { validateCallCountryLock } from "../middleware/countryLock.js";
 
 const router = express.Router();
 
@@ -9,7 +10,7 @@ const router = express.Router();
  * POST /api/dialer/call
  * body: { to }
  */
-router.post("/call", async (req, res) => {
+router.post("/call", validateCallCountryLock, async (req, res) => {
   try {
     const { to } = req.body;
 
