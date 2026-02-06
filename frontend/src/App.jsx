@@ -33,6 +33,7 @@ import Billing from './pages/Billing';
 import BuyNumber from './pages/BuyNumber';
 import SubscriptionDetails from './pages/SubscriptionDetails';
 import Profile from './pages/Profile';
+import Support from './pages/Support';
 import Contact from './pages/Contact';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
@@ -48,6 +49,7 @@ import AdminNumbers from './pages/admin/AdminNumbers';
 import AdminSupport from './pages/admin/AdminSupport';
 import AdminTeam from './pages/admin/AdminTeam';
 import AdminProtectedRoute from './components/AdminProtectedRoute';
+import AdminLayout from './components/AdminLayout';
 
 function App() {
     return (
@@ -144,7 +146,9 @@ function App() {
               path="/adminbobby/dashboard" 
               element={
                 <AdminProtectedRoute>
-                  <AdminDashboardEnterprise />
+                  <AdminLayout>
+                    <AdminDashboardEnterprise />
+                  </AdminLayout>
                 </AdminProtectedRoute>
               } 
             />
@@ -152,7 +156,9 @@ function App() {
               path="/adminbobby/users" 
               element={
                 <AdminProtectedRoute>
-                  <AdminUsers />
+                  <AdminLayout>
+                    <AdminUsers />
+                  </AdminLayout>
                 </AdminProtectedRoute>
               } 
             />
@@ -160,7 +166,9 @@ function App() {
               path="/adminbobby/users/:id" 
               element={
                 <AdminProtectedRoute>
-                  <AdminUserDetail />
+                  <AdminLayout>
+                    <AdminUserDetail />
+                  </AdminLayout>
                 </AdminProtectedRoute>
               } 
             />
@@ -168,7 +176,9 @@ function App() {
               path="/adminbobby/calls" 
               element={
                 <AdminProtectedRoute>
-                  <AdminCalls />
+                  <AdminLayout>
+                    <AdminCalls />
+                  </AdminLayout>
                 </AdminProtectedRoute>
               } 
             />
@@ -176,7 +186,9 @@ function App() {
               path="/adminbobby/sms" 
               element={
                 <AdminProtectedRoute>
-                  <AdminSms />
+                  <AdminLayout>
+                    <AdminSms />
+                  </AdminLayout>
                 </AdminProtectedRoute>
               } 
             />
@@ -184,7 +196,9 @@ function App() {
               path="/adminbobby/numbers" 
               element={
                 <AdminProtectedRoute>
-                  <AdminNumbers />
+                  <AdminLayout>
+                    <AdminNumbers />
+                  </AdminLayout>
                 </AdminProtectedRoute>
               } 
             />
@@ -192,7 +206,9 @@ function App() {
               path="/adminbobby/support" 
               element={
                 <AdminProtectedRoute>
-                  <AdminSupport />
+                  <AdminLayout>
+                    <AdminSupport />
+                  </AdminLayout>
                 </AdminProtectedRoute>
               } 
             />
@@ -200,7 +216,9 @@ function App() {
               path="/adminbobby/team" 
               element={
                 <AdminProtectedRoute>
-                  <AdminTeam />
+                  <AdminLayout>
+                    <AdminTeam />
+                  </AdminLayout>
                 </AdminProtectedRoute>
               } 
             />
@@ -271,6 +289,17 @@ function App() {
                 <ProtectedRoute>
                   <DashboardLayout>
                     <Profile />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            
+            <Route
+              path="/support"
+              element={
+                <ProtectedRoute>
+                  <DashboardLayout>
+                    <Support />
                   </DashboardLayout>
                 </ProtectedRoute>
               }

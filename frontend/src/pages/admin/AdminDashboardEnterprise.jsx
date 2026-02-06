@@ -65,7 +65,9 @@ function AdminDashboardEnterprise() {
   const [analytics, setAnalytics] = useState(null);
   const [timeSeries, setTimeSeries] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [timeFilter, setTimeFilter] = useState('30d');
+  const [timeFilter, setTimeFilter] = useState('24h');
+  const [customFilter, setCustomFilter] = useState({ type: 'hours', value: '', startDate: '', endDate: '' });
+  const [showCustomInput, setShowCustomInput] = useState(false);
   const [error, setError] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -75,11 +77,24 @@ function AdminDashboardEnterprise() {
     try {
       const token = localStorage.getItem('adminToken');
       
+      // Build filter parameter
+      let filterParam = timeFilter;
+      if (timeFilter.startsWith('custom:')) {
+        // Custom filter format: custom:type:value or custom:startDate:endDate
+        const parts = timeFilter.split(':');
+        if (parts[1] === 'hours' || parts[1] === 'days') {
+          filterParam = `${parts[2]}${parts[1][0]}`; // e.g., "5h" or "10d"
+        } else {
+          // Date range: custom:startDate:endDate
+          filterParam = `range:${parts[1]}:${parts[2]}`;
+        }
+      }
+      
       const [enhancedRes, timeSeriesRes] = await Promise.all([
-        API.get(`/api/admin/analytics/enhanced?filter=${timeFilter}`, {
+        API.get(`/api/admin/analytics/enhanced?filter=${filterParam}`, {
           headers: { Authorization: `Bearer ${token}` }
         }),
-        API.get(`/api/admin/analytics/time-series/enhanced?filter=${timeFilter}`, {
+        API.get(`/api/admin/analytics/time-series/enhanced?filter=${filterParam}`, {
           headers: { Authorization: `Bearer ${token}` }
         })
       ]);
@@ -268,65 +283,121 @@ function AdminDashboardEnterprise() {
         </div>
       )}
 
-      {/* Header */}
-      <header className="bg-white dark:bg-slate-800 shadow-sm border-b border-gray-200 dark:border-slate-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              {/* Mobile Menu Button */}
-              <button
-                onClick={() => setMobileMenuOpen(true)}
-                className="lg:hidden p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
-              {/* Logo + Admin */}
-              <div className="flex items-center gap-2">
-                <img src="/logo.svg" alt="OTO DIAL" className="w-8 h-8" />
-                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">Admin</h1>
-              </div>
+      {/* Header removed - navigation is in sidebar */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Timeline Filters */}
+        <div className="mb-6 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 p-4">
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Time Range</h2>
             </div>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
-              <div className="flex flex-wrap gap-2">
-                {['7d', '30d', '60d', '90d', 'all'].map((filter) => (
-                  <button
-                    key={filter}
-                    onClick={() => setTimeFilter(filter)}
-                    className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
-                      timeFilter === filter
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-600'
-                    }`}
-                  >
-                    {filter === 'all' ? 'All' : filter}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              {[
+                { value: '1h', label: '1 Hour' },
+                { value: '4h', label: '4 Hours' },
+                { value: '24h', label: '24 Hours' },
+                { value: '3d', label: '3 Days' },
+                { value: '7d', label: '7 Days' },
+                { value: '30d', label: '30 Days' },
+                { value: '90d', label: '90 Days' },
+                { value: 'all', label: 'All Time' }
+              ].map((filter) => (
                 <button
-                  onClick={() => navigate('/adminbobby/users')}
-                  className="flex-1 sm:flex-none px-3 sm:px-4 py-2 text-xs sm:text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg"
+                  key={filter.value}
+                  onClick={() => {
+                    setTimeFilter(filter.value);
+                    setShowCustomInput(false);
+                  }}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    timeFilter === filter.value
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-600'
+                  }`}
                 >
-                  Users
+                  {filter.label}
                 </button>
+              ))}
+              <button
+                onClick={() => {
+                  setShowCustomInput(!showCustomInput);
+                  if (showCustomInput) {
+                    setTimeFilter('24h');
+                  }
+                }}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  showCustomInput
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-600'
+                }`}
+              >
+                Custom
+              </button>
+            </div>
+            
+            {/* Custom Input Section */}
+            {showCustomInput && (
+              <div className="flex flex-col sm:flex-row gap-3 p-4 bg-gray-50 dark:bg-slate-900 rounded-lg border border-gray-200 dark:border-slate-700">
+                <div className="flex gap-2 flex-1">
+                  <select
+                    value={customFilter.type}
+                    onChange={(e) => setCustomFilter({ ...customFilter, type: e.target.value, value: '', startDate: '', endDate: '' })}
+                    className="px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  >
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                    <option value="date">Date Range</option>
+                  </select>
+                  {customFilter.type === 'date' ? (
+                    <div className="flex gap-2 flex-1">
+                      <input
+                        type="date"
+                        value={customFilter.startDate || ''}
+                        onChange={(e) => setCustomFilter({ ...customFilter, startDate: e.target.value })}
+                        className="px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white flex-1"
+                        placeholder="Start Date"
+                      />
+                      <input
+                        type="date"
+                        value={customFilter.endDate || ''}
+                        onChange={(e) => setCustomFilter({ ...customFilter, endDate: e.target.value })}
+                        className="px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white flex-1"
+                        placeholder="End Date"
+                      />
+                    </div>
+                  ) : (
+                    <input
+                      type="number"
+                      value={customFilter.value}
+                      onChange={(e) => setCustomFilter({ ...customFilter, value: e.target.value })}
+                      placeholder={`Enter number of ${customFilter.type}`}
+                      className="px-3 py-2 text-sm border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white flex-1"
+                      min="1"
+                    />
+                  )}
+                </div>
                 <button
                   onClick={() => {
-                    localStorage.removeItem('adminToken');
-                    navigate('/adminbobby');
+                    if (customFilter.type === 'date') {
+                      if (customFilter.startDate && customFilter.endDate) {
+                        setTimeFilter(`custom:${customFilter.startDate}:${customFilter.endDate}`);
+                      }
+                    } else if (customFilter.value) {
+                      setTimeFilter(`custom:${customFilter.type}:${customFilter.value}`);
+                    }
                   }}
-                  className="flex-1 sm:flex-none px-3 sm:px-4 py-2 text-xs sm:text-sm bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                  disabled={
+                    (customFilter.type === 'date' && (!customFilter.startDate || !customFilter.endDate)) ||
+                    (customFilter.type !== 'date' && !customFilter.value)
+                  }
+                  className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
                 >
-                  Logout
+                  Apply
                 </button>
               </div>
-            </div>
+            )}
           </div>
         </div>
-      </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {!analytics && !error && (
           <div className="text-center py-12">
             <p className="text-gray-500 dark:text-gray-400">Loading analytics data...</p>

@@ -5,6 +5,80 @@ import authenticateUser from "../middleware/authenticateUser.js";
 const router = express.Router();
 
 /**
+ * POST /api/support/tickets
+ * Create a new support ticket
+ */
+router.post("/tickets", authenticateUser, async (req, res) => {
+  try {
+    const userId = req.userId;
+    // Try multiple ways to get user email
+    const userEmail = req.user?.email || req.userEmail || (req.user && typeof req.user === 'object' ? req.user.email : null);
+    const userName = req.user?.name || req.user?.email || req.userEmail || 'User';
+    const { subject, message, priority = "medium", category } = req.body;
+
+    console.log('📝 Creating support ticket:', { userId, userEmail, userName, subject: subject?.substring(0, 50) });
+
+    if (!subject || !subject.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "Subject is required"
+      });
+    }
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: "Message is required"
+      });
+    }
+
+    // Validate priority
+    const validPriorities = ["low", "medium", "high", "urgent"];
+    const ticketPriority = validPriorities.includes(priority) ? priority : "medium";
+
+    if (!userEmail) {
+      return res.status(400).json({
+        success: false,
+        error: "User email not found. Please ensure you are logged in."
+      });
+    }
+
+    const ticket = await SupportTicket.create({
+      user: userId,
+      email: userEmail,
+      name: userName,
+      subject: subject.trim(),
+      message: message.trim(),
+      status: "open",
+      priority: ticketPriority,
+      businessCategory: category || "",
+      replies: []
+    });
+
+    console.log(`✅ New support ticket created: ${ticket._id} by user ${userId}`);
+
+    res.json({
+      success: true,
+      message: "Support ticket created successfully",
+      ticket: {
+        id: ticket._id,
+        subject: ticket.subject,
+        message: ticket.message,
+        status: ticket.status,
+        priority: ticket.priority,
+        createdAt: ticket.createdAt
+      }
+    });
+  } catch (err) {
+    console.error("Create ticket error:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message || "Failed to create ticket"
+    });
+  }
+});
+
+/**
  * GET /api/support/tickets
  * Get user's support tickets (requires authentication)
  */
