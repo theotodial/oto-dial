@@ -246,10 +246,27 @@ router.get("/", requireAdmin, async (req, res) => {
     }
 
     // FALLBACK: If TelnyxCost is empty, calculate from SMS records directly
+    // Default SMS pricing: Outbound $0.0075 per SMS, Inbound $0.0025 per SMS (typical Telnyx rates)
     if (telnyxSmsCost === 0 && allSms.length > 0) {
+      const DEFAULT_OUTBOUND_SMS_COST = 0.0075; // $0.0075 per outbound SMS
+      const DEFAULT_INBOUND_SMS_COST = 0.0025; // $0.0025 per inbound SMS
+      
       const smsCostsFromRecords = allSms.reduce((acc, sms) => {
-        const smsCost = sms.cost || 0;
+        // Use stored cost if available, otherwise use default pricing
+        let smsCost = sms.cost;
         const carrierFee = sms.carrierFees || 0;
+        
+        // If cost is not set, use default pricing based on direction
+        if (!smsCost || smsCost === 0) {
+          if (sms.direction === "outbound") {
+            smsCost = DEFAULT_OUTBOUND_SMS_COST;
+          } else if (sms.direction === "inbound") {
+            smsCost = DEFAULT_INBOUND_SMS_COST;
+          } else {
+            smsCost = DEFAULT_OUTBOUND_SMS_COST; // Default to outbound pricing
+          }
+        }
+        
         const totalSmsCost = smsCost + carrierFee;
         
         acc.totalCost += totalSmsCost;
@@ -265,14 +282,17 @@ router.get("/", requireAdmin, async (req, res) => {
         return acc;
       }, { totalCost: 0, inboundCost: 0, outboundCost: 0, totalCarrierFees: 0, count: 0 });
       
-      telnyxSmsCost = smsCostsFromRecords.totalCost;
-      telnyxSmsCostInbound = smsCostsFromRecords.inboundCost;
-      telnyxSmsCostOutbound = smsCostsFromRecords.outboundCost;
-      totalSmsCarrierFees = smsCostsFromRecords.totalCarrierFees;
+      telnyxSmsCost = parseFloat(smsCostsFromRecords.totalCost.toFixed(4));
+      telnyxSmsCostInbound = parseFloat(smsCostsFromRecords.inboundCost.toFixed(4));
+      telnyxSmsCostOutbound = parseFloat(smsCostsFromRecords.outboundCost.toFixed(4));
+      totalSmsCarrierFees = parseFloat(smsCostsFromRecords.totalCarrierFees.toFixed(4));
       
       if (smsCostsFromRecords.count > 0) {
-        avgCostPerSms = telnyxSmsCost / smsCostsFromRecords.count;
+        avgCostPerSms = parseFloat((telnyxSmsCost / smsCostsFromRecords.count).toFixed(4));
       }
+      
+      // Update pending costs count since we've now calculated costs
+      pendingSmsCosts = 0;
     }
 
     // PHONE NUMBER COSTS - Aggregate from TelnyxCost ledger
