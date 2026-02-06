@@ -23,15 +23,12 @@ function NewHeroSection() {
 
             {/* Headline */}
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-gray-900 dark:text-white leading-tight tracking-tight">
-              Business Phone, SMS & Cloud Dialer
-              <span className="block text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 dark:from-indigo-400 dark:to-purple-400 mt-2">
-                Built to Scale Your Business
-              </span>
+              Virtual Phone Numbers for Calling & SMS Anywhere
             </h1>
 
             {/* Subheadline */}
             <p className="text-lg md:text-xl text-gray-600 dark:text-gray-300 leading-relaxed max-w-2xl text-center mx-auto mt-6">
-              OTO DIAL is a modern cloud-based calling and SMS platform for businesses, startups, and call centers. Buy virtual phone numbers, make high-quality calls, send two-way SMS, and manage everything from one dashboard. A scalable alternative to TextNow and Google Voice, built for business use.
+              Get a local phone number in the US, UK, and other countries. Make calls and send SMS from anywhere—perfect for travelers, freelancers, and remote workers. A simple alternative to Google Voice and TextNow.
             </p>
 
             {/* CTA Buttons */}

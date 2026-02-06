@@ -7,7 +7,7 @@ function NewFeaturesSection() {
         </svg>
       ),
       title: "Virtual Phone Numbers",
-      description: "Buy virtual phone numbers from 100+ countries instantly. Perfect for businesses expanding globally. No contracts, activate in under 60 seconds."
+      description: "Get a local phone number in the US, UK, and other countries instantly. Perfect for travelers and remote workers. No contracts, activate in under 60 seconds."
     },
     {
       icon: (
@@ -34,7 +34,7 @@ function NewFeaturesSection() {
         </svg>
       ),
       title: "Two-Way SMS Platform",
-      description: "Send and receive SMS messages from your business phone number. Perfect for customer support, notifications, and two-way conversations. Built for business SMS workflows."
+      description: "Send and receive SMS messages from your virtual phone number. Perfect for staying connected with clients, family, and contacts worldwide."
     },
     {
       icon: (
@@ -43,7 +43,7 @@ function NewFeaturesSection() {
         </svg>
       ),
       title: "Call Analytics & Reporting",
-      description: "Track call metrics, SMS usage, and performance analytics. Monitor your business communications with detailed reporting and insights."
+      description: "Track your calls and SMS usage. Monitor your communications with simple reporting and insights."
     },
     {
       icon: (
@@ -51,8 +51,8 @@ function NewFeaturesSection() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
         </svg>
       ),
-      title: "Enterprise Security",
-      description: "Bank-level encryption and compliance with GDPR, HIPAA, and SOC 2. Built on carrier-grade infrastructure (Telnyx) for reliable voice & SMS delivery."
+      title: "Secure & Reliable",
+      description: "Built on carrier-grade infrastructure for reliable voice and SMS delivery. Your communications are secure and private."
     }
   ];
 
@@ -62,10 +62,10 @@ function NewFeaturesSection() {
         {/* Section Header */}
         <div className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4 tracking-tight">
-            Cloud Dialer & Two-Way SMS Platform for Businesses
+            Call and Text Using a Local Number
           </h2>
           <p className="text-lg md:text-xl text-gray-600 dark:text-gray-400 max-w-3xl mx-auto leading-relaxed">
-            Powerful cloud-based calling and SMS features that help businesses of all sizes communicate better with customers. Built for sales teams, support teams, and call centers.
+            Built for individuals, freelancers, and global work. Cloud-based calling and SMS—no SIM card needed. Works from anywhere in the world.
           </p>
         </div>
 
