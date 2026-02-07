@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import API from '../../api';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -7,7 +8,21 @@ import {
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6'];
 
+// Chevron icon for expand/collapse
+const ChevronDownIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+  </svg>
+);
+
+const ChevronUpIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+  </svg>
+);
+
 function AdminAnalytics() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [dateRange, setDateRange] = useState({
@@ -28,19 +43,35 @@ function AdminAnalytics() {
 
       const response = await API.get(`/api/analytics/admin/dashboard?${params.toString()}`);
       
+      console.log('Analytics API Response:', response);
+      
       if (response.error) {
         console.error('Error fetching analytics:', response.error);
+        // Set empty data structure so cards still show
+        setData(null);
         return;
       }
 
       if (response.data?.success) {
+        console.log('Analytics data received:', response.data.data);
         setData(response.data.data);
+      } else {
+        console.warn('Unexpected response format:', response.data);
+        // Set null so we can still show cards with defaults
+        setData(null);
       }
     } catch (error) {
       console.error('Error fetching analytics:', error);
+      setData(null);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleCardClick = (cardId) => {
+    navigate(`/adminbobby/analytics/${cardId}`, {
+      state: { data, dateRange }
+    });
   };
 
   const formatTime = (seconds) => {
@@ -60,19 +91,8 @@ function AdminAnalytics() {
     );
   }
 
-  if (!data) {
-    return (
-      <div className="p-6">
-        <div className="text-center py-12">
-          <p className="text-gray-600 dark:text-gray-400">No analytics data available</p>
-          <p className="text-sm text-gray-500 dark:text-gray-500 mt-2">Data will appear as visitors use the site</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Handle empty data gracefully
-  const overview = data.overview || {
+  // Always show cards, even with no data - helps debug and shows structure
+  const overview = data?.overview || {
     totalVisitors: 0,
     uniqueVisitors: 0,
     returningVisitors: 0,
@@ -82,7 +102,7 @@ function AdminAnalytics() {
     avgTimeSpent: 0
   };
 
-  const funnel = data.funnel || {
+  const funnel = data?.funnel || {
     totalVisitors: 0,
     uniqueVisitors: 0,
     signedUp: 0,
@@ -91,220 +111,192 @@ function AdminAnalytics() {
     subscriptionRate: 0
   };
 
-  const countries = data.countries || [];
-  const devices = data.devices || [];
-  const browsers = data.browsers || [];
-  const os = data.os || [];
-  const pages = data.pages || [];
-  const dailyVisitors = data.dailyVisitors || [];
-  const topIPs = data.topIPs || [];
+  const countries = data?.countries || [];
+  const devices = data?.devices || [];
+  const browsers = data?.browsers || [];
+  const os = data?.os || [];
+  const pages = data?.pages || [];
+  const dailyVisitors = data?.dailyVisitors || [];
+  const topIPs = data?.topIPs || [];
+
+  // Card component - navigates to detail page
+  const MetricCard = ({ id, title, icon, value, subtitle, color, gradient }) => {
+    return (
+      <div 
+        onClick={() => handleCardClick(id)}
+        className={`bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm hover:shadow-lg hover:scale-[1.02] transition-all duration-300 cursor-pointer overflow-hidden ${gradient}`}
+      >
+        <div className="w-full p-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className={`p-3 rounded-lg ${color} bg-opacity-10`}>
+                {icon}
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
+                <div className="flex items-baseline space-x-2 mt-1">
+                  <span className={`text-3xl font-bold ${color}`}>{value}</span>
+                  {subtitle && (
+                    <span className="text-sm text-gray-500 dark:text-gray-400">{subtitle}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="text-sm text-gray-500 dark:text-gray-400">View Details</span>
+              <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div className="p-6">
+    <div className="p-6 bg-gray-50 dark:bg-slate-900 min-h-screen">
+      {/* Debug Banner */}
+      {!data && (
+        <div className="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+          <div className="flex items-center space-x-2">
+            <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div>
+              <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">No data from API - Showing cards with default values (0)</p>
+              <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">Check browser console for API response details</p>
+            </div>
+          </div>
+        </div>
+      )}
+      
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Analytics Dashboard</h1>
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Analytics Dashboard</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Track your audience and performance metrics</p>
+        </div>
         <div className="flex gap-4">
           <input
             type="date"
             value={dateRange.startDate}
             onChange={(e) => setDateRange(prev => ({ ...prev, startDate: e.target.value }))}
-            className="px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+            className="px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
           />
           <input
             type="date"
             value={dateRange.endDate}
             onChange={(e) => setDateRange(prev => ({ ...prev, endDate: e.target.value }))}
-            className="px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+            className="px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
           />
         </div>
       </div>
 
-      {/* Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Visitors</div>
-          <div className="text-3xl font-bold text-gray-900 dark:text-white">{overview.totalVisitors.toLocaleString()}</div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Unique Visitors</div>
-          <div className="text-3xl font-bold text-gray-900 dark:text-white">{overview.uniqueVisitors.toLocaleString()}</div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Returning Visitors</div>
-          <div className="text-3xl font-bold text-indigo-600 dark:text-indigo-400">{overview.returningVisitors.toLocaleString()}</div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">New Visitors</div>
-          <div className="text-3xl font-bold text-green-600 dark:text-green-400">{overview.newVisitors.toLocaleString()}</div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Sign Ups</div>
-          <div className="text-3xl font-bold text-purple-600 dark:text-purple-400">{overview.signUps.toLocaleString()}</div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Active Subscriptions</div>
-          <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">{overview.usersWithSubscription.toLocaleString()}</div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Avg. Time Spent</div>
-          <div className="text-3xl font-bold text-gray-900 dark:text-white">{formatTime(overview.avgTimeSpent)}</div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Conversion Rate</div>
-          <div className="text-3xl font-bold text-indigo-600 dark:text-indigo-400">{funnel.conversionRate}%</div>
-        </div>
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Traffic Overview Card */}
+        <MetricCard
+          id="traffic"
+          title="Traffic Overview"
+          icon={
+            <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            </svg>
+          }
+          value={overview.totalVisitors.toLocaleString()}
+          subtitle="Total Visitors"
+          color="text-blue-600 dark:text-blue-400"
+          gradient="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20"
+        />
 
-      {/* Conversion Funnel */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6 mb-8">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Conversion Funnel</h2>
-        <div className="grid grid-cols-4 gap-4">
-          <div className="text-center">
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">{funnel.totalVisitors.toLocaleString()}</div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Total Visitors</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">{funnel.uniqueVisitors.toLocaleString()}</div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Unique Visitors</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">{funnel.signedUp.toLocaleString()}</div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Signed Up ({funnel.conversionRate}%)</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{funnel.withSubscription.toLocaleString()}</div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Subscribed ({funnel.subscriptionRate}%)</div>
-          </div>
-        </div>
-      </div>
+        {/* Returning Users Card */}
+        <MetricCard
+          id="returning"
+          title="Returning Users"
+          icon={
+            <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          }
+          value={overview.returningVisitors.toLocaleString()}
+          subtitle={`${overview.totalVisitors > 0 ? ((overview.returningVisitors / overview.totalVisitors) * 100).toFixed(1) : 0}% of total`}
+          color="text-purple-600 dark:text-purple-400"
+          gradient="bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20"
+        />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {/* Daily Visitors Chart */}
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Daily Visitors</h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={dailyVisitors}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="visitors" stroke="#6366f1" name="Visitors" />
-              <Line type="monotone" dataKey="newVisitors" stroke="#10b981" name="New" />
-              <Line type="monotone" dataKey="returningVisitors" stroke="#8b5cf6" name="Returning" />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+        {/* Conversions Card */}
+        <MetricCard
+          id="conversions"
+          title="Conversions"
+          icon={
+            <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+          value={overview.signUps.toLocaleString()}
+          subtitle={`${funnel.conversionRate}% conversion rate`}
+          color="text-green-600 dark:text-green-400"
+          gradient="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20"
+        />
 
-        {/* Devices Chart */}
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Devices</h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={devices}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ device, percent }) => `${device}: ${(percent * 100).toFixed(0)}%`}
-                outerRadius={80}
-                fill="#8884d8"
-                dataKey="count"
-              >
-                {devices.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+        {/* Geographic Data Card */}
+        <MetricCard
+          id="geographic"
+          title="Geographic Data"
+          icon={
+            <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+          value={countries.length}
+          subtitle="Countries"
+          color="text-red-600 dark:text-red-400"
+          gradient="bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20"
+        />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {/* Countries Chart */}
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Top Countries</h2>
-          <ResponsiveContainer width="100%" height={400}>
-            <BarChart data={countries.slice(0, 10)}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="country" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="visits" fill="#6366f1" name="Visits" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        {/* Device Analytics Card */}
+        <MetricCard
+          id="devices"
+          title="Device Analytics"
+          icon={
+            <svg className="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+          }
+          value={devices.length}
+          subtitle="Device Types"
+          color="text-indigo-600 dark:text-indigo-400"
+          gradient="bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-900/20 dark:to-blue-900/20"
+        />
 
-        {/* Browsers Chart */}
-        <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Browsers</h2>
-          <ResponsiveContainer width="100%" height={400}>
-            <BarChart data={browsers}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="browser" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="count" fill="#8b5cf6" name="Visits" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+        {/* Page Performance Card */}
+        <MetricCard
+          id="pages"
+          title="Page Performance"
+          icon={
+            <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          }
+          value={pages.length}
+          subtitle="Tracked Pages"
+          color="text-yellow-600 dark:text-yellow-400"
+          gradient="bg-gradient-to-br from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20"
+        />
 
-      {/* Top Pages */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6 mb-8">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Top Pages</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-200 dark:border-slate-700">
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700 dark:text-gray-300">Page</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700 dark:text-gray-300">Title</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-gray-700 dark:text-gray-300">Visits</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-gray-700 dark:text-gray-300">Avg. Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pages.map((page, index) => (
-                <tr key={index} className="border-b border-gray-100 dark:border-slate-700">
-                  <td className="py-3 px-4 text-sm text-gray-900 dark:text-white">{page.page}</td>
-                  <td className="py-3 px-4 text-sm text-gray-600 dark:text-gray-400">{page.pageTitle || '-'}</td>
-                  <td className="py-3 px-4 text-sm text-right text-gray-900 dark:text-white">{page.visits.toLocaleString()}</td>
-                  <td className="py-3 px-4 text-sm text-right text-gray-600 dark:text-gray-400">{formatTime(page.avgTimeSpent)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Top IPs */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Top IP Addresses</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-200 dark:border-slate-700">
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700 dark:text-gray-300">IP Address</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700 dark:text-gray-300">Country</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700 dark:text-gray-300">City</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-gray-700 dark:text-gray-300">Visits</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-gray-700 dark:text-gray-300">Sessions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topIPs.slice(0, 20).map((ip, index) => (
-                <tr key={index} className="border-b border-gray-100 dark:border-slate-700">
-                  <td className="py-3 px-4 text-sm text-gray-900 dark:text-white font-mono">{ip.ipAddress}</td>
-                  <td className="py-3 px-4 text-sm text-gray-600 dark:text-gray-400">{ip.country || '-'}</td>
-                  <td className="py-3 px-4 text-sm text-gray-600 dark:text-gray-400">{ip.city || '-'}</td>
-                  <td className="py-3 px-4 text-sm text-right text-gray-900 dark:text-white">{ip.visits.toLocaleString()}</td>
-                  <td className="py-3 px-4 text-sm text-right text-gray-600 dark:text-gray-400">{ip.uniqueSessions.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {/* Visitor Details Card */}
+        <MetricCard
+          id="visitors"
+          title="Visitor Details"
+          icon={
+            <svg className="w-6 h-6 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          }
+          value={topIPs.length}
+          subtitle="IP Addresses"
+          color="text-cyan-600 dark:text-cyan-400"
+          gradient="bg-gradient-to-br from-cyan-50 to-teal-50 dark:from-cyan-900/20 dark:to-teal-900/20"
+        />
       </div>
     </div>
   );

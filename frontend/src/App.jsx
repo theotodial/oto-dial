@@ -51,6 +51,7 @@ import AdminSupport from './pages/admin/AdminSupport';
 import AdminTeam from './pages/admin/AdminTeam';
 import AdminBlog from './pages/admin/AdminBlog';
 import AdminAnalytics from './pages/admin/AdminAnalytics';
+import AdminAnalyticsDetail from './pages/admin/AdminAnalyticsDetail';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
 import AdminProtectedRoute from './components/AdminProtectedRoute';
@@ -284,6 +285,16 @@ function App() {
                 <AdminProtectedRoute>
                   <AdminLayout>
                     <AdminAnalytics />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/analytics/:category" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <AdminAnalyticsDetail />
                   </AdminLayout>
                 </AdminProtectedRoute>
               } 
