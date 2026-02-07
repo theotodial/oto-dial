@@ -15,22 +15,50 @@ function AdminLogin() {
     setError('');
     setLoading(true);
 
+    // Trim inputs to avoid whitespace issues
+    const trimmedEmail = email.trim();
+    const trimmedPassword = password.trim();
+
+    if (!trimmedEmail || !trimmedPassword) {
+      setError('Email and password are required');
+      setLoading(false);
+      return;
+    }
+
     try {
+      console.log('Attempting admin login...');
       const response = await API.post('/api/admin/auth/login', {
-        email,
-        password
+        email: trimmedEmail,
+        password: trimmedPassword
       });
+
+      console.log('Login response:', response);
 
       if (response.data?.success && response.data?.token) {
         // Clear user token when admin logs in to prevent conflicts
         localStorage.removeItem("token");
         localStorage.setItem('adminToken', response.data.token);
+        console.log('Admin login successful, redirecting...');
         navigate('/adminbobby/dashboard');
       } else {
-        setError('Invalid credentials');
+        setError(response.data?.error || 'Invalid credentials');
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Login failed');
+      console.error('Admin login error:', err);
+      console.error('Error response:', err.response);
+      
+      // Better error messages
+      if (err.response?.status === 401) {
+        setError(err.response?.data?.error || 'Invalid email or password');
+      } else if (err.response?.status === 500) {
+        setError(err.response?.data?.error || 'Server error. Please try again later.');
+      } else if (err.response?.status === 400) {
+        setError(err.response?.data?.error || 'Please check your input');
+      } else if (!err.response) {
+        setError('Network error. Please check your connection.');
+      } else {
+        setError(err.response?.data?.error || 'Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

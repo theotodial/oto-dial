@@ -67,6 +67,7 @@ function NewFooter() {
             <ul className="space-y-3">
               <li><Link to="/contact" className="text-gray-400 hover:text-white transition-colors">About</Link></li>
               <li><Link to="/contact" className="text-gray-400 hover:text-white transition-colors">Contact</Link></li>
+              <li><Link to="/blog" className="text-gray-400 hover:text-white transition-colors">Blog</Link></li>
             </ul>
           </div>
 

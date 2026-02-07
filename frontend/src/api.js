@@ -12,9 +12,12 @@ const axiosInstance = axios.create({
 // Add request interceptor to include auth token
 axiosInstance.interceptors.request.use(
   (config) => {
-    // CRITICAL: Only use adminToken for /api/admin/* routes
+    // CRITICAL: Only use adminToken for /api/admin/* and /api/blog/admin/* routes
     // Use userToken for all other routes to prevent conflicts
-    const isAdminRoute = config.url && config.url.startsWith('/api/admin');
+    const isAdminRoute = config.url && (
+      config.url.startsWith('/api/admin') || 
+      config.url.startsWith('/api/blog/admin')
+    );
     
     if (isAdminRoute) {
       // Admin routes: use adminToken only
@@ -44,13 +47,17 @@ const safeRequest = async (requestFn) => {
     return response;
   } catch (error) {
     // Log error for debugging but don't throw
-    console.warn('API Error:', error.response?.data || error.message);
+    console.error('API Error:', error.response?.data || error.message);
+    console.error('API Error Status:', error.response?.status);
+    console.error('API Error URL:', error.config?.url);
+    
     // Return response-like structure that mimics axios response
-    // This allows components to use response.data normally, and check response.error for failures
+    // Include the actual response data if available for better error messages
     return {
-      data: null,
-      error: error.response?.data?.error || error.response?.data?.detail || error.message || 'API request failed',
-      status: error.response?.status || 500
+      data: error.response?.data || null,
+      error: error.response?.data?.error || error.response?.data?.message || error.response?.data?.detail || error.message || 'API request failed',
+      status: error.response?.status || 500,
+      response: error.response
     };
   }
 };
@@ -66,8 +73,8 @@ const API = {
   patch: async (path, data) => {
     return safeRequest(() => axiosInstance.patch(path, data));
   },
-  put: async (path, data) => {
-    return safeRequest(() => axiosInstance.put(path, data));
+  put: async (path, data, config = {}) => {
+    return safeRequest(() => axiosInstance.put(path, data, config));
   },
   delete: async (path) => {
     return safeRequest(() => axiosInstance.delete(path));

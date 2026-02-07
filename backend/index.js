@@ -39,6 +39,7 @@ import pushRoutes from "./src/routes/pushRoutes.js";
 import webrtcRoutes from "./src/routes/webrtcRoutes.js";
 import usageStatisticsRoutes from "./src/routes/usageStatistics.js";
 import supportRoutes from "./src/routes/supportRoutes.js";
+import blogRoutes from "./src/routes/blogRoutes.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
 import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
@@ -105,6 +106,7 @@ app.use("/api/push", pushRoutes);
 app.use("/api/webrtc", authenticateUser, loadSubscription, webrtcRoutes);
 app.use("/api/usage", authenticateUser, loadSubscription, usageStatisticsRoutes);
 app.use("/api/support", supportRoutes); // Support routes (authenticateUser is in the route file)
+app.use("/api/blog", blogRoutes); // Blog routes (public and admin routes inside)
 // Admin routes: Only require authentication, NOT subscription (admins don't need subscriptions)
 app.use("/api/admin", authenticateUser, adminRoutes);
 

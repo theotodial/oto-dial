@@ -48,6 +48,9 @@ import AdminSms from './pages/admin/AdminSms';
 import AdminNumbers from './pages/admin/AdminNumbers';
 import AdminSupport from './pages/admin/AdminSupport';
 import AdminTeam from './pages/admin/AdminTeam';
+import AdminBlog from './pages/admin/AdminBlog';
+import Blog from './pages/Blog';
+import BlogPost from './pages/BlogPost';
 import AdminProtectedRoute from './components/AdminProtectedRoute';
 import AdminLayout from './components/AdminLayout';
 
@@ -124,6 +127,24 @@ function App() {
                 <>
                   <Navbar />
                   <Terms />
+                </>
+              }
+            />
+            
+            <Route
+              path="/blog"
+              element={
+                <>
+                  <Blog />
+                </>
+              }
+            />
+            
+            <Route
+              path="/blog/:slug"
+              element={
+                <>
+                  <BlogPost />
                 </>
               }
             />
@@ -218,6 +239,36 @@ function App() {
                 <AdminProtectedRoute>
                   <AdminLayout>
                     <AdminTeam />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/blog" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <AdminBlog />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/blog/:id" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <AdminBlog />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/blog/new" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <AdminBlog />
                   </AdminLayout>
                 </AdminProtectedRoute>
               } 

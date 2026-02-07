@@ -20,6 +20,7 @@ const navItems = [
   { path: '/adminbobby/users', label: 'Users' },
   { path: '/adminbobby/support', label: 'Support' },
   { path: '/adminbobby/team', label: 'Team' },
+  { path: '/adminbobby/blog', label: 'Blog' },
 ];
 
 const communicationsItems = [
