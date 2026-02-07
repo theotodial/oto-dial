@@ -9,6 +9,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import IncomingCallNotification from './components/IncomingCallNotification';
 import GlobalCallOverlay from './components/GlobalCallOverlay';
+import AnalyticsTracker from './components/AnalyticsTracker';
 import Home from './pages/Home';
 
 /** Home only for guests; logged-in users go to Voice (Recents) */
@@ -49,6 +50,7 @@ import AdminNumbers from './pages/admin/AdminNumbers';
 import AdminSupport from './pages/admin/AdminSupport';
 import AdminTeam from './pages/admin/AdminTeam';
 import AdminBlog from './pages/admin/AdminBlog';
+import AdminAnalytics from './pages/admin/AdminAnalytics';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
 import AdminProtectedRoute from './components/AdminProtectedRoute';
@@ -61,6 +63,9 @@ function App() {
         <AuthProvider>
           <CallProvider>
           <BrowserRouter>
+            {/* Analytics Tracker - tracks page views and user behavior */}
+            <AnalyticsTracker />
+            
             {/* Global Incoming Call Notification - shows when call is incoming */}
             <IncomingCallNotification />
             
@@ -269,6 +274,16 @@ function App() {
                 <AdminProtectedRoute>
                   <AdminLayout>
                     <AdminBlog />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/adminbobby/analytics" 
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <AdminAnalytics />
                   </AdminLayout>
                 </AdminProtectedRoute>
               } 

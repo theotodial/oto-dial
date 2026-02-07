@@ -3,6 +3,7 @@ import User from "../models/User.js";
 import Subscription from "../models/Subscription.js";
 import Plan from "../models/Plan.js";
 import StripeEvent from "../models/StripeEvent.js";
+import Analytics from "../models/Analytics.js";
 
 /**
  * GUARANTEED SUBSCRIPTION ACTIVATION SERVICE
@@ -244,6 +245,24 @@ export async function processInvoicePaymentSucceeded(event, stripe) {
     session.endSession();
 
     console.log(`✅ SUBSCRIPTION ACTIVATED: User ${user.email} (${user._id}) → Subscription ${subscription._id}`);
+
+    // Track subscription in analytics
+    try {
+      // Update all analytics records for this user to mark as having subscription
+      await Analytics.updateMany(
+        { userId: user._id },
+        { 
+          $set: { 
+            hasSubscription: true,
+            subscriptionId: subscription._id
+          } 
+        }
+      );
+      console.log(`✅ Analytics updated for subscription activation: User ${user._id}`);
+    } catch (analyticsError) {
+      // Don't fail subscription activation if analytics fails
+      console.warn(`⚠️ Failed to update analytics for subscription:`, analyticsError.message);
+    }
 
     return {
       success: true,

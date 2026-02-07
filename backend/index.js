@@ -40,6 +40,7 @@ import webrtcRoutes from "./src/routes/webrtcRoutes.js";
 import usageStatisticsRoutes from "./src/routes/usageStatistics.js";
 import supportRoutes from "./src/routes/supportRoutes.js";
 import blogRoutes from "./src/routes/blogRoutes.js";
+import analyticsRoutes from "./src/routes/analyticsRoutes.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
 import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
@@ -47,6 +48,9 @@ import telnyxWebhookRoutes from "./src/routes/webhooks/telnyx.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Trust proxy for accurate IP addresses
+app.set('trust proxy', true);
 
 // ========================
 // BOOT LOGS
@@ -107,6 +111,7 @@ app.use("/api/webrtc", authenticateUser, loadSubscription, webrtcRoutes);
 app.use("/api/usage", authenticateUser, loadSubscription, usageStatisticsRoutes);
 app.use("/api/support", supportRoutes); // Support routes (authenticateUser is in the route file)
 app.use("/api/blog", blogRoutes); // Blog routes (public and admin routes inside)
+app.use("/api/analytics", analyticsRoutes); // Analytics routes (public and admin routes inside)
 // Admin routes: Only require authentication, NOT subscription (admins don't need subscriptions)
 app.use("/api/admin", authenticateUser, adminRoutes);
 

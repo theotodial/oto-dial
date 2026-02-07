@@ -41,9 +41,11 @@ export function AuthProvider({ children }) {
       localStorage.removeItem("adminToken");
       localStorage.setItem("token", response.data.token);
       setToken(response.data.token);
-      setUser({ email });
+      const userData = response.data?.user || { email };
+      setUser(userData);
       return { 
         success: true,
+        user: userData,
         sessionInfo: response.data?.sessionInfo || null
       };
     }
@@ -70,8 +72,9 @@ export function AuthProvider({ children }) {
       localStorage.removeItem("adminToken");
       localStorage.setItem("token", response.data.token);
       setToken(response.data.token);
-      setUser({ email, ...additionalData });
-      return { success: true };
+      const userData = response.data?.user || { email, ...additionalData };
+      setUser(userData);
+      return { success: true, user: userData };
     }
 
     return { success: false, error: "No token received" };

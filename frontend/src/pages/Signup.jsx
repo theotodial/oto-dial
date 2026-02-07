@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { trackSignUp } from '../utils/analytics';
 
 const GoogleIcon = () => (
   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
@@ -154,6 +155,11 @@ function Signup() {
         name: `${formData.firstName} ${formData.lastName}`.trim()
       });
       if (!result.success) throw new Error(result.error);
+
+      // Track signup event
+      if (result.user?.id) {
+        await trackSignUp(result.user.id);
+      }
 
       navigate('/dashboard');
     } catch (err) {

@@ -21,6 +21,7 @@ const navItems = [
   { path: '/adminbobby/support', label: 'Support' },
   { path: '/adminbobby/team', label: 'Team' },
   { path: '/adminbobby/blog', label: 'Blog' },
+  { path: '/adminbobby/analytics', label: 'Analytics' },
 ];
 
 const communicationsItems = [

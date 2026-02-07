@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import API from '../api';
+import { trackSubscription } from '../utils/analytics';
 
 const CheckIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -20,6 +23,8 @@ function Billing() {
   const [buyingAddonId, setBuyingAddonId] = useState(null);
 
   const isMountedRef = useRef(true);
+  const [searchParams] = useSearchParams();
+  const { user } = useAuth();
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -28,10 +33,26 @@ function Billing() {
     fetchAddonPlans();
     fetchCurrentSubscription();
     
+    // Check for successful checkout
+    const successParam = searchParams.get('success');
+    if (successParam && user?.id) {
+      // Wait a bit for subscription to be created, then track
+      setTimeout(async () => {
+        try {
+          const subResponse = await API.get('/api/subscription/current');
+          if (subResponse.data?.subscription?._id) {
+            await trackSubscription(user.id, subResponse.data.subscription._id);
+          }
+        } catch (err) {
+          console.warn('Could not track subscription:', err);
+        }
+      }, 2000);
+    }
+    
     return () => {
       isMountedRef.current = false;
     };
-  }, []);
+  }, [searchParams, user]);
 
   const fetchPlans = async () => {
     if (!isMountedRef.current) return;
