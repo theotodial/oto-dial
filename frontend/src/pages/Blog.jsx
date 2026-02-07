@@ -31,10 +31,20 @@ function Blog() {
       params.append('page', filters.page);
       params.append('limit', '12');
 
-      const response = await API.get(`/blog?${params.toString()}`);
+      const response = await API.get(`/api/blog?${params.toString()}`);
+      
+      if (response.error) {
+        console.error('Error fetching blogs:', response.error);
+        setBlogs([]);
+        return;
+      }
+      
       if (response.data?.success) {
-        setBlogs(response.data.blogs);
-        setPagination(response.data.pagination);
+        setBlogs(response.data.blogs || []);
+        setPagination(response.data.pagination || { page: 1, pages: 1, total: 0 });
+      } else {
+        console.error('Blog fetch failed:', response.data);
+        setBlogs([]);
       }
     } catch (error) {
       console.error('Error fetching blogs:', error);
@@ -46,11 +56,11 @@ function Blog() {
   const fetchMeta = async () => {
     try {
       const [catsRes, tagsRes] = await Promise.all([
-        API.get('/blog/meta/categories'),
-        API.get('/blog/meta/tags')
+        API.get('/api/blog/meta/categories'),
+        API.get('/api/blog/meta/tags')
       ]);
-      if (catsRes.data?.success) setCategories(catsRes.data.categories);
-      if (tagsRes.data?.success) setTags(tagsRes.data.tags);
+      if (!catsRes.error && catsRes.data?.success) setCategories(catsRes.data.categories || []);
+      if (!tagsRes.error && tagsRes.data?.success) setTags(tagsRes.data.tags || []);
     } catch (error) {
       console.error('Error fetching meta:', error);
     }

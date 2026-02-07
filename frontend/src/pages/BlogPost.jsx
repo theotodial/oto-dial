@@ -18,7 +18,7 @@ function BlogPost() {
   const fetchBlog = async () => {
     try {
       setLoading(true);
-      const response = await API.get(`/blog/${slug}`);
+      const response = await API.get(`/api/blog/${slug}`);
       if (response.data?.success) {
         setBlog(response.data.blog);
         fetchRelatedBlogs(response.data.blog);
@@ -39,7 +39,7 @@ function BlogPost() {
       if (currentBlog.category) params.append('category', currentBlog.category);
       params.append('limit', '3');
       
-      const response = await API.get(`/blog?${params.toString()}`);
+      const response = await API.get(`/api/blog?${params.toString()}`);
       if (response.data?.success) {
         // Filter out current blog
         const related = response.data.blogs

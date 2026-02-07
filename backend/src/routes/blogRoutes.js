@@ -55,9 +55,37 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Public route - Get single blog by slug
+// Public route - Get categories (MUST be before /:slug route)
+router.get("/meta/categories", async (req, res) => {
+  try {
+    const categories = await Blog.distinct("category", { status: "published" });
+    res.json({ success: true, categories: categories.filter(c => c) });
+  } catch (error) {
+    console.error("Error fetching categories:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch categories" });
+  }
+});
+
+// Public route - Get tags (MUST be before /:slug route)
+router.get("/meta/tags", async (req, res) => {
+  try {
+    const tags = await Blog.distinct("tags", { status: "published" });
+    const flatTags = [...new Set(tags.flat())];
+    res.json({ success: true, tags: flatTags });
+  } catch (error) {
+    console.error("Error fetching tags:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch tags" });
+  }
+});
+
+// Public route - Get single blog by slug (MUST be last to avoid catching meta routes)
 router.get("/:slug", async (req, res) => {
   try {
+    // Don't treat "meta" or "admin" as slugs
+    if (req.params.slug === "meta" || req.params.slug === "admin") {
+      return res.status(404).json({ success: false, error: "Blog not found" });
+    }
+
     const blog = await Blog.findOne({ slug: req.params.slug, status: "published" })
       .populate("author", "name email");
 
@@ -329,29 +357,6 @@ router.delete("/admin/:id", authenticateUser, requireAdmin, async (req, res) => 
   } catch (error) {
     console.error("Error deleting blog:", error);
     res.status(500).json({ success: false, error: "Failed to delete blog" });
-  }
-});
-
-// Public route - Get categories
-router.get("/meta/categories", async (req, res) => {
-  try {
-    const categories = await Blog.distinct("category", { status: "published" });
-    res.json({ success: true, categories: categories.filter(c => c) });
-  } catch (error) {
-    console.error("Error fetching categories:", error);
-    res.status(500).json({ success: false, error: "Failed to fetch categories" });
-  }
-});
-
-// Public route - Get tags
-router.get("/meta/tags", async (req, res) => {
-  try {
-    const tags = await Blog.distinct("tags", { status: "published" });
-    const flatTags = [...new Set(tags.flat())];
-    res.json({ success: true, tags: flatTags });
-  } catch (error) {
-    console.error("Error fetching tags:", error);
-    res.status(500).json({ success: false, error: "Failed to fetch tags" });
   }
 });
 
