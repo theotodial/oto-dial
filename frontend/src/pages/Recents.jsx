@@ -189,6 +189,9 @@ function Recents() {
   const [saveContactName, setSaveContactName] = useState('');
   const [savingContact, setSavingContact] = useState(false);
   const [importingContacts, setImportingContacts] = useState(false);
+  // Long press state for mobile
+  const [longPressedItem, setLongPressedItem] = useState(null); // phoneNumber that's being long-pressed
+  const longPressTimerRef = useRef(null);
   // Read/unread state and notifications
   const [readState, setReadState] = useState({}); // phoneNumber -> lastReadAt
   const [unreadCounts, setUnreadCounts] = useState({}); // phoneNumber -> count
@@ -927,11 +930,35 @@ function Recents() {
     }
   };
 
+  // Long press handlers for mobile
+  const handleLongPressStart = (phoneNumber) => {
+    longPressTimerRef.current = setTimeout(() => {
+      setLongPressedItem(phoneNumber);
+    }, 500); // 500ms long press
+  };
+
+  const handleLongPressEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleItemClick = (phoneNumber, action) => {
+    if (longPressedItem === phoneNumber) {
+      // If long-pressed, don't trigger normal click
+      setLongPressedItem(null);
+      return;
+    }
+    action();
+  };
+
   // Save to contacts (backend-synced, visible on mobile + desktop)
   const openSaveContactModal = (number) => {
     setSaveContactNumber(number || phoneNumber || '');
     setSaveContactName(getContactName(number || phoneNumber) || '');
     setShowSaveContactModal(true);
+    setLongPressedItem(null); // Reset long press state
   };
   const handleSaveContact = async (e) => {
     e?.preventDefault();
@@ -1100,6 +1127,29 @@ function Recents() {
     </div>
   );
 
+  // Update document attribute when chat is selected for DashboardLayout to detect
+  useEffect(() => {
+    if (selectedChat && mobileTab === 'chats') {
+      document.body.setAttribute('data-chat-open', 'true');
+    } else {
+      document.body.removeAttribute('data-chat-open');
+    }
+    return () => {
+      document.body.removeAttribute('data-chat-open');
+    };
+  }, [selectedChat, mobileTab]);
+
+  // Listen for close chat event from DashboardLayout back button
+  useEffect(() => {
+    const handleCloseChat = () => {
+      if (selectedChat && mobileTab === 'chats') {
+        setSelectedChat(null);
+      }
+    };
+    window.addEventListener('closeChat', handleCloseChat);
+    return () => window.removeEventListener('closeChat', handleCloseChat);
+  }, [selectedChat, mobileTab]);
+
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-white dark:bg-slate-900">
       {/* Desktop View - 3 panels: Chats list | Inline Chat / Empty | Dialer (same theme as mobile) */}
@@ -1112,9 +1162,20 @@ function Recents() {
               <button onClick={() => setActiveTab('chats')} className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${activeTab === 'chats' ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-600'}`}>Chats</button>
               <button onClick={() => setActiveTab('all')} className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${activeTab === 'all' ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 shadow-md' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-600'}`}>Recents</button>
             </div>
-            <button onClick={handleNewChat} className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium flex items-center justify-center gap-2 text-sm">
-              <PlusIcon className="w-4 h-4" /> New chat
-            </button>
+            <div className="flex gap-2">
+              <button onClick={handleNewChat} className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium flex items-center justify-center gap-2 text-sm">
+                <PlusIcon className="w-4 h-4" /> New chat
+              </button>
+              <button 
+                onClick={() => navigate('/contacts')} 
+                className="px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-300 font-medium flex items-center justify-center gap-2 text-sm transition-colors"
+                title="View Contacts"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </button>
+            </div>
             {activeTab === 'all' && combinedRecents.some(r => r.type === 'call') && (
               <button onClick={() => setDeleteCallHistoryConfirm(true)} className="mt-2 w-full py-2 rounded-xl border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 font-medium flex items-center justify-center gap-2 text-sm">
                 <TrashIcon className="w-4 h-4" /> Clear call history
@@ -1142,8 +1203,13 @@ function Recents() {
                       className={`group flex items-center px-4 py-3 border-b border-gray-100/80 dark:border-slate-700/80 transition-colors ${
                         isSelected ? 'bg-indigo-50 dark:bg-indigo-900/20' : 'bg-white dark:bg-slate-800 hover:bg-gray-50/80 dark:hover:bg-slate-700/50'
                       }`}
+                      onTouchStart={() => handleLongPressStart(phoneNumber)}
+                      onTouchEnd={handleLongPressEnd}
+                      onMouseDown={() => handleLongPressStart(phoneNumber)}
+                      onMouseUp={handleLongPressEnd}
+                      onMouseLeave={handleLongPressEnd}
                     >
-                      <div onClick={() => phoneNumber && handleText(phoneNumber)} className="flex-1 flex items-center gap-3 min-w-0 cursor-pointer">
+                      <div onClick={() => phoneNumber && handleItemClick(phoneNumber, () => handleText(phoneNumber))} className="flex-1 flex items-center gap-3 min-w-0 cursor-pointer">
                         <div className="relative flex-shrink-0">
                         <Avatar name={displayName} phoneNumber={phoneNumber} size="w-11 h-11" className="ring-1 ring-gray-200/50 dark:ring-slate-600/50" />
                           {unread > 0 && (
@@ -1561,9 +1627,20 @@ function Recents() {
             {mobileTab === 'chats' ? 'Chats' : mobileTab === 'recents' ? 'Recents' : 'Dialer'}
           </h1>
                 {mobileTab === 'chats' ? (
-                  <button onClick={handleNewChat} className="p-2.5 rounded-full bg-indigo-600 text-white shadow-md hover:shadow-lg hover:bg-indigo-700 active:scale-95 transition-all" title="Start new chat">
-                    <PlusIcon className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button 
+                      onClick={() => navigate('/contacts')} 
+                      className="p-2 rounded-lg text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors" 
+                      title="View Contacts"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                    </button>
+                    <button onClick={handleNewChat} className="p-2.5 rounded-full bg-indigo-600 text-white shadow-md hover:shadow-lg hover:bg-indigo-700 active:scale-95 transition-all" title="Start new chat">
+                      <PlusIcon className="w-4 h-4" />
+                    </button>
+                  </div>
                 ) : mobileTab === 'recents' ? (
                   <div className="flex items-center gap-1">
                     <button onClick={handleImportFromPhone} disabled={importingContacts} className="p-2 rounded-lg text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 disabled:opacity-50" title="Import from phone contacts">
@@ -1722,12 +1799,36 @@ function Recents() {
                           <p className={`text-sm truncate ${unread > 0 ? 'font-medium text-gray-700 dark:text-gray-200' : 'text-gray-600 dark:text-gray-300'}`}>{chat.lastMessage || 'No messages'}</p>
                         </div>
                       </div>
-                      <button onClick={(e) => { e.stopPropagation(); openSaveContactModal(phoneNumber); }} className="p-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 flex-shrink-0" title="Save to contacts">
-                        <PlusIcon className="w-5 h-5" />
-                      </button>
-                      <button onClick={(e) => { e.stopPropagation(); setDeleteChatTarget(phoneNumber); }} disabled={deleting} className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex-shrink-0" title="Delete conversation">
-                        <TrashIcon className="w-5 h-5" />
-                      </button>
+                      {/* Mobile: Show buttons only on long press, Desktop: Always visible on hover */}
+                      <div className={`flex items-center gap-1 flex-shrink-0 ${
+                        longPressedItem === phoneNumber 
+                          ? 'opacity-100' 
+                          : 'lg:opacity-0 lg:group-hover:opacity-100 opacity-0'
+                      } transition-opacity`}>
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            openSaveContactModal(phoneNumber); 
+                            setLongPressedItem(null);
+                          }} 
+                          className="p-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20" 
+                          title="Save to contacts"
+                        >
+                          <PlusIcon className="w-5 h-5" />
+                        </button>
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setDeleteChatTarget(phoneNumber); 
+                            setLongPressedItem(null);
+                          }} 
+                          disabled={deleting} 
+                          className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20" 
+                          title="Delete conversation"
+                        >
+                          <TrashIcon className="w-5 h-5" />
+                        </button>
+                      </div>
                     </div>
                   );
                 })

@@ -30,6 +30,7 @@ import OAuthConsent from './pages/OAuthConsent';
 import OAuthSuccess from './pages/OAuthSuccess';
 import Recents from './pages/Recents';
 import Dashboard from './pages/Dashboard';
+import Contacts from './pages/Contacts';
 import Billing from './pages/Billing';
 import BuyNumber from './pages/BuyNumber';
 import SubscriptionDetails from './pages/SubscriptionDetails';
@@ -326,6 +327,17 @@ function App() {
           {/* Dialer and Chat: redirect to Recents (all voice/chat operates from Recents) */}
           <Route path="/dialer" element={<Navigate to="/recents" replace />} />
           <Route path="/chat" element={<Navigate to="/recents" replace />} />
+          
+          <Route
+            path="/contacts"
+            element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <Contacts />
+                </DashboardLayout>
+              </ProtectedRoute>
+            }
+          />
             
           <Route
             path="/billing"

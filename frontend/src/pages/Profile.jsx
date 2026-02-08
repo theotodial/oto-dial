@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import API from '../api';
+import ProfilePictureCrop from '../components/ProfilePictureCrop';
 
 const CheckIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -47,6 +48,13 @@ function Profile() {
     confirmPassword: '',
   });
   const [passwordSaving, setPasswordSaving] = useState(false);
+  const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+  const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [profilePicture, setProfilePicture] = useState(null);
+  const [showCropModal, setShowCropModal] = useState(false);
+  const [cropImage, setCropImage] = useState(null);
+  const [uploadingPicture, setUploadingPicture] = useState(false);
   const isMountedRef = useRef(true);
 
   const businessTypes = [
@@ -98,6 +106,7 @@ function Profile() {
       const userData = response.data?.user || response.data;
       if (userData) {
         setUser(userData);
+        setProfilePicture(userData.profilePicture || null);
         const fullName = userData.name || 
           (userData.firstName ? `${userData.firstName} ${userData.lastName || ''}`.trim() : '');
         setProfileData(prev => ({
@@ -189,9 +198,37 @@ function Profile() {
     setSuccess('');
     
     try {
-      const response = await API.post('/api/users/verify', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      // Convert file to base64 for the new endpoint
+      const fileReader = new FileReader();
+      fileReader.onload = async (e) => {
+        const base64 = e.target.result;
+        const payload = {
+          verificationType: type === 'ID' ? 'individual' : 'business'
+        };
+        if (type === 'ID') {
+          payload.idDocument = base64;
+        } else {
+          payload.businessDocument = base64;
+        }
+        
+        const response = await API.post('/api/users/upload-verification', payload);
+        
+        if (!isMountedRef.current) return;
+        
+        if (response.error) {
+          setError(response.error);
+        } else {
+          setSuccess(`${type} verification initiated. Our team will review your documents within 24-48 hours.`);
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              setSuccess('');
+            }
+          }, 5000);
+          await loadUserProfile();
+        }
+      };
+      fileReader.readAsDataURL(file);
+      return;
       
       if (!isMountedRef.current) return;
       
@@ -212,6 +249,104 @@ function Profile() {
     } finally {
       if (isMountedRef.current) {
         setSaving(false);
+      }
+    }
+  };
+
+  const handleProfilePictureSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) { // 5MB limit
+        setError('Image size must be less than 5MB');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setCropImage(e.target.result);
+        setShowCropModal(true);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleCropComplete = async (blob) => {
+    try {
+      setUploadingPicture(true);
+      setError('');
+      
+      // Compress image before uploading
+      const compressImage = (file, maxWidth = 400, maxHeight = 400, quality = 0.8) => {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              let width = img.width;
+              let height = img.height;
+              
+              // Calculate new dimensions
+              if (width > height) {
+                if (width > maxWidth) {
+                  height = (height * maxWidth) / width;
+                  width = maxWidth;
+                }
+              } else {
+                if (height > maxHeight) {
+                  width = (width * maxHeight) / height;
+                  height = maxHeight;
+                }
+              }
+              
+              canvas.width = width;
+              canvas.height = height;
+              
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, width, height);
+              
+              canvas.toBlob(resolve, 'image/jpeg', quality);
+            };
+            img.src = e.target.result;
+          };
+          reader.readAsDataURL(file);
+        });
+      };
+      
+      // Compress the cropped image
+      const compressedBlob = await compressImage(blob, 400, 400, 0.85);
+      
+      // Convert compressed blob to base64
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = e.target.result;
+        
+        const response = await API.post('/api/users/upload-profile-picture', {
+          profilePicture: base64
+        });
+        
+        if (!isMountedRef.current) return;
+        
+        if (response.error) {
+          setError(response.error);
+        } else {
+          setProfilePicture(response.data?.url || base64);
+          setSuccess('Profile picture updated successfully!');
+          setShowCropModal(false);
+          setCropImage(null);
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              setSuccess('');
+            }
+          }, 3000);
+        }
+      };
+      reader.readAsDataURL(blob);
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setError(err.response?.data?.error || 'Failed to upload profile picture');
+    } finally {
+      if (isMountedRef.current) {
+        setUploadingPicture(false);
       }
     }
   };
@@ -306,6 +441,45 @@ function Profile() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
+            {/* Profile Picture */}
+            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-slate-700">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+                Profile Picture
+              </h2>
+              <div className="flex items-center gap-6">
+                <div className="relative">
+                  {profilePicture ? (
+                    <img 
+                      src={profilePicture} 
+                      alt="Profile" 
+                      className="w-24 h-24 rounded-full object-cover border-4 border-indigo-500"
+                    />
+                  ) : (
+                    <div className="w-24 h-24 rounded-full bg-indigo-500 flex items-center justify-center text-white text-2xl font-bold border-4 border-indigo-500">
+                      {user?.name?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || 'U'}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <label className="block">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleProfilePictureSelect}
+                      className="hidden"
+                      disabled={uploadingPicture}
+                    />
+                    <span className="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer transition-colors disabled:opacity-50">
+                      {uploadingPicture ? 'Uploading...' : 'Upload Photo'}
+                    </span>
+                  </label>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                    JPG, PNG or GIF. Max size 5MB. Round crop will be applied.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* Personal Information */}
             <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-slate-700">
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
@@ -541,7 +715,10 @@ function Profile() {
                 >
                   Change Password
                 </button>
-                <button className="w-full py-2 px-4 text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">
+                <button 
+                  onClick={() => setShowDeleteAccountModal(true)}
+                  className="w-full py-2 px-4 text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                >
                   Delete Account
                 </button>
               </div>
@@ -555,16 +732,141 @@ function Profile() {
               <p className="text-sm text-blue-700 dark:text-blue-400 mb-4">
                 Our support team is here to assist you with verification and account issues.
               </p>
-              <a
-                href="/contact"
+              <button
+                onClick={() => window.location.href = '/support'}
                 className="block w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white text-center font-medium rounded-lg transition-colors"
               >
                 Contact Support
-              </a>
+              </button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Password Change Modal */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => !passwordSaving && setShowPasswordModal(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Change Password</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Current Password</label>
+                <input
+                  type="password"
+                  value={passwordData.currentPassword}
+                  onChange={(e) => setPasswordData(prev => ({ ...prev, currentPassword: e.target.value }))}
+                  className="w-full px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                  placeholder="Enter current password"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">New Password</label>
+                <input
+                  type="password"
+                  value={passwordData.newPassword}
+                  onChange={(e) => setPasswordData(prev => ({ ...prev, newPassword: e.target.value }))}
+                  className="w-full px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                  placeholder="Enter new password"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Confirm New Password</label>
+                <input
+                  type="password"
+                  value={passwordData.confirmPassword}
+                  onChange={(e) => setPasswordData(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                  className="w-full px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                  placeholder="Confirm new password"
+                />
+              </div>
+              {error && (
+                <div className="text-sm text-red-600 dark:text-red-400">{error}</div>
+              )}
+              {success && (
+                <div className="text-sm text-green-600 dark:text-green-400">{success}</div>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowPasswordModal(false)}
+                  disabled={passwordSaving}
+                  className="flex-1 py-2 px-4 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-200 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleChangePassword}
+                  disabled={passwordSaving}
+                  className="flex-1 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold transition-colors disabled:opacity-50"
+                >
+                  {passwordSaving ? 'Changing...' : 'Change Password'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Account Modal */}
+      {showDeleteAccountModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => !deletingAccount && setShowDeleteAccountModal(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-xl font-bold text-red-600 dark:text-red-400 mb-2">Delete Account</h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              This action cannot be undone. All your data, subscriptions, and phone numbers will be permanently deleted.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Enter your password to confirm</label>
+                <input
+                  type="password"
+                  value={deleteAccountPassword}
+                  onChange={(e) => setDeleteAccountPassword(e.target.value)}
+                  className="w-full px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:border-red-500"
+                  placeholder="Enter your password"
+                />
+              </div>
+              {error && (
+                <div className="text-sm text-red-600 dark:text-red-400">{error}</div>
+              )}
+              {success && (
+                <div className="text-sm text-green-600 dark:text-green-400">{success}</div>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowDeleteAccountModal(false);
+                    setDeleteAccountPassword('');
+                    setError('');
+                  }}
+                  disabled={deletingAccount}
+                  className="flex-1 py-2 px-4 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-200 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deletingAccount || !deleteAccountPassword}
+                  className="flex-1 py-2 px-4 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-colors disabled:opacity-50"
+                >
+                  {deletingAccount ? 'Deleting...' : 'Delete Account'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Profile Picture Crop Modal */}
+      {showCropModal && cropImage && (
+        <ProfilePictureCrop
+          image={cropImage}
+          onCrop={handleCropComplete}
+          onCancel={() => {
+            setShowCropModal(false);
+            setCropImage(null);
+          }}
+        />
+      )}
     </div>
   );
 }

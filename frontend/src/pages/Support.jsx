@@ -174,12 +174,12 @@ export default function Support() {
 
   return (
     <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900">
-      <div className="max-w-7xl mx-auto p-6 lg:p-8">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+      <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pt-16 sm:pt-6">
+        {/* Header - Mobile Optimized */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Customer Support</h1>
-            <p className="text-gray-600 dark:text-gray-400">Get help with your account and services</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">Customer Support</h1>
+            <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">Get help with your account and services</p>
           </div>
           <button
             onClick={() => setShowCreateForm(!showCreateForm)}

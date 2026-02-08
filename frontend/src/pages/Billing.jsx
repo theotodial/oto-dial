@@ -293,27 +293,27 @@ function Billing() {
 
   return (
     <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900">
-      <div className="max-w-7xl mx-auto p-6 lg:p-8">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+      <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pt-16 sm:pt-6">
+        {/* Header - Mobile Optimized */}
+        <div className="flex flex-col gap-4 mb-6 sm:mb-8">
           <div>
-            <h1 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 dark:text-white">
               Select your subscription
             </h1>
-            <p className="mt-2 text-gray-600 dark:text-gray-400 max-w-xl">
+            <p className="mt-2 text-sm sm:text-base text-gray-600 dark:text-gray-400">
               Choose the plan that fits your team's calling volume. Your card is charged monthly and
               managed securely by Stripe.
             </p>
           </div>
-          <div className="flex flex-col items-start md:items-end gap-2">
-            <div className="inline-flex items-center px-4 py-2 rounded-full bg-emerald-600 text-white shadow">
-              <span className="text-sm font-medium mr-2">Wallet balance</span>
-              <span className="text-lg font-semibold">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="inline-flex items-center px-4 py-2 rounded-full bg-emerald-600 text-white shadow text-sm sm:text-base">
+              <span className="font-medium mr-2">Wallet balance</span>
+              <span className="font-semibold">
                 ${balance !== null ? balance.toFixed(2) : "0.00"}
               </span>
             </div>
             {currentSubscription && (
-              <div className="text-xs text-gray-600 dark:text-gray-400 text-right">
+              <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
                 <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                   Current plan: {currentSubscription.planName}
                 </span>
@@ -339,7 +339,7 @@ function Billing() {
           </div>
         )}
 
-        <div className="grid lg:grid-cols-[minmax(0,2.2fr)_minmax(0,1.3fr)] gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2.2fr)_minmax(0,1.3fr)] gap-4 sm:gap-6 items-start">
           {/* Main billing card */}
           <div className="bg-slate-900 text-slate-50 rounded-2xl shadow-xl border border-slate-800 overflow-hidden">
             <div className="px-6 sm:px-8 py-5 border-b border-slate-800 flex items-center justify-between gap-4">

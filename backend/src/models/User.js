@@ -100,7 +100,52 @@ const userSchema = new mongoose.Schema(
       ipAddress: String,
       lastLogin: { type: Date, default: Date.now },
       token: String
-    }]
+    }],
+
+    // Profile picture
+    profilePicture: {
+      type: String,
+      default: null
+    },
+
+    // Identity verification
+    identityVerification: {
+      status: {
+        type: String,
+        enum: ["pending", "approved", "rejected", "not_submitted"],
+        default: "not_submitted"
+      },
+      idDocument: {
+        type: String, // URL to uploaded document
+        default: null
+      },
+      businessDocument: {
+        type: String, // URL to uploaded document
+        default: null
+      },
+      verificationType: {
+        type: String,
+        enum: ["individual", "business"],
+        default: null
+      },
+      submittedAt: {
+        type: Date,
+        default: null
+      },
+      reviewedAt: {
+        type: Date,
+        default: null
+      },
+      reviewedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null
+      },
+      rejectionReason: {
+        type: String,
+        default: null
+      }
+    }
   },
   { timestamps: true }
 );

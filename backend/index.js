@@ -77,7 +77,8 @@ app.use(
   stripeWebhookRoutes
 );
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Increased limit for image uploads
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ========================
 // WEBHOOKS
@@ -105,7 +106,7 @@ app.use("/api/numbers", authenticateUser, loadSubscription, telnyxNumbersRoutes)
 app.use("/api/calls", authenticateUser, loadSubscription, callRoutes);
 app.use("/api/sms", authenticateUser, loadSubscription, smsRoutes);
 app.use("/api/messages", authenticateUser, loadSubscription, messageRoutes);
-app.use("/api/contacts", authenticateUser, userContactRoutes);
+app.use("/api/contacts", authenticateUser, contactRoutes);
 app.use("/api/push", pushRoutes);
 app.use("/api/webrtc", authenticateUser, loadSubscription, webrtcRoutes);
 app.use("/api/usage", authenticateUser, loadSubscription, usageStatisticsRoutes);
