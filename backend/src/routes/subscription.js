@@ -2,6 +2,7 @@ import express from "express";
 import Subscription from "../models/Subscription.js";
 import Plan from "../models/Plan.js";
 import AddonPlan from "../models/AddonPlan.js";
+import User from "../models/User.js";
 import authMiddleware from "../middleware/authenticateUser.js";
 
 const router = express.Router();
@@ -49,13 +50,33 @@ router.get("/", authMiddleware, async (req, res) => {
     const userId = req.userId;
 
     // Get subscription - include both active and cancelled (cancelled subscriptions are still active until periodEnd)
-    const subscription = await Subscription.findOne({
+    let subscription = await Subscription.findOne({
       userId,
       $or: [
         { status: "active" },
         { status: "cancelled" }
       ]
     }).populate("planId").sort({ createdAt: -1 });
+
+    // Self-heal legacy race-condition records:
+    // user is marked active, but subscription got reverted to pending_activation.
+    if (!subscription) {
+      const user = await User.findById(userId).select("subscriptionActive activeSubscriptionId");
+      if (user?.subscriptionActive && user.activeSubscriptionId) {
+        const pendingSubscription = await Subscription.findOne({
+          _id: user.activeSubscriptionId,
+          userId,
+          status: "pending_activation"
+        }).populate("planId");
+
+        if (pendingSubscription) {
+          pendingSubscription.status = "active";
+          await pendingSubscription.save();
+          subscription = pendingSubscription;
+          console.log(`✅ Auto-healed pending subscription ${pendingSubscription._id} for user ${userId}`);
+        }
+      }
+    }
 
     if (!subscription) {
       return res.json({
