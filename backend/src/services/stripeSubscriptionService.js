@@ -133,45 +133,76 @@ export async function processCheckoutCompleted(event, stripe) {
     return { success: false, error: `Plan not found or inactive` };
   }
 
-  // Create subscription in pending_activation state
-  // This will be activated when invoice.payment_succeeded is received
+  // Find existing subscription for this Stripe subscription.
+  // Event order is not guaranteed; if another webhook already activated it,
+  // never downgrade back to pending_activation.
+  const subscriptionFilter = session.subscription
+    ? {
+        userId: user._id,
+        stripeSubscriptionId: session.subscription
+      }
+    : {
+        userId: user._id,
+        status: "pending_activation"
+      };
+
+  const existingSubscription = await Subscription.findOne(subscriptionFilter).sort({
+    createdAt: -1
+  });
+
+  const shouldKeepActiveStatus = existingSubscription?.status === "active";
+  const nextStatus = shouldKeepActiveStatus ? "active" : "pending_activation";
+
   const now = new Date();
-  const periodEnd = new Date();
-  periodEnd.setDate(now.getDate() + 30);
+  const periodEnd = new Date(now);
+  periodEnd.setDate(periodEnd.getDate() + 30);
 
   const subscription = await Subscription.findOneAndUpdate(
+    subscriptionFilter,
     {
-      userId: user._id,
-      stripeSubscriptionId: session.subscription || null
-    },
-    {
-      userId: user._id,
-      planId: plan._id, // MongoDB plan ID
-      stripeSubscriptionId: session.subscription || null,
-      stripePriceId: plan.stripePriceId, // From MongoDB plan
-      planKey: plan.name, // Keep for backward compatibility
-      status: "pending_activation",
-      periodStart: now,
-      periodEnd: periodEnd,
-      // Limits from MongoDB plan - SINGLE SOURCE OF TRUTH
-      limits: {
-        minutesTotal: plan.limits.minutesTotal,
-        smsTotal: plan.limits.smsTotal,
-        numbersTotal: plan.limits.numbersTotal
+      $set: {
+        userId: user._id,
+        planId: plan._id, // MongoDB plan ID
+        stripeSubscriptionId: session.subscription || existingSubscription?.stripeSubscriptionId || null,
+        stripePriceId: plan.stripePriceId, // From MongoDB plan
+        planKey: plan.name, // Keep for backward compatibility
+        status: nextStatus,
+        // Limits from MongoDB plan - SINGLE SOURCE OF TRUTH
+        limits: {
+          minutesTotal: plan.limits.minutesTotal,
+          smsTotal: plan.limits.smsTotal,
+          numbersTotal: plan.limits.numbersTotal
+        }
       },
-      usage: {
-        minutesUsed: 0,
-        smsUsed: 0
-      },
-      addons: {
-        minutes: 0,
-        sms: 0
+      $setOnInsert: {
+        periodStart: now,
+        periodEnd: periodEnd,
+        usage: {
+          minutesUsed: 0,
+          smsUsed: 0
+        },
+        addons: {
+          minutes: 0,
+          sms: 0
+        }
       }
     },
     { upsert: true, new: true }
   );
 
-  console.log(`✅ Subscription ${subscription._id} created (pending_activation) for user ${user.email} with plan ${plan.name} (${planId})`);
+  // Keep user linkage consistent if this subscription was already activated by another webhook.
+  if (
+    nextStatus === "active" &&
+    (!user.activeSubscriptionId || user.activeSubscriptionId.toString() !== subscription._id.toString())
+  ) {
+    user.activeSubscriptionId = subscription._id;
+    user.subscriptionActive = true;
+    await user.save();
+  }
+
+  console.log(
+    `✅ Subscription ${subscription._id} synced (${nextStatus}) for user ${user.email} with plan ${plan.name} (${planId})`
+  );
 
   return {
     success: true,
@@ -208,13 +239,13 @@ export async function processInvoicePaymentSucceeded(event, stripe) {
     subscription = await Subscription.findOne({
       $or: [
         { stripeSubscriptionId: subscriptionId },
-        { userId: user._id, status: { $in: ["pending_activation", "active"] } }
+        { userId: user._id, status: { $in: ["pending_activation", "active", "past_due", "incomplete"] } }
       ]
-    });
+    }).sort({ createdAt: -1 });
   } else {
     subscription = await Subscription.findOne({
       userId: user._id,
-      status: { $in: ["pending_activation", "active"] }
+      status: { $in: ["pending_activation", "active", "past_due", "incomplete"] }
     }).sort({ createdAt: -1 });
   }
 

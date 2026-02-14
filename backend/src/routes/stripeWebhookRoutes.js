@@ -103,21 +103,24 @@ router.post("/", async (req, res) => {
 
     if (result.success) {
       console.log(`✅ Event ${eventId} processed successfully`);
-    } else {
-      console.error(`❌ Event ${eventId} processing failed:`, result.error);
-      // Don't return error - Stripe will retry
+      return res.status(200).json({ received: true, processed: true });
     }
 
-    res.status(200).json({ received: true, processed: result.success });
+    console.error(`❌ Event ${eventId} processing failed:`, result.error);
+    // Return non-2xx so Stripe retries transient failures.
+    return res.status(500).json({
+      received: true,
+      processed: false,
+      error: result.error || "Webhook processing failed"
+    });
   } catch (err) {
     console.error(`❌ Error processing event ${eventId}:`, err);
     
     // Mark event as failed (will be retried by Stripe)
     await markEventProcessed(eventId, eventType, false, err.message);
     
-    // Return 200 to prevent Stripe from retrying immediately
-    // Stripe will retry based on its own schedule
-    res.status(200).json({ received: true, error: err.message });
+    // Return non-2xx so Stripe retries based on its schedule.
+    return res.status(500).json({ received: true, error: err.message });
   }
 });
 
