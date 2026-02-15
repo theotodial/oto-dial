@@ -6,10 +6,13 @@ import SMS from "../../models/SMS.js";
 import User from "../../models/User.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import TelnyxCost from "../../models/TelnyxCost.js";
-import Stripe from "stripe";
+import { getStripe } from "../../../config/stripe.js";
+import {
+  syncPaidInvoicesFromStripe,
+  getStripeRevenueSummaryFromMongo
+} from "../../services/stripeInvoiceSyncService.js";
 
 const router = express.Router();
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 /**
  * Helper: Calculate date range from time filter
@@ -410,45 +413,54 @@ router.get("/", requireAdmin, async (req, res) => {
     let stripeProcessingFees = 0;
     let refunds = 0;
     let netRevenue = 0;
+    let stripeInvoiceCount = 0;
+    let subscriptionRevenue = 0;
+    let addonRevenue = 0;
+    let stripeSync = { skipped: true, synced: 0, scanned: 0, pages: 0 };
 
-    // OPTIMIZED: Stripe data fetching disabled for performance
-    // Stripe invoice scanning was causing page unresponsive errors
-    // Revenue data can be calculated from Subscription records instead
-    if (stripe && false) { // Disabled for performance
+    // Keep StripeInvoice Mongo ledger fresh from Stripe before calculations.
+    try {
+      stripeSync = await syncPaidInvoicesFromStripe({
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate,
+        maxPages: 6
+      });
+    } catch (syncErr) {
+      console.warn("Stripe invoice sync warning:", syncErr.message);
+    }
+
+    try {
+      const summary = await getStripeRevenueSummaryFromMongo({
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate
+      });
+      grossRevenue = summary.grossRevenue;
+      stripeInvoiceCount = summary.invoiceCount;
+      subscriptionRevenue = summary.subscriptionRevenue;
+      addonRevenue = summary.addonRevenue;
+    } catch (summaryErr) {
+      console.warn("Stripe revenue summary warning:", summaryErr.message);
+    }
+
+    // Stripe fee estimate fallback (2.9% + $0.30 per paid invoice).
+    stripeProcessingFees = (grossRevenue * 0.029) + (stripeInvoiceCount * 0.30);
+
+    // Pull recent refunds directly from Stripe when available.
+    const stripe = getStripe();
+    if (stripe) {
       try {
-        // Limit to recent invoices only (last 100) to prevent blocking
-        const invoices = await stripe.invoices.list({
+        const refundList = await stripe.refunds.list({
           limit: 100,
-          status: "paid"
-        });
-        
-        invoices.data.forEach(invoice => {
-          const invoiceDate = new Date(invoice.created * 1000);
-          if (!startDate || (invoiceDate >= startDate && invoiceDate <= endDate)) {
-            const amount = invoice.amount_paid / 100;
-            grossRevenue += amount;
-            
-            // Calculate Stripe fee (2.9% + $0.30 per transaction, approximate)
-            const stripeFee = (amount * 0.029) + 0.30;
-            stripeProcessingFees += stripeFee;
+          created: {
+            gte: Math.floor(effectiveStartDate.getTime() / 1000),
+            lte: Math.floor(effectiveEndDate.getTime() / 1000)
           }
         });
-
-        // Get refunds (limited)
-        const refundList = await stripe.refunds.list({ limit: 100 });
-        refundList.data.forEach(refund => {
-          const refundDate = new Date(refund.created * 1000);
-          if (!startDate || (refundDate >= startDate && refundDate <= endDate)) {
-            refunds += refund.amount / 100;
-          }
-        });
-      } catch (stripeErr) {
-        console.warn("Stripe calculation error:", stripeErr.message);
+        refunds = refundList.data.reduce((sum, refund) => sum + (refund.amount || 0) / 100, 0);
+      } catch (refundErr) {
+        console.warn("Stripe refund sync warning:", refundErr.message);
       }
     }
-    
-    // Revenue calculation moved to PER-USER METRICS section below
-    // (subscriptions variable is declared there)
 
     netRevenue = grossRevenue - stripeProcessingFees - refunds;
 
@@ -500,6 +512,9 @@ router.get("/", requireAdmin, async (req, res) => {
         stripeProcessingFees: parseFloat(stripeProcessingFees.toFixed(2)),
         refunds: parseFloat(refunds.toFixed(2)),
         netRevenue: parseFloat(netRevenue.toFixed(2)),
+        stripeInvoiceCount,
+        subscriptionRevenue: parseFloat(subscriptionRevenue.toFixed(2)),
+        addonRevenue: parseFloat(addonRevenue.toFixed(2)),
         // Telnyx
         telnyxCallCost: parseFloat(telnyxCallCost.toFixed(4)),
         telnyxSmsCost: parseFloat(telnyxSmsCost.toFixed(4)),
@@ -563,7 +578,8 @@ router.get("/", requireAdmin, async (req, res) => {
         revenuePerUser: parseFloat(avgRevenuePerUser.toFixed(2)),
         costPerMinute: parseFloat(avgCostPerMinute.toFixed(4)),
         costPerSms: parseFloat(avgCostPerSms.toFixed(4))
-      }
+      },
+      stripeSync
     });
   } catch (err) {
     clearTimeout(timeout); // Clear timeout on error

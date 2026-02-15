@@ -3,10 +3,12 @@ import requireAdmin from "../../middleware/requireAdmin.js";
 import Call from "../../models/Call.js";
 import SMS from "../../models/SMS.js";
 import Subscription from "../../models/Subscription.js";
-import Stripe from "stripe";
+import {
+  syncPaidInvoicesFromStripe,
+  getStripeRevenueByDayFromMongo
+} from "../../services/stripeInvoiceSyncService.js";
 
 const router = express.Router();
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 /**
  * Helper: Calculate date range from time filter
@@ -14,6 +16,36 @@ const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SEC
 function getDateRange(filter) {
   const now = new Date();
   let startDate = null;
+
+  if (typeof filter === "string" && filter.startsWith("range:")) {
+    const [, startRaw, endRaw] = filter.split(":");
+    if (startRaw && endRaw) {
+      return {
+        startDate: new Date(startRaw),
+        endDate: new Date(endRaw)
+      };
+    }
+  }
+
+  if (typeof filter === "string" && filter.endsWith("h")) {
+    const hours = parseInt(filter.slice(0, -1), 10);
+    if (!Number.isNaN(hours) && hours > 0) {
+      return {
+        startDate: new Date(now.getTime() - hours * 60 * 60 * 1000),
+        endDate: now
+      };
+    }
+  }
+
+  if (typeof filter === "string" && filter.endsWith("d")) {
+    const days = parseInt(filter.slice(0, -1), 10);
+    if (!Number.isNaN(days) && days > 0) {
+      return {
+        startDate: new Date(now.getTime() - days * 24 * 60 * 60 * 1000),
+        endDate: now
+      };
+    }
+  }
 
   switch (filter) {
     case "7d":
@@ -28,9 +60,21 @@ function getDateRange(filter) {
     case "90d":
       startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
       break;
+    case "1h":
+      startDate = new Date(now.getTime() - 1 * 60 * 60 * 1000);
+      break;
+    case "4h":
+      startDate = new Date(now.getTime() - 4 * 60 * 60 * 1000);
+      break;
+    case "24h":
+      startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      break;
+    case "3d":
+      startDate = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+      break;
     case "all":
     default:
-      startDate = new Date(0); // All time
+      startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000); // cap for performance
   }
 
   return { startDate, endDate: now };
@@ -57,37 +101,18 @@ router.get("/", requireAdmin, async (req, res) => {
     const revenueByDay = new Map();
     const costByDay = new Map();
 
-    // Get Stripe revenue by day
-    if (stripe) {
-      try {
-        let hasMore = true;
-        let startingAfter = null;
-        
-        while (hasMore) {
-          const params = { limit: 100, status: "paid" };
-          if (startingAfter) params.starting_after = startingAfter;
-          
-          const invoices = await stripe.invoices.list(params);
-          
-          invoices.data.forEach(invoice => {
-            const invoiceDate = new Date(invoice.created * 1000);
-            if (invoiceDate >= startDate && invoiceDate <= endDate) {
-              const dayKey = invoiceDate.toISOString().split('T')[0];
-              const current = revenueByDay.get(dayKey) || 0;
-              revenueByDay.set(dayKey, current + (invoice.amount_paid / 100));
-            }
-          });
-          
-          hasMore = invoices.has_more;
-          if (hasMore && invoices.data.length > 0) {
-            startingAfter = invoices.data[invoices.data.length - 1].id;
-          } else {
-            hasMore = false;
-          }
-        }
-      } catch (stripeErr) {
-        console.warn("Stripe time series error:", stripeErr.message);
-      }
+    try {
+      await syncPaidInvoicesFromStripe({
+        startDate,
+        endDate,
+        maxPages: 6
+      });
+      const revenueRows = await getStripeRevenueByDayFromMongo({ startDate, endDate });
+      revenueRows.forEach((row) => {
+        revenueByDay.set(row._id, Number(row.revenue || 0));
+      });
+    } catch (stripeErr) {
+      console.warn("Stripe time series sync warning:", stripeErr.message);
     }
 
     // Get Telnyx costs by day (from calls)

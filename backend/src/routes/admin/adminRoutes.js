@@ -19,6 +19,7 @@ import adminUsersUpdate from "./adminUsersUpdate.js";
 import adminTeam from "./adminTeam.js";
 import adminSubscriptionRepair from "./adminSubscriptionRepair.js";
 import adminSubscriptionAudit from "./adminSubscriptionAudit.js";
+import adminActivationFailures from "./adminActivationFailures.js";
 import Plan from "../../models/Plan.js";
 
 const router = express.Router();
@@ -52,6 +53,7 @@ router.use("/team", adminTeam);
 // Subscription repair and audit
 router.use("/subscriptions", adminSubscriptionRepair);
 router.use("/subscriptions", adminSubscriptionAudit);
+router.use("/subscriptions", adminActivationFailures);
 
 /**
  * GET /api/admin/plans

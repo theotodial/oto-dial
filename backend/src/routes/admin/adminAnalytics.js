@@ -5,10 +5,12 @@ import Call from "../../models/Call.js";
 import SMS from "../../models/SMS.js";
 import User from "../../models/User.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
-import Stripe from "stripe";
+import {
+  syncPaidInvoicesFromStripe,
+  getStripeRevenueSummaryFromMongo
+} from "../../services/stripeInvoiceSyncService.js";
 
 const router = express.Router();
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 /**
  * Helper: Calculate date range from time filter
@@ -55,49 +57,45 @@ router.get("/", requireAdmin, async (req, res) => {
     // ================================
     let totalRevenue = 0;
     let totalTelnyxCost = 0;
+    let stripeSync = { skipped: true, synced: 0, scanned: 0, pages: 0 };
 
-    // Calculate Stripe revenue
-    if (stripe) {
-      try {
-        // Get all paid invoices (paginate if needed)
-        let hasMore = true;
-        let startingAfter = null;
-        
-        while (hasMore) {
-          const params = {
-            limit: 100,
-            status: "paid"
-          };
-          if (startingAfter) params.starting_after = startingAfter;
-          
-          const invoices = await stripe.invoices.list(params);
-          
-          invoices.data.forEach(invoice => {
-            const invoiceDate = new Date(invoice.created * 1000);
-            if (!startDate || invoiceDate >= startDate) {
-              totalRevenue += invoice.amount_paid / 100; // Convert cents to dollars
-            }
-          });
-          
-          hasMore = invoices.has_more;
-          if (hasMore && invoices.data.length > 0) {
-            startingAfter = invoices.data[invoices.data.length - 1].id;
-          } else {
-            hasMore = false;
-          }
-        }
-      } catch (stripeErr) {
-        console.warn("Stripe revenue calculation error:", stripeErr.message);
-      }
+    try {
+      stripeSync = await syncPaidInvoicesFromStripe({
+        startDate: startDate || undefined,
+        endDate,
+        maxPages: 6
+      });
+    } catch (syncErr) {
+      console.warn("Stripe invoice sync warning:", syncErr.message);
     }
 
-    // Calculate Telnyx costs (from call costs)
-    const calls = await Call.find(dateFilter);
-    calls.forEach(call => {
-      if (call.cost) {
-        totalTelnyxCost += call.cost;
-      }
-    });
+    try {
+      const revenueSummary = await getStripeRevenueSummaryFromMongo({
+        startDate: startDate || undefined,
+        endDate
+      });
+      totalRevenue = revenueSummary.grossRevenue;
+    } catch (summaryErr) {
+      console.warn("Stripe revenue summary warning:", summaryErr.message);
+    }
+
+    // Telnyx cost fallback from call/sms/number records.
+    const [calls, smsList, activeNumbers] = await Promise.all([
+      Call.find(dateFilter).lean(),
+      SMS.find(dateFilter).lean(),
+      PhoneNumber.find({ status: "active" }).lean()
+    ]);
+
+    const callCost = calls.reduce((sum, call) => sum + Number(call.cost || 0), 0);
+    const smsCost = smsList.reduce((sum, sms) => sum + Number(sms.cost || 0) + Number(sms.carrierFees || 0), 0);
+    const monthlyNumberCost = activeNumbers.reduce((sum, num) => sum + Number(num.monthlyCost || 0), 0);
+    const oneTimeNumberCost = activeNumbers.reduce((sum, num) => sum + Number(num.oneTimeFees || 0), 0);
+    const daySpan = startDate
+      ? Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)))
+      : 30;
+    const numberCostForPeriod = (monthlyNumberCost / 30) * daySpan + oneTimeNumberCost;
+
+    totalTelnyxCost = callCost + smsCost + numberCostForPeriod;
 
     const netProfit = totalRevenue - totalTelnyxCost;
     const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
@@ -121,7 +119,7 @@ router.get("/", requireAdmin, async (req, res) => {
     // ================================
     // VOICE METRICS
     // ================================
-    const allCalls = await Call.find(dateFilter);
+    const allCalls = calls;
     const outboundCalls = allCalls.filter(c => c.direction === "outbound");
     const inboundCalls = allCalls.filter(c => c.direction === "inbound");
     const failedCalls = allCalls.filter(c => 
@@ -141,7 +139,7 @@ router.get("/", requireAdmin, async (req, res) => {
     // ================================
     // MESSAGING METRICS
     // ================================
-    const allSms = await SMS.find(dateFilter);
+    const allSms = smsList;
     const sentSms = allSms.filter(s => s.direction === "outbound");
     const receivedSms = allSms.filter(s => s.direction === "inbound");
     const failedSms = allSms.filter(s => s.status === "failed");
@@ -159,6 +157,7 @@ router.get("/", requireAdmin, async (req, res) => {
         netProfit: parseFloat(netProfit.toFixed(2)),
         profitMargin: parseFloat(profitMargin.toFixed(2))
       },
+      stripeSync,
       subscriptions: {
         total: subscriptions.length,
         active: activeSubscriptions,

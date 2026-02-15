@@ -70,8 +70,61 @@ function AdminDashboardEnterprise() {
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [error, setError] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [activationFailures, setActivationFailures] = useState([]);
+  const [activationFailureSummary, setActivationFailureSummary] = useState({ open: 0, resolved: 0, total: 0 });
+  const [repairingFailureId, setRepairingFailureId] = useState(null);
   const fetchTimeoutRef = useRef(null);
   const isFetchingRef = useRef(false);
+
+  const fetchActivationFailures = useCallback(async (token) => {
+    const response = await API.get('/api/admin/subscriptions/activation-failures?status=open&limit=5', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    if (response.data?.success) {
+      setActivationFailures(response.data.failures || []);
+      setActivationFailureSummary(response.data.summary || { open: 0, resolved: 0, total: 0 });
+    }
+  }, []);
+
+  const handleResolveActivationFailure = useCallback(async (failureId) => {
+    if (!failureId) return;
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.post(
+        `/api/admin/subscriptions/activation-failures/${failureId}/resolve`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!response.error && response.data?.success) {
+        await fetchActivationFailures(token);
+      }
+    } catch (err) {
+      console.error('Failed to resolve activation failure:', err);
+    }
+  }, [fetchActivationFailures]);
+
+  const handleRepairActivationFailure = useCallback(async (failureId) => {
+    if (!failureId || repairingFailureId) return;
+    setRepairingFailureId(failureId);
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.post(
+        `/api/admin/subscriptions/activation-failures/${failureId}/repair`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!response.error && response.data?.success) {
+        await fetchActivationFailures(token);
+      } else {
+        await fetchActivationFailures(token);
+      }
+    } catch (err) {
+      console.error('Failed to repair activation failure:', err);
+    } finally {
+      setRepairingFailureId(null);
+    }
+  }, [repairingFailureId, fetchActivationFailures]);
 
   const fetchData = useCallback(async () => {
     // Prevent multiple simultaneous requests
@@ -122,6 +175,11 @@ function AdminDashboardEnterprise() {
         } else if (enhancedRes.data?.success) {
           setAnalytics(enhancedRes.data);
         }
+
+        // Load recent activation failures for admin visibility.
+        fetchActivationFailures(token).catch((failureErr) => {
+          console.warn('Activation failures feed unavailable:', failureErr.message);
+        });
         
         // Fetch time-series data separately (non-blocking, optional)
         // Don't wait for it - load it in background
@@ -157,7 +215,7 @@ function AdminDashboardEnterprise() {
       setLoading(false);
       isFetchingRef.current = false;
     }
-  }, [timeFilter, navigate]);
+  }, [timeFilter, navigate, fetchActivationFailures]);
 
   useEffect(() => {
     // Debounce rapid filter changes
@@ -497,6 +555,58 @@ function AdminDashboardEnterprise() {
               />
             </div>
 
+            {/* Activation Failures (billing reliability) */}
+            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-red-200 dark:border-red-800 p-4 sm:p-6 mb-6 sm:mb-8">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Subscription Activation Failures</h3>
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                    Stripe payments that require admin review or repair.
+                  </p>
+                </div>
+                <div className="text-sm">
+                  <span className="px-3 py-1 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 font-semibold">
+                    Open: {activationFailureSummary?.open || 0}
+                  </span>
+                </div>
+              </div>
+
+              {activationFailures.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400">No open activation failures.</p>
+              ) : (
+                <div className="space-y-3">
+                  {activationFailures.map((failure) => (
+                    <div
+                      key={failure.id}
+                      className="p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900"
+                    >
+                      <p className="text-sm font-medium text-gray-900 dark:text-white break-all">
+                        {failure.reason}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 break-all">
+                        User: {failure.userEmail || 'Unknown'} • Invoice: {failure.invoiceId || 'N/A'} • Event: {failure.sourceEventType || 'N/A'}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => handleRepairActivationFailure(failure.id)}
+                          disabled={repairingFailureId === failure.id}
+                          className="px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {repairingFailureId === failure.id ? 'Repairing…' : 'Repair Subscription'}
+                        </button>
+                        <button
+                          onClick={() => handleResolveActivationFailure(failure.id)}
+                          className="px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium"
+                        >
+                          Mark Resolved
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* TELNYX COSTS - COMPREHENSIVE BREAKDOWN */}
             <div className="bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20 rounded-lg shadow-lg border-2 border-orange-200 dark:border-orange-800 p-4 sm:p-6 mb-6 sm:mb-8">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 sm:mb-6 gap-4">
@@ -706,8 +816,13 @@ function AdminDashboardEnterprise() {
 
             {/* Stripe Breakdown */}
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 sm:p-6 mb-6 sm:mb-8">
-              <h3 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white mb-4">Stripe Revenue Breakdown</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                <h3 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">Stripe Revenue Breakdown</h3>
+                <span className="text-xs px-3 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">
+                  Invoice sync: {analytics?.stripeSync?.skipped ? 'disabled' : `${analytics?.stripeSync?.synced || 0} synced`}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-6 mb-4">
                 <div>
                   <p className="text-sm text-gray-600 dark:text-gray-400">Gross Revenue</p>
                   <p className="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">
@@ -730,6 +845,20 @@ function AdminDashboardEnterprise() {
                   <p className="text-sm text-gray-600 dark:text-gray-400">Net Revenue</p>
                   <p className="mt-1 text-2xl font-semibold text-blue-600 dark:text-blue-400">
                     ${(analytics?.financial?.netRevenue || 0).toFixed(2)}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="rounded-lg bg-slate-50 dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-700">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Subscription Revenue</p>
+                  <p className="text-lg font-semibold text-gray-900 dark:text-white">
+                    ${(analytics?.financial?.subscriptionRevenue || 0).toFixed(2)}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-slate-50 dark:bg-slate-900 p-3 border border-slate-200 dark:border-slate-700">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Add-on Revenue</p>
+                  <p className="text-lg font-semibold text-gray-900 dark:text-white">
+                    ${(analytics?.financial?.addonRevenue || 0).toFixed(2)}
                   </p>
                 </div>
               </div>
