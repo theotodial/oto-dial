@@ -491,6 +491,11 @@ function AdminAnalyticsDetail() {
               GA4 Property ID: {meta.googleAnalytics.propertyId}
             </p>
           )}
+          {meta.source === 'google_analytics' && Number.isFinite(data?.overview?.realtimeActiveUsers) && (
+            <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1">
+              Realtime active users: {data.overview.realtimeActiveUsers}
+            </p>
+          )}
           {Array.isArray(meta.googleAnalytics?.warnings) && meta.googleAnalytics.warnings.length > 0 && (
             <ul className="mt-2 text-xs text-indigo-700 dark:text-indigo-300 list-disc pl-5 space-y-1">
               {meta.googleAnalytics.warnings.slice(0, 3).map((warning, idx) => (

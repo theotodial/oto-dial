@@ -6,12 +6,13 @@ function normalizePrivateKey(value) {
 }
 
 function resolveGaPropertyId() {
-  return (
+  const propertyId = (
     process.env.GA4_PROPERTY_ID ||
     process.env.GOOGLE_ANALYTICS_PROPERTY_ID ||
     process.env.GOOGLE_GA4_PROPERTY_ID ||
     null
   );
+  return propertyId ? String(propertyId).trim() : null;
 }
 
 function resolveServiceAccountCredentials() {
