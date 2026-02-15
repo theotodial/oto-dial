@@ -124,7 +124,9 @@ router.post("/checkout", authenticateUser, async (req, res) => {
       }
     });
 
-    console.log(`✅ Checkout session created for plan ${plan.name} (${planId})`);
+    console.log(
+      `✅ Checkout session created for plan ${plan.name} (${planId}) using Stripe price ${effectivePriceId}`
+    );
 
     res.json({ url: session.url });
   } catch (err) {
@@ -241,7 +243,7 @@ router.post("/checkout/addon", authenticateUser, async (req, res) => {
     });
 
     console.log(
-      `✅ Add-on checkout session created for ${addon.name} (${addon._id}) for user ${user.email}`
+      `✅ Add-on checkout session created for ${addon.name} (${addon._id}) for user ${user.email} using Stripe price ${effectiveAddonPriceId}`
     );
 
     res.json({ url: session.url });

@@ -11,6 +11,15 @@ import {
 
 const router = express.Router();
 
+function getWebhookSecret() {
+  return (
+    process.env.STRIPE_WEBHOOK_SECRET ||
+    process.env.STRIPE_ENDPOINT_SECRET ||
+    process.env.STRIPE_WEBHOOK_SIGNING_SECRET ||
+    null
+  );
+}
+
 /**
  * Get Stripe instance
  */
@@ -36,7 +45,8 @@ router.post("/", async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
 
-  if (!process.env.STRIPE_WEBHOOK_SECRET) {
+  const webhookSecret = getWebhookSecret();
+  if (!webhookSecret) {
     console.error("❌ STRIPE_WEBHOOK_SECRET missing; cannot validate webhook signatures");
     return res.status(500).json({ error: "Webhook secret missing" });
   }
@@ -46,7 +56,7 @@ router.post("/", async (req, res) => {
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
-      process.env.STRIPE_WEBHOOK_SECRET
+      webhookSecret
     );
   } catch (err) {
     console.error("❌ Stripe webhook signature verification failed:", err.message);

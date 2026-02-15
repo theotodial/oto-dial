@@ -20,6 +20,12 @@ export function getCanonicalPlanPriceId(plan) {
   if (normalizedName.includes("basic")) {
     return STRIPE_PLAN_PRICE_IDS.basic;
   }
+  if (Number(plan?.price || 0) >= 29.99 || Number(plan?.limits?.minutesTotal || 0) >= 2500) {
+    return STRIPE_PLAN_PRICE_IDS.super;
+  }
+  if (Number(plan?.price || 0) > 0) {
+    return STRIPE_PLAN_PRICE_IDS.basic;
+  }
   return plan?.stripePriceId || null;
 }
 
@@ -31,6 +37,14 @@ export function getCanonicalAddonPriceId(addon) {
     return STRIPE_ADDON_PRICE_IDS.minutes_700;
   }
   if (type === "sms" && quantity === 500) {
+    return STRIPE_ADDON_PRICE_IDS.sms_500;
+  }
+
+  // Force one-time add-on Stripe IDs for minutes/SMS to avoid recurring legacy price IDs.
+  if (type === "minutes") {
+    return STRIPE_ADDON_PRICE_IDS.minutes_700;
+  }
+  if (type === "sms") {
     return STRIPE_ADDON_PRICE_IDS.sms_500;
   }
 

@@ -99,9 +99,7 @@ router.get("/", requireAdmin, async (req, res) => {
     const { filter = "7d" } = req.query; // Default to 7d instead of 30d for faster queries
     const { startDate, endDate } = getDateRange(filter);
     
-    // Limit date range for "all time" to prevent excessive queries
-    const maxDays = 90; // Maximum 90 days for performance
-    const effectiveStartDate = startDate || new Date(Date.now() - maxDays * 24 * 60 * 60 * 1000);
+    const effectiveStartDate = startDate || new Date(0);
     const effectiveEndDate = endDate || new Date();
     
     const dateFilter = { createdAt: { $gte: effectiveStartDate, $lte: effectiveEndDate } };
@@ -423,7 +421,7 @@ router.get("/", requireAdmin, async (req, res) => {
       stripeSync = await syncPaidInvoicesFromStripe({
         startDate: effectiveStartDate,
         endDate: effectiveEndDate,
-        maxPages: 6
+        maxPages: filter === "all" ? 20 : 6
       });
     } catch (syncErr) {
       console.warn("Stripe invoice sync warning:", syncErr.message);

@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import connectDB from "./config/db.js";
 import { getTelnyx } from "./config/telnyx.js";
 import { validateEnv } from "./src/utils/envValidator.js";
+import { ensureStripeCatalogConsistency } from "./src/services/stripeCatalogBootstrapService.js";
 
 import authenticateUser from "./src/middleware/authenticateUser.js";
 import loadSubscription from "./src/middleware/loadSubscription.js";
@@ -81,6 +82,18 @@ app.use(
   stripeWebhookRoutes
 );
 
+// Backward-compatible Stripe webhook aliases to prevent misconfigured endpoint outages.
+app.use(
+  "/webhooks/stripe",
+  express.raw({ type: "application/json" }),
+  stripeWebhookRoutes
+);
+app.use(
+  "/api/stripe/webhook",
+  express.raw({ type: "application/json" }),
+  stripeWebhookRoutes
+);
+
 app.use(express.json({ limit: '10mb' })); // Increased limit for image uploads
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
@@ -133,20 +146,28 @@ app.get("/api/webhook-info", (req, res) => {
   const backendUrl = process.env.BACKEND_URL || "YOUR_BACKEND_URL";
   res.json({
     success: true,
-    message: "Telnyx Webhook Configuration",
+    message: "Webhook Configuration",
     webhooks: {
       voice: `${backendUrl}/api/webhooks/telnyx/voice`,
       sms: `${backendUrl}/api/webhooks/telnyx/sms`,
+      stripe: `${backendUrl}/api/webhooks/stripe`,
+      stripeAliases: [
+        `${backendUrl}/webhooks/stripe`,
+        `${backendUrl}/api/stripe/webhook`
+      ]
     },
     instructions: {
       voice: "Configure this URL on your Telnyx TeXML App or SIP Connection under Call Control settings",
-      sms: "This URL is automatically set on messaging profiles when buying numbers"
+      sms: "This URL is automatically set on messaging profiles when buying numbers",
+      stripe:
+        "Configure Stripe to send checkout.session.completed, invoice.payment_succeeded/invoice.paid, and customer.subscription events."
     },
     envStatus: {
       BACKEND_URL: process.env.BACKEND_URL ? "✅ SET" : "❌ NOT SET",
       TELNYX_CONNECTION_ID: process.env.TELNYX_CONNECTION_ID ? "✅ SET" : "❌ NOT SET",
       TELNYX_SIP_USERNAME: process.env.TELNYX_SIP_USERNAME ? "✅ SET" : "❌ NOT SET",
-      TELNYX_API_KEY: process.env.TELNYX_API_KEY ? "✅ SET" : "❌ NOT SET"
+      TELNYX_API_KEY: process.env.TELNYX_API_KEY ? "✅ SET" : "❌ NOT SET",
+      STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET ? "✅ SET" : "❌ NOT SET"
     }
   });
 });
@@ -162,6 +183,17 @@ async function startServer() {
   try {
     await connectDB();
     console.log("✅ Database connected");
+
+    try {
+      const catalogFix = await ensureStripeCatalogConsistency();
+      if (catalogFix.plansUpdated || catalogFix.addonsUpdated) {
+        console.log(
+          `✅ Stripe catalog consistency applied (plans: ${catalogFix.plansUpdated}, addons: ${catalogFix.addonsUpdated})`
+        );
+      }
+    } catch (catalogErr) {
+      console.error("⚠️ Stripe catalog consistency check failed:", catalogErr.message);
+    }
 
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);

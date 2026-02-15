@@ -74,7 +74,7 @@ function getDateRange(filter) {
       break;
     case "all":
     default:
-      startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000); // cap for performance
+      startDate = new Date(0);
   }
 
   return { startDate, endDate: now };
@@ -105,7 +105,7 @@ router.get("/", requireAdmin, async (req, res) => {
       await syncPaidInvoicesFromStripe({
         startDate,
         endDate,
-        maxPages: 6
+        maxPages: filter === "all" ? 20 : 6
       });
       const revenueRows = await getStripeRevenueByDayFromMongo({ startDate, endDate });
       revenueRows.forEach((row) => {

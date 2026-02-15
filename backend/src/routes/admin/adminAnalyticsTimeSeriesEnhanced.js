@@ -62,7 +62,7 @@ function getDateRange(filter) {
     case "90d":
       return { startDate: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000), endDate: now };
     case "all":
-      return { startDate: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000), endDate: now };
+      return { startDate: new Date(0), endDate: now };
     default:
       return { startDate: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000), endDate: now };
   }
@@ -193,7 +193,7 @@ router.get("/", requireAdmin, async (req, res) => {
       stripeSync = await syncPaidInvoicesFromStripe({
         startDate,
         endDate,
-        maxPages: 6
+        maxPages: filter === "all" ? 20 : 6
       });
     } catch (syncErr) {
       console.warn("Stripe invoice sync warning:", syncErr.message);

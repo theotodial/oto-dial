@@ -63,7 +63,7 @@ router.get("/", requireAdmin, async (req, res) => {
       stripeSync = await syncPaidInvoicesFromStripe({
         startDate: startDate || undefined,
         endDate,
-        maxPages: 6
+        maxPages: filter === "all" ? 20 : 6
       });
     } catch (syncErr) {
       console.warn("Stripe invoice sync warning:", syncErr.message);
