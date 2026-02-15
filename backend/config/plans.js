@@ -14,3 +14,15 @@ export const BASIC_PLAN = {
     perSms: 0.0065,
   },
 };
+
+export const SUPER_PLAN = {
+  name: "Super",
+  priceUSD: 29.99,
+  stripePriceId: "price_1SxHV2CxZc7GK7QKydR5iwQH",
+
+  limits: {
+    minutesTotal: 2500,
+    smsTotal: 200,
+    numbersTotal: 1,
+  },
+};

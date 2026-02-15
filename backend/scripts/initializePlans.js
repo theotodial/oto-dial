@@ -2,6 +2,10 @@ import mongoose from 'mongoose';
 import Plan from '../src/models/Plan.js';
 import AddonPlan from '../src/models/AddonPlan.js';
 import dotenv from 'dotenv';
+import {
+  STRIPE_PLAN_PRICE_IDS,
+  STRIPE_ADDON_PRICE_IDS
+} from "../src/config/stripeCatalog.js";
 
 // Load environment variables
 dotenv.config();
@@ -23,7 +27,7 @@ async function initializePlans() {
         price: 19.99,
         currency: "USD",
         stripeProductId: "prod_Tj3I37A5KEUqJG",
-        stripePriceId: "price_1SlbCBCxZc7GK7QKVTtMnI97",
+        stripePriceId: STRIPE_PLAN_PRICE_IDS.basic,
         limits: {
           minutesTotal: 1500,
           smsTotal: 100,
@@ -36,7 +40,7 @@ async function initializePlans() {
         price: 29.99,
         currency: "USD",
         stripeProductId: "prod_Tj3I37A5KEUqJG",
-        stripePriceId: "price_1SlbCBCxZc7GK7QKVTtMnI97",
+        stripePriceId: STRIPE_PLAN_PRICE_IDS.super,
         limits: {
           minutesTotal: 2500,
           smsTotal: 200,
@@ -87,7 +91,7 @@ async function initializePlans() {
         price: 9.99,
         currency: "USD",
         quantity: 700,
-        stripePriceId: "price_1SxRslCxZc7GK7QKoqKIfuSJ",
+        stripePriceId: STRIPE_ADDON_PRICE_IDS.minutes_700,
         active: true
       },
       {
@@ -96,7 +100,7 @@ async function initializePlans() {
         price: 9.99,
         currency: "USD",
         quantity: 500,
-        stripePriceId: "price_1SxRs7CxZc7GK7QKzSIE8MoK",
+        stripePriceId: STRIPE_ADDON_PRICE_IDS.sms_500,
         active: true
       }
     ];

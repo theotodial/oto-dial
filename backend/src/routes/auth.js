@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+import { selfHealSubscriptionForUser } from "../services/stripeSubscriptionService.js";
 
 const router = express.Router();
 
@@ -204,6 +205,13 @@ router.post("/login", async (req, res) => {
     const validSessions = activeSessions.slice(-4); // Keep 4 previous + 1 new = 5 total
     user.sessions = [...validSessions, newSession];
     await user.save();
+
+    // Self-heal subscription linkage on login to avoid paid-but-inactive states.
+    try {
+      await selfHealSubscriptionForUser(user._id, "login");
+    } catch (healErr) {
+      console.warn(`⚠️ Login self-heal skipped for user ${user._id}:`, healErr.message);
+    }
 
     // Prepare response with existing session info if any
     const existingSessionInfo = activeSessions.length > 0 ? {

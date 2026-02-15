@@ -19,6 +19,7 @@ function AdminSupport() {
   const [error, setError] = useState('');
   const [adminReply, setAdminReply] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
+  const [repairingSubscription, setRepairingSubscription] = useState(false);
 
   useEffect(() => {
     fetchTickets();
@@ -67,6 +68,20 @@ function AdminSupport() {
     setPage(1);
   };
 
+  const loadTicketDetails = async (ticketId) => {
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.get(`/api/admin/support/${ticketId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.data?.success) {
+        setSelectedTicket(response.data.ticket);
+      }
+    } catch (err) {
+      console.error('Failed to load ticket details:', err);
+    }
+  };
+
   const handleStatusUpdate = async (ticketId, newStatus) => {
     try {
       const token = localStorage.getItem('adminToken');
@@ -81,7 +96,7 @@ function AdminSupport() {
       } else if (response.data?.success) {
         await fetchTickets();
         if (selectedTicket?.id === ticketId) {
-          setSelectedTicket(null);
+          await loadTicketDetails(ticketId);
         }
       }
     } catch (err) {
@@ -136,6 +151,34 @@ function AdminSupport() {
       alert(err?.error || 'Failed to send reply');
     } finally {
       setSendingReply(false);
+    }
+  };
+
+  const handleRepairSubscription = async (ticketId) => {
+    if (!ticketId || repairingSubscription) return;
+
+    setRepairingSubscription(true);
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.post(`/api/admin/support/${ticketId}/repair-subscription`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (response.error || !response.data) {
+        alert(response.error || 'Failed to repair subscription');
+      } else {
+        await fetchTickets();
+        if (response.data.ticket) {
+          setSelectedTicket(response.data.ticket);
+        } else {
+          await loadTicketDetails(ticketId);
+        }
+        alert(response.data.message || 'Repair flow completed');
+      }
+    } catch (err) {
+      alert(err?.error || err?.message || 'Failed to repair subscription');
+    } finally {
+      setRepairingSubscription(false);
     }
   };
 
@@ -246,7 +289,7 @@ function AdminSupport() {
                       tickets.map((ticket) => (
                         <tr
                           key={ticket.id}
-                          onClick={() => setSelectedTicket(ticket)}
+                          onClick={() => loadTicketDetails(ticket.id)}
                           className={`hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer ${
                             selectedTicket?.id === ticket.id ? 'bg-indigo-50 dark:bg-indigo-900/30' : ''
                           }`}
@@ -342,8 +385,50 @@ function AdminSupport() {
                   <p className="text-sm text-gray-900 dark:text-white">{selectedTicket.subject || 'No subject'}</p>
                 </div>
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Issue Type</label>
+                  <p className="text-sm text-gray-900 dark:text-white">{selectedTicket.issueType || 'general'}</p>
+                </div>
+                <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Message</label>
                   <p className="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">{selectedTicket.message}</p>
+                </div>
+                {selectedTicket.stripePaymentId && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Stripe Payment ID</label>
+                    <p className="text-sm font-mono text-gray-900 dark:text-white">{selectedTicket.stripePaymentId}</p>
+                  </div>
+                )}
+                {selectedTicket.screenshotUrl && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Screenshot</label>
+                    <a
+                      href={selectedTicket.screenshotUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm text-indigo-600 hover:text-indigo-700 underline"
+                    >
+                      View uploaded screenshot
+                    </a>
+                  </div>
+                )}
+                <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Billing Context</p>
+                  <p className="text-sm text-gray-900 dark:text-white">
+                    Subscription Status: <span className="font-semibold">{selectedTicket.subscriptionStatus || 'none'}</span>
+                  </p>
+                  <p className="text-sm text-gray-900 dark:text-white break-all">
+                    Stripe Customer ID: <span className="font-mono">{selectedTicket.stripeCustomerId || 'N/A'}</span>
+                  </p>
+                  <p className="text-sm text-gray-900 dark:text-white break-all">
+                    Stripe Subscription ID: <span className="font-mono">{selectedTicket.stripeSubscriptionId || 'N/A'}</span>
+                  </p>
+                  <button
+                    onClick={() => handleRepairSubscription(selectedTicket.id)}
+                    disabled={repairingSubscription}
+                    className="mt-3 w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {repairingSubscription ? 'Repairing…' : 'Repair Subscription'}
+                  </button>
                 </div>
 
                 {/* Replies/Conversation */}
@@ -414,37 +499,24 @@ function AdminSupport() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Admin Notes</label>
-                  <div className="space-y-2 mb-2">
-                    {selectedTicket.adminNotes && selectedTicket.adminNotes.length > 0 ? (
-                      selectedTicket.adminNotes.map((note, idx) => (
-                        <div key={idx} className="p-2 bg-gray-50 dark:bg-slate-700 rounded text-sm">
-                          <p className="text-gray-900 dark:text-white">{note.note || note}</p>
-                          {note.timestamp && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                              {new Date(note.timestamp).toLocaleString()}
-                            </p>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-gray-500 dark:text-gray-400">No notes yet</p>
-                    )}
-                  </div>
                   <textarea
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && e.ctrlKey) {
-                        const newNote = e.target.value.trim();
-                        if (newNote) {
-                          const updatedNotes = [...(selectedTicket.adminNotes || []), { note: newNote, timestamp: new Date() }];
-                          handleNotesUpdate(selectedTicket.id, updatedNotes);
-                          e.target.value = '';
-                        }
-                      }
-                    }}
+                    value={selectedTicket.adminNotes || ''}
+                    onChange={(e) =>
+                      setSelectedTicket((prev) => ({
+                        ...prev,
+                        adminNotes: e.target.value
+                      }))
+                    }
                     rows={3}
                     className="w-full px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
-                    placeholder="Add admin note (Ctrl+Enter to save)..."
+                    placeholder="Internal admin notes..."
                   />
+                  <button
+                    onClick={() => handleNotesUpdate(selectedTicket.id, selectedTicket.adminNotes || '')}
+                    className="mt-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium"
+                  >
+                    Save Notes
+                  </button>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Created</label>

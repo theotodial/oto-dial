@@ -66,6 +66,24 @@ const userSchema = new mongoose.Schema(
       type: Boolean, 
       default: false
     },
+
+    currentPlanId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Plan",
+      default: null,
+      index: true
+    },
+
+    currentSubscriptionLimits: {
+      minutesTotal: { type: Number, default: 0 },
+      smsTotal: { type: Number, default: 0 },
+      numbersTotal: { type: Number, default: 0 }
+    },
+
+    lastSubscriptionSyncAt: {
+      type: Date,
+      default: null
+    },
      
     plan: { 
       type: String, 

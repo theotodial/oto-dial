@@ -4,6 +4,8 @@ dotenv.config();
 import express from "express";
 import cors from "cors";
 import passport from "passport";
+import path from "path";
+import { fileURLToPath } from "url";
 
 import connectDB from "./config/db.js";
 import { getTelnyx } from "./config/telnyx.js";
@@ -48,6 +50,8 @@ import telnyxWebhookRoutes from "./src/routes/webhooks/telnyx.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', true);
@@ -79,6 +83,7 @@ app.use(
 
 app.use(express.json({ limit: '10mb' })); // Increased limit for image uploads
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ========================
 // WEBHOOKS

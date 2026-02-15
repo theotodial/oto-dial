@@ -1,6 +1,7 @@
 import express from "express";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
+import { selfHealSubscriptionForUser } from "../services/stripeSubscriptionService.js";
 
 const router = express.Router();
 
@@ -42,6 +43,12 @@ router.get("/profile", async (req, res) => {
  */
 router.get("/me", async (req, res) => {
   try {
+    try {
+      await selfHealSubscriptionForUser(req.user._id, "users_me");
+    } catch (healErr) {
+      console.warn(`⚠️ /users/me self-heal failed for ${req.user._id}:`, healErr.message);
+    }
+
     const subscription = req.subscription;
     const user = await User.findById(req.user._id).select('-password -sessions');
 

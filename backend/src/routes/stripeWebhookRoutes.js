@@ -36,6 +36,11 @@ router.post("/", async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
 
+  if (!process.env.STRIPE_WEBHOOK_SECRET) {
+    console.error("❌ STRIPE_WEBHOOK_SECRET missing; cannot validate webhook signatures");
+    return res.status(500).json({ error: "Webhook secret missing" });
+  }
+
   // Verify Stripe signature
   try {
     event = stripe.webhooks.constructEvent(
@@ -51,6 +56,7 @@ router.post("/", async (req, res) => {
   const eventId = event.id;
   const eventType = event.type;
 
+  console.log("Stripe event received:", event.type);
   console.log(`📥 Stripe webhook received: ${eventType} (${eventId})`);
 
   // IDEMPOTENCY CHECK - Prevent double processing
@@ -73,6 +79,11 @@ router.post("/", async (req, res) => {
       case "invoice.payment_succeeded":
         // Step 2: ACTIVATE subscription atomically
         // This is the GUARANTEED ACTIVATION POINT
+        result = await processInvoicePaymentSucceeded(event, stripe);
+        break;
+
+      case "invoice.paid":
+        // Some Stripe setups rely on invoice.paid in addition to invoice.payment_succeeded
         result = await processInvoicePaymentSucceeded(event, stripe);
         break;
 
@@ -103,21 +114,20 @@ router.post("/", async (req, res) => {
 
     if (result.success) {
       console.log(`✅ Event ${eventId} processed successfully`);
+      return res.status(200).json({ received: true, processed: true });
     } else {
       console.error(`❌ Event ${eventId} processing failed:`, result.error);
-      // Don't return error - Stripe will retry
+      // Return 500 so Stripe retries instead of silently dropping paid events.
+      return res.status(500).json({ received: true, processed: false, error: result.error });
     }
-
-    res.status(200).json({ received: true, processed: result.success });
   } catch (err) {
     console.error(`❌ Error processing event ${eventId}:`, err);
     
     // Mark event as failed (will be retried by Stripe)
     await markEventProcessed(eventId, eventType, false, err.message);
-    
-    // Return 200 to prevent Stripe from retrying immediately
-    // Stripe will retry based on its own schedule
-    res.status(200).json({ received: true, error: err.message });
+
+    // Return non-2xx so Stripe retries this event.
+    res.status(500).json({ received: true, error: err.message });
   }
 });
 

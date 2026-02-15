@@ -23,6 +23,24 @@ const subscriptionSchema = new mongoose.Schema(
       sparse: true
     },
 
+    stripeCustomerId: {
+      type: String,
+      default: null,
+      index: true
+    },
+
+    checkoutSessionId: {
+      type: String,
+      default: null,
+      index: true
+    },
+
+    latestInvoiceId: {
+      type: String,
+      default: null,
+      index: true
+    },
+
     stripePriceId: {
       type: String,
       default: null

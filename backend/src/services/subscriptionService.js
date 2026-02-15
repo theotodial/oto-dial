@@ -1,6 +1,8 @@
 import Subscription from "../models/Subscription.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import Plan from "../models/Plan.js";
+import User from "../models/User.js";
+import { selfHealSubscriptionForUser } from "./stripeSubscriptionService.js";
 
 // Default limits if subscription doesn't have them set
 const DEFAULT_LIMITS = {
@@ -18,7 +20,23 @@ export async function loadUserSubscription(userId) {
   }).lean();
 
   if (!subscription) {
-    return null;
+    const user = await User.findById(userId).select("stripeCustomerId");
+    if (user?.stripeCustomerId) {
+      try {
+        await selfHealSubscriptionForUser(userId, "load_subscription");
+      } catch (healErr) {
+        console.warn("⚠️ Subscription self-heal failed:", healErr.message);
+      }
+
+      subscription = await Subscription.findOne({
+        userId,
+        status: "active"
+      }).lean();
+    }
+
+    if (!subscription) {
+      return null;
+    }
   }
 
   // Fix subscriptions with missing or zero limits

@@ -6,6 +6,7 @@ import PhoneNumber from "../../models/PhoneNumber.js";
 import Plan from "../../models/Plan.js";
 import getTelnyxClient from "../../services/telnyxService.js";
 import Stripe from "stripe";
+import { getCanonicalPlanPriceId } from "../../config/stripeCatalog.js";
 
 const router = express.Router();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
@@ -49,11 +50,17 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
     }
 
     // Verify plan has Stripe configuration
-    if (!plan.stripeProductId || !plan.stripePriceId) {
+    const effectivePlanPriceId = getCanonicalPlanPriceId(plan);
+    if (!plan.stripeProductId || !effectivePlanPriceId) {
       return res.status(400).json({
         success: false,
         error: "Plan is missing Stripe configuration"
       });
+    }
+
+    if (plan.stripePriceId !== effectivePlanPriceId) {
+      plan.stripePriceId = effectivePlanPriceId;
+      await plan.save();
     }
 
     // Cancel existing subscriptions
@@ -79,7 +86,7 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
         // Create new Stripe subscription
         const stripeSubscription = await stripe.subscriptions.create({
           customer: user.stripeCustomerId,
-          items: [{ price: plan.stripePriceId }],
+          items: [{ price: effectivePlanPriceId }],
           metadata: {
             userId: userId.toString(),
             planId: planId.toString(),
@@ -109,7 +116,7 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
         // Create Stripe subscription
         const stripeSubscription = await stripe.subscriptions.create({
           customer: customer.id,
-          items: [{ price: plan.stripePriceId }],
+          items: [{ price: effectivePlanPriceId }],
           metadata: {
             userId: userId.toString(),
             planId: planId.toString(),
@@ -133,7 +140,7 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
       userId,
       planId,
       stripeSubscriptionId: stripeSubscriptionId,
-      stripePriceId: plan.stripePriceId,
+      stripePriceId: effectivePlanPriceId,
       status: "active",
       periodStart: now,
       periodEnd,
@@ -280,11 +287,17 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
     }
 
     // Verify plan has Stripe configuration
-    if (!plan.stripeProductId || !plan.stripePriceId) {
+    const effectivePlanPriceId = getCanonicalPlanPriceId(plan);
+    if (!plan.stripeProductId || !effectivePlanPriceId) {
       return res.status(400).json({
         success: false,
         error: "Plan is missing Stripe configuration"
       });
+    }
+
+    if (plan.stripePriceId !== effectivePlanPriceId) {
+      plan.stripePriceId = effectivePlanPriceId;
+      await plan.save();
     }
 
     // Find active subscription
@@ -310,7 +323,7 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
         await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
           items: [{
             id: stripeSub.items.data[0].id,
-            price: plan.stripePriceId
+            price: effectivePlanPriceId
           }],
           metadata: {
             userId: userId.toString(),
@@ -329,7 +342,7 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
     // Update subscription plan in MongoDB - SINGLE SOURCE OF TRUTH
     subscription.planId = planId;
     subscription.limits = plan.limits; // Update limits from MongoDB plan
-    subscription.stripePriceId = plan.stripePriceId;
+    subscription.stripePriceId = effectivePlanPriceId;
     await subscription.save();
 
     res.json({

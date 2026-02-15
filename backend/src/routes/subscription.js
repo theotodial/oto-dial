@@ -2,7 +2,9 @@ import express from "express";
 import Subscription from "../models/Subscription.js";
 import Plan from "../models/Plan.js";
 import AddonPlan from "../models/AddonPlan.js";
+import StripeInvoice from "../models/StripeInvoice.js";
 import authMiddleware from "../middleware/authenticateUser.js";
+import { selfHealSubscriptionForUser } from "../services/stripeSubscriptionService.js";
 
 const router = express.Router();
 
@@ -47,6 +49,12 @@ const DEFAULT_LIMITS = {
 router.get("/", authMiddleware, async (req, res) => {
   try {
     const userId = req.userId;
+
+    try {
+      await selfHealSubscriptionForUser(userId, "subscription_read");
+    } catch (healErr) {
+      console.warn(`⚠️ /api/subscription self-heal failed for ${userId}:`, healErr.message);
+    }
 
     // Get subscription - include both active and cancelled (cancelled subscriptions are still active until periodEnd)
     const subscription = await Subscription.findOne({
@@ -113,6 +121,59 @@ router.get("/", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch subscription" });
+  }
+});
+
+/**
+ * GET /api/subscription/activation-health
+ * Detects paid-but-not-active mismatches for support prompts.
+ */
+router.get("/activation-health", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    const [activeSubscription, recentPaidInvoice] = await Promise.all([
+      Subscription.findOne({
+        userId,
+        status: "active"
+      }).sort({ updatedAt: -1 }),
+      StripeInvoice.findOne({
+        userId,
+        status: "paid"
+      }).sort({ issuedAt: -1, createdAt: -1 })
+    ]);
+
+    const recentPaidWindowMs = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const paidAt = recentPaidInvoice?.issuedAt
+      ? new Date(recentPaidInvoice.issuedAt).getTime()
+      : (recentPaidInvoice?.createdAt ? new Date(recentPaidInvoice.createdAt).getTime() : null);
+
+    const hasRecentPaidInvoice = !!paidAt && (now - paidAt) <= recentPaidWindowMs;
+    const showIssueReport = hasRecentPaidInvoice && !activeSubscription;
+
+    res.json({
+      success: true,
+      hasActiveSubscription: !!activeSubscription,
+      hasRecentPaidInvoice,
+      showIssueReport,
+      activeSubscriptionId: activeSubscription?._id || null,
+      recentPaidInvoice: recentPaidInvoice
+        ? {
+            invoiceId: recentPaidInvoice.invoiceId,
+            customerId: recentPaidInvoice.customerId,
+            amountPaid: recentPaidInvoice.amountPaid,
+            currency: recentPaidInvoice.currency,
+            issuedAt: recentPaidInvoice.issuedAt || recentPaidInvoice.createdAt
+          }
+        : null
+    });
+  } catch (err) {
+    console.error("Activation health check error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to check activation health"
+    });
   }
 });
 

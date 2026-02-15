@@ -65,6 +65,7 @@ function Dashboard() {
   const [copyNotification, setCopyNotification] = useState(false);
   const [addonPlans, setAddonPlans] = useState([]);
   const [buyingAddonId, setBuyingAddonId] = useState(null);
+  const [activationIssue, setActivationIssue] = useState(null);
   const isMountedRef = useRef(true);
 
   /* ================= FETCH DASHBOARD ================= */
@@ -74,11 +75,12 @@ function Dashboard() {
     setError('');
     setSuccess('');
 
-    const [walletRes, numbersRes, subscriptionRes, addonsRes] = await Promise.all([
+    const [walletRes, numbersRes, subscriptionRes, addonsRes, activationHealthRes] = await Promise.all([
       API.get('/api/wallet'),
       API.get('/api/numbers'),
       API.get('/api/subscription').catch(() => ({ error: true })),
-      API.get('/api/subscription/addons').catch(() => ({ error: true }))
+      API.get('/api/subscription/addons').catch(() => ({ error: true })),
+      API.get('/api/subscription/activation-health').catch(() => ({ error: true }))
     ]);
 
     // Wallet - handle gracefully, don't block render
@@ -124,6 +126,13 @@ function Dashboard() {
       })));
     } else {
       setAddonPlans([]);
+    }
+
+    if (!activationHealthRes.error && activationHealthRes.data?.success) {
+      const issueData = activationHealthRes.data;
+      setActivationIssue(issueData.showIssueReport ? issueData : null);
+    } else {
+      setActivationIssue(null);
     }
 
     if (isMountedRef.current) {
@@ -313,6 +322,25 @@ function Dashboard() {
         </div>
         )}
       </div>
+
+      {activationIssue && (
+        <div className="mb-8">
+          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-2xl p-5">
+            <p className="text-amber-900 dark:text-amber-100 font-semibold mb-1">
+              Payment completed but subscription not active? Contact support.
+            </p>
+            <p className="text-sm text-amber-800 dark:text-amber-200 mb-3">
+              We detected a recent paid invoice{activationIssue?.recentPaidInvoice?.invoiceId ? ` (${activationIssue.recentPaidInvoice.invoiceId})` : ''} but your plan is not active yet.
+            </p>
+            <button
+              onClick={() => navigate('/support?subject=subscription_not_activated')}
+              className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium transition-colors"
+            >
+              Report Subscription Issue
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Add-on showcase - Only show if user has active subscription */}
       {packageDetails.planName !== 'No Plan' && addonPlans.length > 0 && (

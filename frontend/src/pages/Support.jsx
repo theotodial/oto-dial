@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import API from '../api';
 import { useAuth } from '../context/AuthContext';
 
@@ -30,7 +30,7 @@ const ClockIcon = () => (
 const getStatusBadge = (status) => {
   const badges = {
     open: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-    'in-progress': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+    in_progress: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
     resolved: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
     closed: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
   };
@@ -40,27 +40,42 @@ const getStatusBadge = (status) => {
 const getPriorityBadge = (priority) => {
   const badges = {
     low: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200',
-    normal: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+    medium: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
     high: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
     urgent: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
   };
-  return badges[priority] || badges.normal;
+  return badges[priority] || badges.medium;
 };
+
+const ISSUE_SUBJECT_OPTIONS = [
+  { value: 'subscription_not_activated', label: 'Subscription not activated' },
+  { value: 'billing_issue', label: 'Billing issue' },
+  { value: 'number_issue', label: 'Number issue' },
+  { value: 'general', label: 'General support' }
+];
+
+const ISSUE_LABEL_BY_TYPE = ISSUE_SUBJECT_OPTIONS.reduce((acc, option) => {
+  acc[option.value] = option.label;
+  return acc;
+}, {});
 
 export default function Support() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [creating, setCreating] = useState(false);
   const [replying, setReplying] = useState(false);
+  const [selectedScreenshotFile, setSelectedScreenshotFile] = useState(null);
   
   // Create form state
   const [formData, setFormData] = useState({
-    subject: '',
-    message: '',
+    issueType: 'general',
+    description: '',
+    stripePaymentId: '',
     priority: 'medium',
     category: ''
   });
@@ -69,8 +84,13 @@ export default function Support() {
   const [replyMessage, setReplyMessage] = useState('');
 
   useEffect(() => {
+    const requestedSubject = (searchParams.get('subject') || '').trim();
+    if (requestedSubject && ISSUE_LABEL_BY_TYPE[requestedSubject]) {
+      setFormData((prev) => ({ ...prev, issueType: requestedSubject }));
+      setShowCreateForm(true);
+    }
     fetchTickets();
-  }, []);
+  }, [searchParams]);
 
   const fetchTickets = async () => {
     try {
@@ -86,23 +106,60 @@ export default function Support() {
     }
   };
 
+  const fileToDataUrl = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('Failed to read screenshot file'));
+      reader.readAsDataURL(file);
+    });
+
   const handleCreateTicket = async (e) => {
     e.preventDefault();
-    
-    // Validation
-    if (!formData.subject.trim()) {
-      alert('Please enter a subject for your support request');
+
+    if (!formData.issueType) {
+      alert('Please select a support subject');
       return;
     }
-    
-    if (!formData.message.trim()) {
-      alert('Please enter a message describing your issue');
+
+    if (!formData.description.trim()) {
+      alert('Please enter a description of your issue');
       return;
     }
 
     try {
       setCreating(true);
-      const response = await API.post('/api/support/tickets', formData);
+      let screenshotUrl = null;
+
+      if (selectedScreenshotFile) {
+        const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+        if (!allowedTypes.includes(selectedScreenshotFile.type)) {
+          alert('Only PNG, JPG, JPEG, and WEBP screenshots are allowed');
+          setCreating(false);
+          return;
+        }
+
+        const imageData = await fileToDataUrl(selectedScreenshotFile);
+        const uploadResponse = await API.post('/api/support/upload-screenshot', { imageData });
+        if (uploadResponse.error || !uploadResponse.data?.success) {
+          alert(uploadResponse.error || uploadResponse.data?.error || 'Failed to upload screenshot');
+          setCreating(false);
+          return;
+        }
+        screenshotUrl = uploadResponse.data.screenshotUrl;
+      }
+
+      const payload = {
+        issueType: formData.issueType,
+        subject: ISSUE_LABEL_BY_TYPE[formData.issueType] || 'General support',
+        description: formData.description,
+        stripePaymentId: formData.stripePaymentId?.trim() || '',
+        priority: formData.priority,
+        category: formData.category,
+        screenshotUrl
+      };
+
+      const response = await API.post('/api/support/tickets', payload);
       
       if (response.error) {
         alert(response.error || 'Failed to create ticket');
@@ -111,7 +168,14 @@ export default function Support() {
       
       if (response.data?.success) {
         setShowCreateForm(false);
-        setFormData({ subject: '', message: '', priority: 'medium', category: '' });
+        setFormData({
+          issueType: 'general',
+          description: '',
+          stripePaymentId: '',
+          priority: 'medium',
+          category: ''
+        });
+        setSelectedScreenshotFile(null);
         await fetchTickets();
         // Select the newly created ticket
         if (response.data.ticket) {
@@ -199,14 +263,18 @@ export default function Support() {
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Subject *
                 </label>
-                <input
-                  type="text"
-                  value={formData.subject}
-                  onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                  placeholder="Brief description of your issue"
+                <select
+                  value={formData.issueType}
+                  onChange={(e) => setFormData({ ...formData, issueType: e.target.value })}
                   className="w-full px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   required
-                />
+                >
+                  {ISSUE_SUBJECT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -228,30 +296,59 @@ export default function Support() {
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Category (Optional)
+                    Stripe Payment ID (Optional)
                   </label>
                   <input
                     type="text"
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                    placeholder="e.g., Billing, Technical, Account"
+                    value={formData.stripePaymentId}
+                    onChange={(e) => setFormData({ ...formData, stripePaymentId: e.target.value })}
+                    placeholder="e.g., pi_..., in_..., or checkout session ID"
                     className="w-full px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                   />
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Category (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  placeholder="e.g., Billing, Technical, Account"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                />
+              </div>
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Message *
+                  Description *
                 </label>
                 <textarea
-                  value={formData.message}
-                  onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                  placeholder="Describe your issue in detail..."
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Describe your issue in detail. Include what you purchased and what is missing."
                   rows={6}
                   className="w-full px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none"
                   required
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Upload Screenshot (Optional)
+                </label>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  onChange={(e) => setSelectedScreenshotFile(e.target.files?.[0] || null)}
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                />
+                {selectedScreenshotFile && (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Selected: {selectedScreenshotFile.name}
+                  </p>
+                )}
               </div>
               
               <div className="flex gap-3">
@@ -266,7 +363,14 @@ export default function Support() {
                   type="button"
                   onClick={() => {
                     setShowCreateForm(false);
-                    setFormData({ subject: '', message: '', priority: 'normal', category: '' });
+                    setFormData({
+                      issueType: 'general',
+                      description: '',
+                      stripePaymentId: '',
+                      priority: 'medium',
+                      category: ''
+                    });
+                    setSelectedScreenshotFile(null);
                   }}
                   className="px-6 py-2 bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-300 rounded-xl font-medium transition-all"
                 >
@@ -315,7 +419,7 @@ export default function Support() {
                     >
                       <div className="flex items-start justify-between mb-2">
                         <h3 className="font-medium text-gray-900 dark:text-white truncate flex-1">
-                          {ticket.subject}
+                          {ticket.subject || ISSUE_LABEL_BY_TYPE[ticket.issueType] || 'Support Request'}
                         </h3>
                         <span className={`px-2 py-1 text-xs font-medium rounded-full ml-2 ${getStatusBadge(ticket.status)}`}>
                           {ticket.status}
@@ -324,6 +428,13 @@ export default function Support() {
                       <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 mb-2">
                         {ticket.message}
                       </p>
+                      {(ticket.screenshotUrl || ticket.stripePaymentId) && (
+                        <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-2">
+                          {ticket.screenshotUrl ? 'Screenshot attached' : ''}
+                          {ticket.screenshotUrl && ticket.stripePaymentId ? ' • ' : ''}
+                          {ticket.stripePaymentId ? 'Payment reference included' : ''}
+                        </p>
+                      )}
                       <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
                         <span className={`px-2 py-0.5 rounded-full ${getPriorityBadge(ticket.priority)}`}>
                           {ticket.priority}
@@ -350,7 +461,7 @@ export default function Support() {
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
                       <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-                        {selectedTicket.subject}
+                        {selectedTicket.subject || ISSUE_LABEL_BY_TYPE[selectedTicket.issueType] || 'Support Request'}
                       </h2>
                       <div className="flex items-center gap-3 flex-wrap">
                         <span className={`px-3 py-1 text-sm font-medium rounded-full ${getStatusBadge(selectedTicket.status)}`}>
@@ -359,6 +470,11 @@ export default function Support() {
                         <span className={`px-3 py-1 text-sm font-medium rounded-full ${getPriorityBadge(selectedTicket.priority)}`}>
                           {selectedTicket.priority}
                         </span>
+                        {selectedTicket.issueType && (
+                          <span className="px-3 py-1 text-sm font-medium rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
+                            {ISSUE_LABEL_BY_TYPE[selectedTicket.issueType] || selectedTicket.issueType}
+                          </span>
+                        )}
                         <span className="text-sm text-gray-500 dark:text-gray-400">
                           Created {formatDate(selectedTicket.createdAt)}
                         </span>
@@ -383,6 +499,23 @@ export default function Support() {
                     </div>
                     <div className="ml-10 p-4 bg-gray-50 dark:bg-slate-700 rounded-xl">
                       <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{selectedTicket.message}</p>
+                      {selectedTicket.stripePaymentId && (
+                        <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                          Stripe Payment ID: <span className="font-mono">{selectedTicket.stripePaymentId}</span>
+                        </p>
+                      )}
+                      {selectedTicket.screenshotUrl && (
+                        <div className="mt-3">
+                          <a
+                            href={selectedTicket.screenshotUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline"
+                          >
+                            View uploaded screenshot
+                          </a>
+                        </div>
+                      )}
                     </div>
                   </div>
 

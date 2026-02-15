@@ -2,8 +2,10 @@ import express from "express";
 import Stripe from "stripe";
 import User from "../../models/User.js";
 import Subscription from "../../models/Subscription.js";
+import requireAdmin from "../../middleware/requireAdmin.js";
 
 const router = express.Router();
+router.use(requireAdmin);
 
 function getStripe() {
   if (!process.env.STRIPE_SECRET_KEY) {

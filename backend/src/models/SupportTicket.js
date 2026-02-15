@@ -30,9 +30,32 @@ const supportTicketSchema = new mongoose.Schema(
       default: ""
     },
 
+    issueType: {
+      type: String,
+      enum: [
+        "subscription_not_activated",
+        "billing_issue",
+        "number_issue",
+        "general"
+      ],
+      default: "general",
+      index: true
+    },
+
     message: {
       type: String,
       required: true
+    },
+
+    screenshotUrl: {
+      type: String,
+      default: null
+    },
+
+    stripePaymentId: {
+      type: String,
+      default: null,
+      index: true
     },
 
     status: {

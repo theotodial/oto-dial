@@ -1,22 +1,15 @@
 import express from "express";
 import mongoose from "mongoose";
-import Stripe from "stripe";
 import User from "../../models/User.js";
 import Subscription from "../../models/Subscription.js";
-import Plan from "../../models/Plan.js";
+import requireAdmin from "../../middleware/requireAdmin.js";
 import {
-  processInvoicePaymentSucceeded,
-  processSubscriptionUpdated
+  repairUserSubscriptionFromStripe
 } from "../../services/stripeSubscriptionService.js";
 
 const router = express.Router();
 
-function getStripe() {
-  if (!process.env.STRIPE_SECRET_KEY) {
-    return null;
-  }
-  return new Stripe(process.env.STRIPE_SECRET_KEY);
-}
+router.use(requireAdmin);
 
 /**
  * POST /api/admin/subscriptions/resync/:userId
@@ -24,106 +17,20 @@ function getStripe() {
  */
 router.post("/resync/:userId", async (req, res) => {
   try {
-    const stripe = getStripe();
-    if (!stripe) {
-      return res.status(503).json({ error: "Stripe not configured" });
-    }
-
-    const user = await User.findById(req.params.userId);
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    if (!user.stripeCustomerId) {
-      return res.status(400).json({ error: "User has no Stripe customer ID" });
-    }
-
-    // Fetch all subscriptions from Stripe
-    const stripeSubscriptions = await stripe.subscriptions.list({
-      customer: user.stripeCustomerId,
-      limit: 100
+    const result = await repairUserSubscriptionFromStripe({
+      userId: req.params.userId,
+      reason: "admin_resync"
     });
 
-    const results = [];
-
-    for (const stripeSub of stripeSubscriptions.data) {
-      // Find or create subscription
-      let subscription = await Subscription.findOne({
-        stripeSubscriptionId: stripeSub.id
-      });
-
-      if (!subscription) {
-        // Try to get planId from Stripe subscription metadata
-        let plan = null;
-        const planIdFromMetadata = stripeSub.metadata?.planId;
-        
-        if (planIdFromMetadata) {
-          plan = await Plan.findById(planIdFromMetadata);
-        }
-        
-        // Fallback to Basic Plan if no planId in metadata
-        if (!plan) {
-          plan = await Plan.findOne({ name: "Basic Plan", active: true });
-        }
-        
-        if (!plan) {
-          results.push({ error: "Plan not found - cannot create subscription" });
-          continue;
-        }
-
-        subscription = await Subscription.create({
-          userId: user._id,
-          planId: plan._id,
-          stripeSubscriptionId: stripeSub.id,
-          planKey: plan.name, // Use plan name instead of hardcoded "basic"
-          status: stripeSub.status === "active" ? "active" : "pending_activation",
-          periodStart: new Date(stripeSub.current_period_start * 1000),
-          periodEnd: new Date(stripeSub.current_period_end * 1000),
-          limits: {
-            minutesTotal: plan.limits.minutesTotal,
-            smsTotal: plan.limits.smsTotal,
-            numbersTotal: plan.limits.numbersTotal
-          },
-          usage: { minutesUsed: 0, smsUsed: 0 },
-          addons: { minutes: 0, sms: 0 }
-        });
-      }
-
-      // Update subscription from Stripe
-      const event = {
-        data: { object: stripeSub }
-      };
-      await processSubscriptionUpdated(event, stripe);
-
-      results.push({
-        subscriptionId: subscription._id,
-        stripeSubscriptionId: stripeSub.id,
-        status: subscription.status
-      });
-    }
-
-    // Activate subscription if payment succeeded
-    if (stripeSubscriptions.data.length > 0) {
-      const activeSub = stripeSubscriptions.data.find(s => s.status === "active");
-      if (activeSub) {
-        const invoice = await stripe.invoices.list({
-          subscription: activeSub.id,
-          limit: 1
-        });
-
-        if (invoice.data.length > 0 && invoice.data[0].paid) {
-          const invoiceEvent = {
-            data: { object: invoice.data[0] }
-          };
-          await processInvoicePaymentSucceeded(invoiceEvent, stripe);
-        }
-      }
+    if (!result.success) {
+      const statusCode = result.error === "User not found" ? 404 : 400;
+      return res.status(statusCode).json({ success: false, error: result.error });
     }
 
     res.json({
       success: true,
       message: "Subscription re-synced from Stripe",
-      results
+      ...result
     });
   } catch (err) {
     console.error("Resync error:", err);
@@ -157,6 +64,12 @@ router.post("/reattach/:subscriptionId", async (req, res) => {
 
       user.activeSubscriptionId = subscription._id;
       user.subscriptionActive = true;
+      user.currentPlanId = subscription.planId || null;
+      user.currentSubscriptionLimits = subscription.limits || {
+        minutesTotal: 0,
+        smsTotal: 0,
+        numbersTotal: 0
+      };
       await user.save({ session });
 
       await session.commitTransaction();
@@ -205,6 +118,12 @@ router.post("/force-activate/:subscriptionId", async (req, res) => {
 
       user.activeSubscriptionId = subscription._id;
       user.subscriptionActive = true;
+      user.currentPlanId = subscription.planId || null;
+      user.currentSubscriptionLimits = subscription.limits || {
+        minutesTotal: 0,
+        smsTotal: 0,
+        numbersTotal: 0
+      };
       await user.save({ session });
 
       await session.commitTransaction();

@@ -5,8 +5,20 @@ import User from "../models/User.js";
 import Plan from "../models/Plan.js";
 import AddonPlan from "../models/AddonPlan.js";
 import Subscription from "../models/Subscription.js";
+import {
+  getCanonicalAddonPriceId,
+  getCanonicalPlanPriceId
+} from "../config/stripeCatalog.js";
 
 const router = express.Router();
+
+function extractClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim().length > 0) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.ip || req.socket?.remoteAddress || null;
+}
 
 // Subscription checkout (recurring plan)
 router.post("/checkout", authenticateUser, async (req, res) => {
@@ -27,6 +39,18 @@ router.post("/checkout", authenticateUser, async (req, res) => {
       return res.status(400).json({ error: "Plan not found or inactive" });
     }
 
+    const effectivePriceId = getCanonicalPlanPriceId(plan);
+    if (!effectivePriceId) {
+      return res.status(400).json({
+        error: "Plan is missing Stripe price configuration. Please contact support."
+      });
+    }
+
+    if (plan.stripePriceId !== effectivePriceId) {
+      plan.stripePriceId = effectivePriceId;
+      await plan.save();
+    }
+
     // Verify plan has required Stripe IDs
     if (!plan.stripeProductId || !plan.stripePriceId) {
       return res.status(400).json({ 
@@ -41,13 +65,15 @@ router.post("/checkout", authenticateUser, async (req, res) => {
     }
 
     let customerId = user.stripeCustomerId;
+    const clientIp = extractClientIp(req);
     if (!customerId) {
       // Create Stripe customer
       const customer = await stripe.customers.create({
         email: user.email,
         metadata: { 
           userId: user._id.toString(),
-          planId: planId.toString()
+          planId: planId.toString(),
+          clientIp: clientIp || ""
         }
       });
       customerId = customer.id;
@@ -60,30 +86,41 @@ router.post("/checkout", authenticateUser, async (req, res) => {
       await stripe.customers.update(customerId, {
         metadata: {
           userId: user._id.toString(),
-          planId: planId.toString()
+          planId: planId.toString(),
+          clientIp: clientIp || ""
         }
       });
     }
 
-    // Create checkout session using EXISTING Stripe price ID
-    // Both plans use the same price ID, differentiation happens via planId in metadata
+    // Create checkout session using canonical Stripe price ID.
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
       payment_method_types: ["card"],
       line_items: [
         {
-          price: plan.stripePriceId, // Use existing Stripe price ID
+          price: effectivePriceId,
           quantity: 1
         }
       ],
       success_url: `${process.env.FRONTEND_URL}/billing?success=true`,
       cancel_url: `${process.env.FRONTEND_URL}/billing?cancel=true`,
+      subscription_data: {
+        metadata: {
+          userId: req.userId.toString(),
+          planId: planId.toString(),
+          planName: plan.name,
+          purchaseType: "subscription",
+          clientIp: clientIp || ""
+        }
+      },
       // REQUIRED METADATA for webhook processing
       metadata: {
         userId: req.userId.toString(),
         planId: planId.toString(), // MongoDB plan ID - CRITICAL for webhook
-        planName: plan.name
+        planName: plan.name,
+        purchaseType: "subscription",
+        clientIp: clientIp || ""
       }
     });
 
@@ -114,6 +151,18 @@ router.post("/checkout/addon", authenticateUser, async (req, res) => {
       return res.status(400).json({ error: "Add-on not found or inactive" });
     }
 
+    const effectiveAddonPriceId = getCanonicalAddonPriceId(addon);
+    if (!effectiveAddonPriceId) {
+      return res.status(400).json({
+        error: "Add-on is missing Stripe price configuration. Please contact support."
+      });
+    }
+
+    if (addon.stripePriceId !== effectiveAddonPriceId) {
+      addon.stripePriceId = effectiveAddonPriceId;
+      await addon.save();
+    }
+
     // Ensure user exists
     const user = await User.findById(req.userId);
     if (!user) {
@@ -134,36 +183,49 @@ router.post("/checkout/addon", authenticateUser, async (req, res) => {
 
     // Ensure Stripe customer
     let customerId = user.stripeCustomerId;
+    const clientIp = extractClientIp(req);
     if (!customerId) {
       const customer = await stripe.customers.create({
         email: user.email,
         metadata: {
-          userId: user._id.toString()
+          userId: user._id.toString(),
+          clientIp: clientIp || ""
         }
       });
       customerId = customer.id;
       user.stripeCustomerId = customerId;
       await user.save();
+    } else {
+      await stripe.customers.update(customerId, {
+        metadata: {
+          userId: user._id.toString(),
+          clientIp: clientIp || ""
+        }
+      });
     }
 
-    // Create subscription-mode checkout session for add-on using recurring price.
-    // Mark the resulting Stripe subscription as an add-on via metadata.
+    // Add-ons are one-time purchases and can be bought repeatedly.
     const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
+      mode: "payment",
       customer: customerId,
       payment_method_types: ["card"],
       line_items: [
         {
-          price: addon.stripePriceId,
+          price: effectiveAddonPriceId,
           quantity: 1
         }
       ],
-      subscription_data: {
-        metadata: {
-          isAddon: "true",
-          addonId: addon._id.toString(),
-          addonType: addon.type,
-          addonQuantity: addon.quantity.toString()
+      invoice_creation: {
+        enabled: true,
+        invoice_data: {
+          metadata: {
+            userId: req.userId.toString(),
+            addonId: addon._id.toString(),
+            addonType: addon.type,
+            addonQuantity: addon.quantity.toString(),
+            purchaseType: "addon",
+            clientIp: clientIp || ""
+          }
         }
       },
       success_url: `${process.env.FRONTEND_URL}/billing?success=addon`,
@@ -172,7 +234,9 @@ router.post("/checkout/addon", authenticateUser, async (req, res) => {
         userId: req.userId.toString(),
         addonId: addon._id.toString(),
         addonType: addon.type,
-        addonQuantity: addon.quantity.toString()
+        addonQuantity: addon.quantity.toString(),
+        purchaseType: "addon",
+        clientIp: clientIp || ""
       }
     });
 
