@@ -25,6 +25,7 @@ function AdminAnalytics() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [meta, setMeta] = useState(null);
   const [dateRange, setDateRange] = useState({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
@@ -49,20 +50,34 @@ function AdminAnalytics() {
         console.error('Error fetching analytics:', response.error);
         // Set empty data structure so cards still show
         setData(null);
+        setMeta({
+          source: 'unavailable',
+          googleAnalytics: {
+            warnings: [response.error]
+          }
+        });
         return;
       }
 
       if (response.data?.success) {
         console.log('Analytics data received:', response.data.data);
         setData(response.data.data);
+        setMeta(response.data.meta || null);
       } else {
         console.warn('Unexpected response format:', response.data);
         // Set null so we can still show cards with defaults
         setData(null);
+        setMeta(null);
       }
     } catch (error) {
       console.error('Error fetching analytics:', error);
       setData(null);
+      setMeta({
+        source: 'unavailable',
+        googleAnalytics: {
+          warnings: [error.message]
+        }
+      });
     } finally {
       setLoading(false);
     }
@@ -70,7 +85,7 @@ function AdminAnalytics() {
 
   const handleCardClick = (cardId) => {
     navigate(`/adminbobby/analytics/${cardId}`, {
-      state: { data, dateRange }
+      state: { data, dateRange, meta }
     });
   };
 
@@ -168,6 +183,26 @@ function AdminAnalytics() {
               <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">Check browser console for API response details</p>
             </div>
           </div>
+        </div>
+      )}
+
+      {meta && (
+        <div className="mb-4 p-4 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg">
+          <p className="text-sm font-medium text-indigo-800 dark:text-indigo-300">
+            Data source: {meta.source === 'google_analytics' ? 'Google Analytics (GA4)' : meta.source === 'internal' ? 'Internal Analytics' : 'Unavailable'}
+          </p>
+          {meta.googleAnalytics?.propertyId && (
+            <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1">
+              GA4 Property ID: {meta.googleAnalytics.propertyId}
+            </p>
+          )}
+          {Array.isArray(meta.googleAnalytics?.warnings) && meta.googleAnalytics.warnings.length > 0 && (
+            <ul className="mt-2 text-xs text-indigo-700 dark:text-indigo-300 list-disc pl-5 space-y-1">
+              {meta.googleAnalytics.warnings.slice(0, 3).map((warning, idx) => (
+                <li key={idx}>{warning}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
       

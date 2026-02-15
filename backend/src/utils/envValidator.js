@@ -35,6 +35,12 @@ const optionalEnvVars = {
   EMAIL_PORT: '587',
   EMAIL_USER: '',
   EMAIL_PASS: '',
+  GA4_PROPERTY_ID: '',
+  GOOGLE_ANALYTICS_PROPERTY_ID: '',
+  GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON: '',
+  GOOGLE_ANALYTICS_SERVICE_ACCOUNT_BASE64: '',
+  GOOGLE_SERVICE_ACCOUNT_EMAIL: '',
+  GOOGLE_PRIVATE_KEY: '',
 };
 
 export function validateEnv() {
@@ -102,6 +108,11 @@ export function validateEnv() {
     
     if (!process.env.FRONTEND_URL.startsWith('https://')) {
       console.warn('⚠️  WARNING: FRONTEND_URL should use HTTPS in production');
+    }
+
+    const gaProperty = process.env.GA4_PROPERTY_ID || process.env.GOOGLE_ANALYTICS_PROPERTY_ID;
+    if (gaProperty && gaProperty.startsWith('G-')) {
+      console.warn('⚠️  WARNING: GA4_PROPERTY_ID should be numeric property ID, not Measurement ID (G-...)');
     }
   }
 }

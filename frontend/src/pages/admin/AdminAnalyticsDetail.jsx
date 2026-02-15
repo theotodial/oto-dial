@@ -14,6 +14,7 @@ function AdminAnalyticsDetail() {
   const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(location.state?.data || null);
+  const [meta, setMeta] = useState(location.state?.meta || null);
   const [dateRange, setDateRange] = useState(
     location.state?.dateRange || {
       startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -41,17 +42,31 @@ function AdminAnalyticsDetail() {
       if (response.error) {
         console.error('Error fetching analytics:', response.error);
         setData(null);
+        setMeta({
+          source: 'unavailable',
+          googleAnalytics: {
+            warnings: [response.error]
+          }
+        });
         return;
       }
 
       if (response.data?.success) {
         setData(response.data.data);
+        setMeta(response.data.meta || null);
       } else {
         setData(null);
+        setMeta(null);
       }
     } catch (error) {
       console.error('Error fetching analytics:', error);
       setData(null);
+      setMeta({
+        source: 'unavailable',
+        googleAnalytics: {
+          warnings: [error.message]
+        }
+      });
     } finally {
       setLoading(false);
     }
@@ -465,6 +480,26 @@ function AdminAnalyticsDetail() {
           />
         </div>
       </div>
+
+      {meta && (
+        <div className="mb-4 p-4 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg">
+          <p className="text-sm font-medium text-indigo-800 dark:text-indigo-300">
+            Data source: {meta.source === 'google_analytics' ? 'Google Analytics (GA4)' : meta.source === 'internal' ? 'Internal Analytics' : 'Unavailable'}
+          </p>
+          {meta.googleAnalytics?.propertyId && (
+            <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1">
+              GA4 Property ID: {meta.googleAnalytics.propertyId}
+            </p>
+          )}
+          {Array.isArray(meta.googleAnalytics?.warnings) && meta.googleAnalytics.warnings.length > 0 && (
+            <ul className="mt-2 text-xs text-indigo-700 dark:text-indigo-300 list-disc pl-5 space-y-1">
+              {meta.googleAnalytics.warnings.slice(0, 3).map((warning, idx) => (
+                <li key={idx}>{warning}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {renderDetailContent()}
     </div>

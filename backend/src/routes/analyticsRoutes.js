@@ -5,6 +5,10 @@ import Subscription from "../models/Subscription.js";
 import authenticateUser from "../middleware/authenticateUser.js";
 import requireAdmin from "../middleware/requireAdmin.js";
 import geoip from "geoip-lite";
+import {
+  getGoogleAnalyticsDashboardData,
+  getGoogleAnalyticsConfigStatus
+} from "../services/googleAnalyticsService.js";
 
 const router = express.Router();
 
@@ -217,6 +221,35 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
     
     const start = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // Default: last 30 days
     const end = endDate ? new Date(endDate) : new Date();
+
+    if (startDate) {
+      start.setHours(0, 0, 0, 0);
+    }
+
+    if (endDate) {
+      // Include the full selected end date instead of midnight only.
+      end.setHours(23, 59, 59, 999);
+    }
+    const gaConfig = getGoogleAnalyticsConfigStatus();
+    let gaResult = null;
+
+    try {
+      gaResult = await getGoogleAnalyticsDashboardData({
+        startDate: start,
+        endDate: end
+      });
+    } catch (gaError) {
+      gaResult = {
+        success: false,
+        error: gaError.message,
+        meta: {
+          source: "google_analytics",
+          configured: gaConfig.configured,
+          propertyId: gaConfig.propertyId || null,
+          warnings: [gaError.message]
+        }
+      };
+    }
 
     // Total visitors
     const totalVisitors = await Analytics.countDocuments({
@@ -466,26 +499,72 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       subscriptionRate: signUps > 0 ? ((usersWithSubscription / signUps) * 100).toFixed(2) : 0
     };
 
+    const internalData = {
+      overview: {
+        totalVisitors,
+        uniqueVisitors,
+        returningVisitors,
+        newVisitors,
+        signUps,
+        usersWithSubscription,
+        avgTimeSpent: avgTimeSpent[0]?.avgTime ? Math.round(avgTimeSpent[0].avgTime) : 0
+      },
+      countries: countriesData,
+      devices: devicesData,
+      browsers: browsersData,
+      os: osData,
+      pages: pagesData,
+      dailyVisitors,
+      topIPs,
+      funnel
+    };
+
+    const gaTotalVisitors = gaResult?.data?.overview?.totalVisitors || 0;
+    const internalTotalVisitors = internalData.overview.totalVisitors || 0;
+
+    let selectedData = internalData;
+    let source = "internal";
+    const warnings = [];
+
+    if (gaResult?.success && gaTotalVisitors > 0) {
+      selectedData = gaResult.data;
+      source = "google_analytics";
+    } else if (internalTotalVisitors > 0) {
+      selectedData = internalData;
+      source = "internal";
+      if (gaResult && !gaResult.success) {
+        warnings.push(gaResult.error || "GA4 data unavailable; using internal analytics");
+      } else if (gaResult?.success && gaTotalVisitors === 0) {
+        warnings.push("GA4 returned 0 visitors for selected range; showing internal analytics");
+      }
+    } else if (gaResult?.success) {
+      selectedData = gaResult.data;
+      source = "google_analytics";
+    } else if (gaResult && !gaResult.success) {
+      warnings.push(gaResult.error || "GA4 data unavailable and internal analytics are empty");
+    }
+
     res.json({
       success: true,
-      data: {
-        overview: {
-          totalVisitors,
-          uniqueVisitors,
-          returningVisitors,
-          newVisitors,
-          signUps,
-          usersWithSubscription,
-          avgTimeSpent: avgTimeSpent[0]?.avgTime ? Math.round(avgTimeSpent[0].avgTime) : 0
+      data: selectedData,
+      meta: {
+        source,
+        range: {
+          startDate: start.toISOString(),
+          endDate: end.toISOString()
         },
-        countries: countriesData,
-        devices: devicesData,
-        browsers: browsersData,
-        os: osData,
-        pages: pagesData,
-        dailyVisitors,
-        topIPs,
-        funnel
+        googleAnalytics: {
+          configured: gaConfig.configured,
+          propertyId: gaConfig.propertyId || null,
+          serviceAccountEmail: gaResult?.meta?.serviceAccountEmail || gaConfig.serviceAccountEmail || null,
+          warnings: [
+            ...(gaResult?.meta?.warnings || []),
+            ...warnings
+          ]
+        },
+        internal: {
+          totalVisitors: internalTotalVisitors
+        }
       }
     });
   } catch (error) {
