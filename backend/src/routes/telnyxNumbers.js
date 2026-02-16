@@ -7,6 +7,8 @@ import User from "../models/User.js";
 import { isCountrySupported, getCountryByCode, getSupportedCountries } from "../utils/countryUtils.js";
 
 const router = express.Router();
+const MAX_MONTHLY_NUMBER_COST = Number(process.env.TELNYX_MAX_MONTHLY_NUMBER_COST || 3.0);
+const MAX_MESSAGING_RATE = Number(process.env.TELNYX_MAX_MESSAGING_RATE || 0.02);
 
 /**
  * GET /api/numbers/search
@@ -159,26 +161,26 @@ router.get(
             return false;
           }
 
-          // RELAXED: Allow up to $3/month (increased from $2)
+          // Allow up to configured monthly cap.
           const monthlyCost = num.monthly_cost || 
                              num.monthly_rate || 
                              num.cost?.monthly ||
                              num.region_information?.monthly_cost ||
                              num.pricing?.monthly ||
                              0;
-          if (monthlyCost > 3.00) {
-            console.log(`🚫 COST CONTROL: Blocked expensive number ${num.phone_number}: $${monthlyCost.toFixed(2)}/month (limit: $3.00)`);
+          if (monthlyCost > MAX_MONTHLY_NUMBER_COST) {
+            console.log(`🚫 COST CONTROL: Blocked expensive number ${num.phone_number}: $${monthlyCost.toFixed(2)}/month (limit: $${MAX_MONTHLY_NUMBER_COST.toFixed(2)})`);
             return false;
           }
 
-          // RELAXED: Allow messaging rates up to $0.02/msg
+          // Allow messaging rates up to configured cap.
           const messagingRate = num.messaging_rate || 
                                num.cost?.messaging || 
                                num.pricing?.messaging ||
                                num.region_information?.messaging_rate ||
                                0;
-          if (messagingRate > 0.02) {
-            console.log(`🚫 COST CONTROL: Blocked number with high messaging rate ${num.phone_number}: $${messagingRate.toFixed(4)}/msg (limit: $0.02)`);
+          if (messagingRate > MAX_MESSAGING_RATE) {
+            console.log(`🚫 COST CONTROL: Blocked number with high messaging rate ${num.phone_number}: $${messagingRate.toFixed(4)}/msg (limit: $${MAX_MESSAGING_RATE.toFixed(4)})`);
             return false;
           }
 
@@ -282,12 +284,17 @@ router.post(
       }
       
       // Validate country is supported
-      if (!isCountrySupported(countryInfo.code)) {
+      if (!countryInfo || !isCountrySupported(countryInfo.code)) {
         return res.status(400).json({ 
-          error: `Country ${countryInfo.name} is not supported. Supported countries: ${getSupportedCountries().map(c => c.name).join(", ")}` 
+          error: `Country ${countryInfo?.name || "Unknown"} is not supported. Supported countries: ${getSupportedCountries().map(c => c.name).join(", ")}` 
         });
       }
-      
+
+      let validatedNumber = null;
+      let validatedCarrierGroup = null;
+      let validatedMonthlyCost = 0;
+      let validatedMessagingRate = 0;
+
       try {
         const numberDetails = await telnyx.availablePhoneNumbers.list({
           filter: { 
@@ -295,23 +302,45 @@ router.post(
             phone_number: phoneNumber
           }
         });
+        let candidates = numberDetails?.data || [];
 
-        if (!numberDetails.data.length) {
+        // Some Telnyx accounts do not support exact phone_number filtering reliably.
+        // Fall back to a broader country query and match locally.
+        if (!candidates.length) {
+          try {
+            const fallbackDetails = await telnyx.availablePhoneNumbers.list({
+              filter: { country_code: detectedCountryCode },
+              page: { size: 250 }
+            });
+            candidates = fallbackDetails?.data || [];
+          } catch (fallbackErr) {
+            console.warn("Fallback number availability lookup failed:", fallbackErr.message);
+          }
+        }
+
+        const requestedDigits = String(phoneNumber).replace(/\D/g, "");
+        validatedNumber = candidates.find((item) => {
+          const itemDigits = String(item?.phone_number || "").replace(/\D/g, "");
+          return itemDigits && itemDigits === requestedDigits;
+        }) || candidates[0] || null;
+
+        if (!validatedNumber) {
           return res.status(400).json({ error: "Number not available" });
         }
 
-        const num = numberDetails.data[0];
-
         // HARD BLOCK CHECKS - Same logic as search endpoint for consistency
         // Must have phone_number
-        if (!num.phone_number) {
+        if (!validatedNumber.phone_number) {
           return res.status(400).json({ error: "Invalid number data" });
         }
 
         // No toll-free numbers
-        const numberType = num.number_type || num.type || num.region_information?.region_type;
+        const numberType =
+          validatedNumber.number_type ||
+          validatedNumber.type ||
+          validatedNumber.region_information?.region_type;
         if (numberType === 'toll-free' || numberType === 'toll_free' || 
-            num.toll_free === true || num.is_toll_free === true) {
+            validatedNumber.toll_free === true || validatedNumber.is_toll_free === true) {
           return res.status(403).json({ 
             error: "Number not eligible: Toll-free numbers not allowed" 
           });
@@ -325,31 +354,34 @@ router.post(
         }
 
         // No short codes
-        const cleanNumber = num.phone_number.replace(/\D/g, '');
+        const cleanNumber = validatedNumber.phone_number.replace(/\D/g, '');
         if (cleanNumber.length < 10) {
           return res.status(403).json({ 
             error: "Number not eligible: Short codes not allowed" 
           });
         }
 
-        // Only carrier group A or B
-        const carrierGroup = num.carrier?.group || 
-                            num.carrier_group || 
-                            num.carrier?.carrier_group ||
-                            num.region_information?.carrier_group;
-        if (carrierGroup && !['A', 'B', 'a', 'b'].includes(String(carrierGroup).toUpperCase())) {
-          return res.status(403).json({ 
-            error: `Number not eligible: Carrier group ${carrierGroup} not allowed (only A or B allowed)` 
-          });
+        // Allow A, B, or unknown. Block explicit C and above.
+        validatedCarrierGroup =
+          validatedNumber.carrier?.group ||
+          validatedNumber.carrier_group ||
+          validatedNumber.carrier?.carrier_group ||
+          validatedNumber.region_information?.carrier_group ||
+          null;
+        if (validatedCarrierGroup) {
+          const groupUpper = String(validatedCarrierGroup).toUpperCase();
+          if (["C", "D", "E", "F", "G", "H"].includes(groupUpper)) {
+            return res.status(403).json({ 
+              error: `Number not eligible: Carrier group ${validatedCarrierGroup} not allowed` 
+            });
+          }
         }
 
-        // No premium features
-        const features = num.features || num.capabilities || [];
+        // No explicit premium features
+        const features = validatedNumber.features || validatedNumber.capabilities || [];
         if (Array.isArray(features)) {
           if (features.some(f => 
-            f === 'hd_calling' || 
             f === 'premium_routing' || 
-            f === 'premium' ||
             f === 'toll_free'
           )) {
             return res.status(403).json({ 
@@ -357,34 +389,36 @@ router.post(
             });
           }
         }
-        if (num.premium === true || num.is_premium === true) {
+        if (validatedNumber.premium === true || validatedNumber.is_premium === true) {
           return res.status(403).json({ 
             error: "Number not eligible: Premium number not allowed" 
           });
         }
 
         // Check monthly cost - CRITICAL
-        const monthlyCost = num.monthly_cost || 
-                           num.monthly_rate || 
-                           num.cost?.monthly ||
-                           num.region_information?.monthly_cost ||
-                           num.pricing?.monthly ||
-                           0;
-        if (monthlyCost > 2.00) {
+        validatedMonthlyCost =
+          validatedNumber.monthly_cost ||
+          validatedNumber.monthly_rate ||
+          validatedNumber.cost?.monthly ||
+          validatedNumber.region_information?.monthly_cost ||
+          validatedNumber.pricing?.monthly ||
+          0;
+        if (validatedMonthlyCost > MAX_MONTHLY_NUMBER_COST) {
           return res.status(403).json({ 
-            error: `Number not eligible: Monthly cost ($${monthlyCost.toFixed(2)}) exceeds $2.00 limit` 
+            error: `Number not eligible: Monthly cost ($${validatedMonthlyCost.toFixed(2)}) exceeds $${MAX_MONTHLY_NUMBER_COST.toFixed(2)} limit` 
           });
         }
 
         // Check messaging rate - CRITICAL
-        const messagingRate = num.messaging_rate || 
-                             num.cost?.messaging || 
-                             num.pricing?.messaging ||
-                             num.region_information?.messaging_rate ||
-                             0;
-        if (messagingRate > 0.01) {
+        validatedMessagingRate =
+          validatedNumber.messaging_rate ||
+          validatedNumber.cost?.messaging ||
+          validatedNumber.pricing?.messaging ||
+          validatedNumber.region_information?.messaging_rate ||
+          0;
+        if (validatedMessagingRate > MAX_MESSAGING_RATE) {
           return res.status(403).json({ 
-            error: `Number not eligible: Messaging rate ($${messagingRate.toFixed(4)}) exceeds $0.01 limit` 
+            error: `Number not eligible: Messaging rate ($${validatedMessagingRate.toFixed(4)}) exceeds $${MAX_MESSAGING_RATE.toFixed(4)} limit` 
           });
         }
 
@@ -438,31 +472,31 @@ router.post(
       // PURCHASE NUMBER (ONLY AFTER ALL VALIDATIONS PASSED)
       console.log(`✅ COST CONTROL: Number ${phoneNumber} passed all validations, purchasing...`);
       console.log(`   User: ${user._id}`);
-      console.log(`   Carrier Group: ${carrierGroup || 'Unknown'}`);
-      console.log(`   Monthly Cost: $${monthlyCost.toFixed(2)}`);
-      console.log(`   Messaging Rate: $${messagingRate.toFixed(4)}`);
+      console.log(`   Carrier Group: ${validatedCarrierGroup || 'Unknown'}`);
+      console.log(`   Monthly Cost: $${Number(validatedMonthlyCost || 0).toFixed(2)}`);
+      console.log(`   Messaging Rate: $${Number(validatedMessagingRate || 0).toFixed(4)}`);
       
       const order = await telnyx.numberOrders.create({
         phone_numbers: [{ phone_number: phoneNumber }]
       });
 
       // Get number cost details and region information from Telnyx
-      let finalMonthlyCost = monthlyCost;
+      let finalMonthlyCost = validatedMonthlyCost;
       let oneTimeFees = 0;
-      let finalCarrierGroup = carrierGroup;
-      let regionInfo = num.region_information || null;
+      let finalCarrierGroup = validatedCarrierGroup;
+      let regionInfo = validatedNumber?.region_information || null;
       let country = countryInfo.name;
       let state = null;
       let city = null;
       
       try {
         const numDetails = await telnyx.phoneNumbers.retrieve(phoneNumber);
-        finalMonthlyCost = numDetails.data.monthly_cost || numDetails.data.monthly_rate || monthlyCost;
+        finalMonthlyCost = numDetails.data.monthly_cost || numDetails.data.monthly_rate || validatedMonthlyCost;
         oneTimeFees = numDetails.data.one_time_cost || 0;
-        finalCarrierGroup = numDetails.data.carrier?.group || numDetails.data.carrier_group || carrierGroup;
+        finalCarrierGroup = numDetails.data.carrier?.group || numDetails.data.carrier_group || validatedCarrierGroup;
         
         // Extract region information
-        regionInfo = numDetails.data.region_information || num.region_information || null;
+        regionInfo = numDetails.data.region_information || validatedNumber?.region_information || null;
         if (regionInfo) {
           // Use detected country info, but allow Telnyx to override if it provides more specific data
           const telnyxCountry = regionInfo.country_name || regionInfo.country;
@@ -479,8 +513,8 @@ router.post(
       } catch (err) {
         console.warn("Could not fetch number details from Telnyx:", err.message);
         // Fallback to data from search
-        if (num.region_information) {
-          regionInfo = num.region_information;
+        if (validatedNumber?.region_information) {
+          regionInfo = validatedNumber.region_information;
           const telnyxCountry = regionInfo.country_name || regionInfo.country;
           if (telnyxCountry && isCountrySupported(telnyxCountry)) {
             const telnyxCountryInfo = getCountryByCode(telnyxCountry);
