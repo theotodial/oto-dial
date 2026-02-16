@@ -126,11 +126,15 @@ function AdminAnalytics() {
     if (key.includes('instagram')) return '📸';
     if (key.includes('facebook')) return '📘';
     if (key === 'x' || key.includes('twitter') || key.includes('x.com')) return 'X';
+    if (key.includes('threads')) return '🧵';
     if (key.includes('tiktok')) return '🎵';
     if (key.includes('linkedin')) return '💼';
     if (key.includes('youtube')) return '▶';
     if (key.includes('reddit')) return '👽';
     if (key.includes('pinterest')) return '📌';
+    if (key.includes('telegram') || key.includes('t.me')) return '✈';
+    if (key.includes('whatsapp')) return '🟢';
+    if (key.includes('discord')) return '🎮';
     if (key.includes('google')) return '🔎';
     return '🔗';
   };
@@ -144,6 +148,12 @@ function AdminAnalytics() {
       .filter(Boolean)
       .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
       .join(' ');
+  };
+
+  const buildSourceDisplayLabel = (source, handle = null) => {
+    const icon = getSourceIcon(source);
+    const base = formatSourceLabel(source || 'direct');
+    return `${icon} ${base}${handle ? ` @${handle}` : ''}`;
   };
 
   if (loading) {
@@ -196,7 +206,7 @@ function AdminAnalytics() {
   const trafficSources = data?.trafficSources || { channels: [], topSources: [], summary: {} };
   const topSource = trafficSources.topSources?.[0];
   const topSourceSubtitle = topSource
-    ? `Top source: ${getSourceIcon(topSource.source)} ${formatSourceLabel(topSource.source)}`
+    ? `Top source: ${buildSourceDisplayLabel(topSource.socialPlatform || topSource.source, topSource.influencerHandle || null)}`
     : `${(trafficSources.summary?.totalVisits || 0).toLocaleString()} tracked visits`;
 
   // Card component - navigates to detail page
@@ -343,7 +353,7 @@ function AdminAnalytics() {
                     {user.ipAddress || 'unknown'} • {user.city && user.country ? `${user.city}, ${user.country}` : (user.country || 'Unknown')}
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {getSourceIcon(user.source || user.sourceChannel)} {formatSourceLabel(user.source || user.sourceChannel || 'direct')} • {formatTime(user.timeSpent || 0)} • {user.conversion || 'none'}
+                    {buildSourceDisplayLabel(user.socialPlatform || user.source || user.sourceChannel || 'direct', user.influencerHandle || null)} • {formatTime(user.timeSpent || 0)} • {user.conversion || 'none'}
                   </p>
                 </div>
               ))}

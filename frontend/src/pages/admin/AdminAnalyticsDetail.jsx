@@ -114,11 +114,15 @@ function AdminAnalyticsDetail() {
     if (key.includes('instagram')) return '📸';
     if (key.includes('facebook')) return '📘';
     if (key === 'x' || key.includes('twitter') || key.includes('x.com')) return 'X';
+    if (key.includes('threads')) return '🧵';
     if (key.includes('tiktok')) return '🎵';
     if (key.includes('linkedin')) return '💼';
     if (key.includes('youtube')) return '▶';
     if (key.includes('reddit')) return '👽';
     if (key.includes('pinterest')) return '📌';
+    if (key.includes('telegram') || key.includes('t.me')) return '✈';
+    if (key.includes('whatsapp')) return '🟢';
+    if (key.includes('discord')) return '🎮';
     if (key.includes('google')) return '🔎';
     if (channel === 'social') return '📱';
     if (channel === 'organic_search') return '🔍';
@@ -150,15 +154,6 @@ function AdminAnalyticsDetail() {
     if (key === 'internal') return '#8b5cf6';
     return '#334155';
   };
-
-  const realtimeMapPoints = (realtimeUsers || [])
-    .filter((user) => Number.isFinite(Number(user.latitude)) && Number.isFinite(Number(user.longitude)))
-    .map((user) => ({
-      key: `${user.sessionId || 'session'}-${user.latitude}-${user.longitude}`,
-      coordinates: [Number(user.longitude), Number(user.latitude)],
-      source: user.source || 'direct',
-      sourceChannel: user.sourceChannel || 'direct'
-    }));
 
   if (loading) {
     return (
@@ -211,6 +206,8 @@ function AdminAnalyticsDetail() {
   const trafficSources = data?.trafficSources || {
     channels: [],
     topSources: [],
+    platforms: [],
+    campaigns: [],
     summary: {
       totalVisits: 0,
       totalUniqueVisitors: 0,
@@ -219,14 +216,57 @@ function AdminAnalyticsDetail() {
       byChannel: {}
     }
   };
+  const buildSourceDisplayLabel = (source, channel, handle = null) => {
+    const icon = getSourceIcon(source, channel);
+    const base = formatSourceLabel(source || 'direct');
+    const account = handle ? ` @${handle}` : '';
+    return `${icon} ${base}${account}`;
+  };
+  const truncateLabel = (value, max = 34) => {
+    const text = String(value || '');
+    if (text.length <= max) return text;
+    return `${text.slice(0, max - 1)}…`;
+  };
   const realtimeChannelChartData = (realtimeSummary.sourceBreakdown || []).map((row) => ({
     ...row,
     channelLabel: String(row.channel || 'direct').replace('_', ' ')
   }));
+  const realtimePlatformChartData = (realtimeSummary.platformBreakdown || []).map((row) => ({
+    ...row,
+    platformLabel: buildSourceDisplayLabel(row.platform || 'social', 'social')
+  }));
+  const realtimeCampaignBadges = (realtimeSummary.campaignBreakdown || []).slice(0, 10);
   const trafficChannelChartData = (trafficSources.channels || []).map((row) => ({
     ...row,
     channelLabel: String(row.channel || 'direct').replace('_', ' ')
   }));
+  const trafficPlatformChartData = (trafficSources.platforms || []).map((row) => ({
+    ...row,
+    platformLabel: buildSourceDisplayLabel(row.platform || row.icon || 'social', 'social')
+  }));
+  const topSourceChartData = (trafficSources.topSources || [])
+    .slice(0, 10)
+    .map((row) => ({
+      ...row,
+      sourceLabel: truncateLabel(
+        buildSourceDisplayLabel(
+          row.socialPlatform || row.source || 'direct',
+          row.channel,
+          row.influencerHandle || null
+        ),
+        32
+      )
+    }));
+  const realtimeMapPoints = (realtimeUsers || [])
+    .filter((user) => Number.isFinite(Number(user.latitude)) && Number.isFinite(Number(user.longitude)))
+    .map((user) => ({
+      key: `${user.sessionId || 'session'}-${user.latitude}-${user.longitude}`,
+      coordinates: [Number(user.longitude), Number(user.latitude)],
+      source: user.source || 'direct',
+      sourceChannel: user.sourceChannel || 'direct',
+      socialPlatform: user.socialPlatform || null,
+      influencerHandle: user.influencerHandle || null
+    }));
 
   const renderDetailContent = () => {
     switch (category) {
@@ -618,7 +658,9 @@ function AdminAnalyticsDetail() {
                           stroke="#0f172a"
                           strokeWidth={0.5}
                         >
-                          <title>{`${formatSourceLabel(point.source)} (${String(point.sourceChannel || 'direct').replace('_', ' ')})`}</title>
+                          <title>
+                            {`${buildSourceDisplayLabel(point.socialPlatform || point.source, point.sourceChannel, point.influencerHandle)} (${String(point.sourceChannel || 'direct').replace('_', ' ')})`}
+                          </title>
                         </circle>
                       </Marker>
                     ))}
@@ -648,7 +690,7 @@ function AdminAnalyticsDetail() {
               )}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Device Breakdown</h3>
                 <ResponsiveContainer width="100%" height={320}>
@@ -673,7 +715,46 @@ function AdminAnalyticsDetail() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Social Platforms (Realtime)</h3>
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={realtimePlatformChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="platformLabel" interval={0} angle={-30} textAnchor="end" height={88} />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#ec4899" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
+
+            {realtimeCampaignBadges.length > 0 && (
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Detected Social Campaigns (Realtime)</h3>
+                <div className="flex flex-wrap gap-2">
+                  {realtimeCampaignBadges.map((campaign, index) => {
+                    const sourceLabel = formatSourceLabel(campaign.source || 'social');
+                    const icon = getSourceIcon(campaign.source, 'social');
+                    return (
+                      <span
+                        key={`${campaign.source || 'social'}-${campaign.campaignName || 'campaign'}-${index}`}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300"
+                      >
+                        <span>{icon}</span>
+                        <span>{sourceLabel}</span>
+                        <span className="text-pink-500 dark:text-pink-300/90">
+                          {campaign.campaignName && campaign.campaignName !== 'unnamed_campaign'
+                            ? campaign.campaignName
+                            : 'campaign'}
+                        </span>
+                        <span className="text-pink-500 dark:text-pink-300/90">({campaign.count})</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
               <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Realtime Users Detail</h3>
@@ -723,10 +804,27 @@ function AdminAnalyticsDetail() {
                           </td>
                           <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300">
                             <div className="capitalize inline-flex items-center gap-2">
-                              <span>{getSourceIcon(user.sourceIcon || user.source, user.sourceChannel)}</span>
+                              <span>{getSourceIcon(user.socialPlatform || user.sourceIcon || user.source, user.sourceChannel)}</span>
                               <span>{(user.sourceChannel || 'direct').replace('_', ' ')}</span>
                             </div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 break-all">{formatSourceLabel(user.source || 'direct')}</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 break-all">
+                              {buildSourceDisplayLabel(user.socialPlatform || user.source || 'direct', user.sourceChannel, user.influencerHandle || null)}
+                            </div>
+                            {user.socialCampaignDetected && (
+                              <div className="mt-1">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300">
+                                  <span>{getSourceIcon(user.socialCampaignSource || user.socialPlatform || user.source, 'social')}</span>
+                                  <span>
+                                    {formatSourceLabel(user.socialCampaignSource || user.socialPlatform || user.source || 'social')} campaign
+                                  </span>
+                                  {user.socialCampaignName && (
+                                    <span className="text-pink-500 dark:text-pink-300/90">
+                                      ({user.socialCampaignName})
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                            )}
                             <div className="text-[11px] text-gray-400 dark:text-gray-500">
                               Method: {user.sourceAttributionMethod || 'unknown'}
                             </div>
@@ -816,6 +914,60 @@ function AdminAnalyticsDetail() {
               </div>
             </div>
 
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Social Platforms</h3>
+                <ResponsiveContainer width="100%" height={340}>
+                  <BarChart data={trafficPlatformChartData.slice(0, 12)}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="platformLabel" interval={0} angle={-30} textAnchor="end" height={90} />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="visits" fill="#ec4899" name="Visits" />
+                    <Bar dataKey="influencerAccounts" fill="#8b5cf6" name="Influencer Accounts" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Top Source Accounts</h3>
+                <ResponsiveContainer width="100%" height={340}>
+                  <BarChart data={topSourceChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="sourceLabel" interval={0} angle={-30} textAnchor="end" height={90} />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="visits" fill="#06b6d4" name="Visits" />
+                    <Bar dataKey="signUps" fill="#10b981" name="Signups" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {(trafficSources.campaigns || []).length > 0 && (
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Detected Social Campaigns</h3>
+                <div className="flex flex-wrap gap-2">
+                  {(trafficSources.campaigns || []).slice(0, 20).map((campaign, idx) => (
+                    <span
+                      key={`${campaign.source || 'social'}-${campaign.campaignName || 'campaign'}-${idx}`}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/30 dark:text-fuchsia-300"
+                    >
+                      <span>{getSourceIcon(campaign.platform || campaign.source, 'social')}</span>
+                      <span>{formatSourceLabel(campaign.source || campaign.platform || 'social')}</span>
+                      <span className="text-fuchsia-500 dark:text-fuchsia-300/90">
+                        {campaign.campaignName && campaign.campaignName !== 'unnamed_campaign'
+                          ? campaign.campaignName
+                          : 'campaign'}
+                      </span>
+                      <span className="text-fuchsia-500 dark:text-fuchsia-300/90">({campaign.visits})</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
               <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Top Sources</h3>
               <div className="overflow-x-auto">
@@ -823,6 +975,8 @@ function AdminAnalyticsDetail() {
                   <thead>
                     <tr className="border-b border-gray-200 dark:border-slate-700">
                       <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Source</th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Platform</th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Account / Campaign</th>
                       <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Channel</th>
                       <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Visits</th>
                       <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Unique</th>
@@ -832,12 +986,34 @@ function AdminAnalyticsDetail() {
                   </thead>
                   <tbody>
                     {(trafficSources.topSources || []).map((source, index) => (
-                      <tr key={`${source.source}-${index}`} className="border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                      <tr key={`${source.source}-${source.influencerHandle || 'none'}-${index}`} className="border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50">
                         <td className="py-3 px-4 text-sm font-medium text-gray-900 dark:text-white break-all">
                           <div className="inline-flex items-center gap-2">
-                            <span>{getSourceIcon(source.icon || source.source, source.channel)}</span>
-                            <span>{formatSourceLabel(source.source || 'direct')}</span>
+                            <span>{getSourceIcon(source.socialPlatform || source.icon || source.source, source.channel)}</span>
+                            <span>{formatSourceLabel(source.source || source.socialPlatform || 'direct')}</span>
                           </div>
+                        </td>
+                        <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300">
+                          {source.socialPlatform
+                            ? `${getSourceIcon(source.socialPlatform, 'social')} ${formatSourceLabel(source.socialPlatform)}`
+                            : '—'}
+                        </td>
+                        <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300">
+                          {source.influencerHandle ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                              @{source.influencerHandle}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-500 dark:text-gray-400">n/a</span>
+                          )}
+                          {source.socialCampaignDetected && (
+                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300">
+                              {formatSourceLabel(source.socialCampaignSource || source.socialPlatform || source.source || 'social')} campaign
+                              {source.socialCampaignName && source.socialCampaignName !== 'unnamed_campaign'
+                                ? `: ${source.socialCampaignName}`
+                                : ''}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300 capitalize">
                           {(source.channel || 'direct').replace('_', ' ')}

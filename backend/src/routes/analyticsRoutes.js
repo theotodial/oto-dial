@@ -40,18 +40,26 @@ const SEARCH_DOMAINS = [
 const SOCIAL_DOMAINS = [
   "facebook.com",
   "m.facebook.com",
+  "l.facebook.com",
   "instagram.com",
+  "l.instagram.com",
+  "threads.net",
   "twitter.com",
   "x.com",
   "t.co",
   "linkedin.com",
+  "lnkd.in",
   "youtube.com",
   "youtu.be",
   "reddit.com",
   "pinterest.com",
   "tiktok.com",
   "snapchat.com",
+  "t.snapchat.com",
   "telegram.org",
+  "t.me",
+  "discord.com",
+  "discord.gg",
   "whatsapp.com"
 ];
 
@@ -76,9 +84,26 @@ const SOCIAL_SOURCE_HINTS = [
   "reddit",
   "pinterest",
   "telegram",
-  "whatsapp"
+  "whatsapp",
+  "threads",
+  "discord"
 ];
 const EMAIL_SOURCE_HINTS = ["email", "newsletter", "mailchimp", "sendgrid", "brevo", "klaviyo"];
+const SOCIAL_PLATFORM_KEYS = new Set([
+  "snapchat",
+  "instagram",
+  "facebook",
+  "x",
+  "linkedin",
+  "youtube",
+  "tiktok",
+  "reddit",
+  "pinterest",
+  "telegram",
+  "whatsapp",
+  "threads",
+  "discord"
+]);
 
 function parseRealtimeWindowKey(rawValue) {
   const key = String(rawValue || "15m").trim().toLowerCase();
@@ -136,13 +161,15 @@ function normalizeSourceLabel(source) {
   if (value.includes("snapchat")) return "snapchat";
   if (value.includes("instagram")) return "instagram";
   if (value.includes("facebook") || value.includes("fb.com")) return "facebook";
+  if (value.includes("threads")) return "threads";
   if (value.includes("x.com") || value.includes("twitter") || value.includes("t.co")) return "x";
   if (value.includes("linkedin") || value.includes("lnkd.in")) return "linkedin";
   if (value.includes("youtube") || value.includes("youtu.be")) return "youtube";
   if (value.includes("tiktok")) return "tiktok";
   if (value.includes("reddit")) return "reddit";
   if (value.includes("pinterest")) return "pinterest";
-  if (value.includes("telegram")) return "telegram";
+  if (value.includes("telegram") || value.includes("t.me")) return "telegram";
+  if (value.includes("discord")) return "discord";
   if (value.includes("whatsapp")) return "whatsapp";
   if (value.includes("google")) return "google";
   if (value.includes("bing")) return "bing";
@@ -173,17 +200,288 @@ function isEmailSource(value) {
     EMAIL_SOURCE_HINTS.some((hint) => source.includes(hint));
 }
 
+function resolveSocialPlatform(value) {
+  const normalized = normalizeSourceLabel(value);
+  if (SOCIAL_PLATFORM_KEYS.has(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeHandle(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  const decoded = decodeURIComponent(raw);
+  const handle = decoded
+    .replace(/^@+/, "")
+    .replace(/[^a-zA-Z0-9._-]/g, "")
+    .trim()
+    .toLowerCase();
+
+  if (!handle || handle.length < 2 || handle.length > 64) {
+    return null;
+  }
+
+  const reserved = new Set([
+    "p",
+    "reel",
+    "reels",
+    "stories",
+    "story",
+    "explore",
+    "watch",
+    "video",
+    "videos",
+    "feed",
+    "home",
+    "about",
+    "discover",
+    "search",
+    "share",
+    "post",
+    "posts",
+    "login",
+    "signup"
+  ]);
+
+  if (reserved.has(handle)) {
+    return null;
+  }
+
+  return handle;
+}
+
+function extractHandleFromText(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  const decoded = decodeURIComponent(text);
+  const atMatch = decoded.match(/@([a-zA-Z0-9._-]{2,64})/);
+  if (atMatch?.[1]) {
+    return normalizeHandle(atMatch[1]);
+  }
+
+  if (/^[a-zA-Z0-9._-]{2,64}$/.test(decoded)) {
+    return normalizeHandle(decoded);
+  }
+
+  const token = decoded
+    .split(/[,\s|:;/]+/)
+    .map((item) => item.trim())
+    .find((item) => /^@?[a-zA-Z0-9._-]{2,64}$/.test(item));
+
+  if (token) {
+    return normalizeHandle(token);
+  }
+
+  return null;
+}
+
+function extractHandleFromUrl(parsedUrl, socialPlatform) {
+  if (!parsedUrl) {
+    return null;
+  }
+
+  const segments = parsedUrl.pathname
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  const findParamHandle = () => {
+    const params = parsedUrl.searchParams;
+    const keys = ["username", "user", "handle", "creator", "influencer", "profile", "account"];
+    for (const key of keys) {
+      const value = params.get(key);
+      const normalized = normalizeHandle(value);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return null;
+  };
+
+  if (socialPlatform === "instagram") {
+    if (segments[0] === "stories" && segments[1]) {
+      return normalizeHandle(segments[1]);
+    }
+    if (segments[0]) {
+      return normalizeHandle(segments[0]);
+    }
+  }
+
+  if (socialPlatform === "tiktok") {
+    const tiktokHandle = segments.find((segment) => segment.startsWith("@"));
+    if (tiktokHandle) {
+      return normalizeHandle(tiktokHandle);
+    }
+  }
+
+  if (socialPlatform === "x") {
+    if (segments[0]) {
+      return normalizeHandle(segments[0]);
+    }
+  }
+
+  if (socialPlatform === "threads") {
+    if (segments[0]) {
+      return normalizeHandle(segments[0]);
+    }
+  }
+
+  if (socialPlatform === "facebook") {
+    if (segments[0]) {
+      return normalizeHandle(segments[0]);
+    }
+  }
+
+  if (socialPlatform === "snapchat") {
+    if (segments[0] === "add" && segments[1]) {
+      return normalizeHandle(segments[1]);
+    }
+    if (segments[0]) {
+      return normalizeHandle(segments[0]);
+    }
+  }
+
+  if (socialPlatform === "youtube") {
+    if (segments[0] === "@" && segments[1]) {
+      return normalizeHandle(segments[1]);
+    }
+    if (segments[0]?.startsWith("@")) {
+      return normalizeHandle(segments[0]);
+    }
+    if (["channel", "c", "user"].includes(segments[0]) && segments[1]) {
+      return normalizeHandle(segments[1]);
+    }
+  }
+
+  if (socialPlatform === "linkedin") {
+    if (["in", "company", "school"].includes(segments[0]) && segments[1]) {
+      return normalizeHandle(segments[1]);
+    }
+  }
+
+  if (socialPlatform === "reddit") {
+    if (segments[0] === "user" && segments[1]) {
+      return normalizeHandle(segments[1]);
+    }
+    if (segments[0] === "r" && segments[1]) {
+      return normalizeHandle(segments[1]);
+    }
+  }
+
+  if (socialPlatform === "pinterest") {
+    if (segments[0]) {
+      return normalizeHandle(segments[0]);
+    }
+  }
+
+  if (socialPlatform === "telegram") {
+    if (segments[0]) {
+      return normalizeHandle(segments[0]);
+    }
+  }
+
+  if (socialPlatform === "discord") {
+    if (segments[0] === "users" && segments[1]) {
+      return normalizeHandle(segments[1]);
+    }
+    return findParamHandle();
+  }
+
+  if (socialPlatform === "whatsapp") {
+    return findParamHandle();
+  }
+
+  return findParamHandle();
+}
+
+function resolveSocialContext({
+  sourceCandidate,
+  referrerParsed,
+  landingParsed,
+  pageParsed,
+  utmSource,
+  utmMedium,
+  utmCampaign,
+  utmTerm,
+  utmContent,
+  sourceHint
+}) {
+  const platformCandidates = [
+    sourceCandidate,
+    utmSource,
+    sourceHint,
+    referrerParsed?.hostname || "",
+    landingParsed?.hostname || "",
+    pageParsed?.hostname || ""
+  ];
+
+  const socialPlatform = platformCandidates
+    .map((candidate) => resolveSocialPlatform(candidate))
+    .find(Boolean) || null;
+
+  const queryCandidateValues = [];
+  [referrerParsed, landingParsed, pageParsed].forEach((parsedUrl) => {
+    if (!parsedUrl) return;
+    const params = parsedUrl.searchParams;
+    ["username", "user", "handle", "creator", "influencer", "profile", "account"].forEach((key) => {
+      const value = params.get(key);
+      if (value) {
+        queryCandidateValues.push(value);
+      }
+    });
+  });
+
+  const influencerHandleCandidates = [
+    extractHandleFromText(utmContent),
+    extractHandleFromText(utmTerm),
+    extractHandleFromText(sourceHint),
+    extractHandleFromText(utmCampaign),
+    extractHandleFromUrl(referrerParsed, socialPlatform),
+    extractHandleFromUrl(landingParsed, socialPlatform),
+    extractHandleFromUrl(pageParsed, socialPlatform),
+    ...queryCandidateValues.map((value) => extractHandleFromText(value))
+  ];
+  const influencerHandle = influencerHandleCandidates.find(Boolean) || null;
+
+  const mediumValue = String(utmMedium || "").toLowerCase();
+  const socialCampaignDetected = Boolean(
+    socialPlatform &&
+    utmSource &&
+    (
+      mediumValue.includes("social") ||
+      mediumValue.includes("paid") ||
+      mediumValue.includes("cpc") ||
+      mediumValue.includes("ppc") ||
+      isSocialSource(utmSource)
+    )
+  );
+
+  return {
+    socialPlatform,
+    influencerHandle,
+    socialCampaignDetected,
+    socialCampaignSource: socialCampaignDetected ? normalizeSourceLabel(utmSource || socialPlatform) : null,
+    socialCampaignName: socialCampaignDetected ? String(utmCampaign || "").trim() || null : null
+  };
+}
+
 function inferSocialSourceFromUserAgent(userAgent) {
   const value = String(userAgent || "").toLowerCase();
   if (!value) return null;
   if (value.includes("snapchat")) return "snapchat";
   if (value.includes("instagram")) return "instagram";
   if (value.includes("fban") || value.includes("fbav") || value.includes("facebook")) return "facebook";
+  if (value.includes("threads")) return "threads";
   if (value.includes("tiktok")) return "tiktok";
   if (value.includes("linkedinapp") || value.includes("linkedin")) return "linkedin";
   if (value.includes("twitter") || value.includes("x-client")) return "x";
   if (value.includes("reddit")) return "reddit";
   if (value.includes("pinterest")) return "pinterest";
+  if (value.includes("telegram")) return "telegram";
+  if (value.includes("discord")) return "discord";
   if (value.includes("youtube")) return "youtube";
   return null;
 }
@@ -199,6 +497,8 @@ function readQueryAttribution(urlLike) {
     utmSource: params.get("utm_source") || null,
     utmMedium: params.get("utm_medium") || null,
     utmCampaign: params.get("utm_campaign") || null,
+    utmTerm: params.get("utm_term") || null,
+    utmContent: params.get("utm_content") || null,
     gclid: params.get("gclid") || null,
     fbclid: params.get("fbclid") || null,
     msclkid: params.get("msclkid") || null,
@@ -218,8 +518,14 @@ function resolveTrafficSourceFromRecord(row, internalHosts) {
   const pageAttribution = readQueryAttribution(page);
   const landingAttribution = readQueryAttribution(landingUrl);
 
+  const pageParsed = safeParseUrl(page);
+  const landingParsed = safeParseUrl(landingUrl);
+
   const utmSource = row?.utmSource || landingAttribution.utmSource || pageAttribution.utmSource || null;
   const utmMedium = row?.utmMedium || landingAttribution.utmMedium || pageAttribution.utmMedium || null;
+  const utmCampaign = row?.utmCampaign || landingAttribution.utmCampaign || pageAttribution.utmCampaign || null;
+  const utmTerm = row?.utmTerm || landingAttribution.utmTerm || pageAttribution.utmTerm || null;
+  const utmContent = row?.utmContent || landingAttribution.utmContent || pageAttribution.utmContent || null;
   const sourceHint = row?.sourceHint || landingAttribution.sourceHint || pageAttribution.sourceHint || null;
 
   const gclid = row?.gclid || landingAttribution.gclid || pageAttribution.gclid || null;
@@ -233,164 +539,189 @@ function resolveTrafficSourceFromRecord(row, internalHosts) {
 
   const referrerParsed = safeParseUrl(referrer);
   const referrerHost = referrerParsed?.hostname?.toLowerCase().replace(/^www\./, "") || "";
+  const mediumValue = String(utmMedium || "").trim().toLowerCase();
+
+  const withSocialContext = (trafficResult, sourceCandidate) => {
+    const socialContext = resolveSocialContext({
+      sourceCandidate,
+      referrerParsed,
+      landingParsed,
+      pageParsed,
+      utmSource,
+      utmMedium,
+      utmCampaign,
+      utmTerm,
+      utmContent,
+      sourceHint
+    });
+
+    return {
+      ...trafficResult,
+      ...socialContext,
+      utmSource: utmSource ? normalizeSourceLabel(utmSource) : null,
+      utmMedium: mediumValue || null,
+      utmCampaign: utmCampaign ? String(utmCampaign).trim() : null
+    };
+  };
 
   if (utmSource || utmMedium || sourceHint) {
     const normalizedSource = normalizeSourceLabel(utmSource || sourceHint || referrerHost || "direct");
-    const normalizedMedium = String(utmMedium || "").toLowerCase();
 
     if (
       clickIdPresent ||
-      normalizedMedium.includes("paid") ||
-      normalizedMedium.includes("cpc") ||
-      normalizedMedium.includes("ppc") ||
-      normalizedMedium.includes("ad")
+      mediumValue.includes("paid") ||
+      mediumValue.includes("cpc") ||
+      mediumValue.includes("ppc") ||
+      mediumValue.includes("ad")
     ) {
-      return {
+      return withSocialContext({
         channel: "paid",
         source: normalizedSource,
         icon: normalizedSource,
         referrer,
         attributionMethod: "utm"
-      };
+      }, normalizedSource);
     }
 
-    if (normalizedMedium.includes("social") || isSocialSource(normalizedSource)) {
-      return {
+    if (mediumValue.includes("social") || isSocialSource(normalizedSource)) {
+      return withSocialContext({
         channel: "social",
         source: normalizedSource,
         icon: normalizedSource,
         referrer,
         attributionMethod: "utm"
-      };
+      }, normalizedSource);
     }
 
-    if (normalizedMedium.includes("organic") || isSearchSource(normalizedSource)) {
-      return {
+    if (mediumValue.includes("organic") || isSearchSource(normalizedSource)) {
+      return withSocialContext({
         channel: "organic_search",
         source: normalizedSource,
         icon: normalizedSource,
         referrer,
         attributionMethod: "utm"
-      };
+      }, normalizedSource);
     }
 
-    if (normalizedMedium.includes("email") || isEmailSource(normalizedSource)) {
-      return {
+    if (mediumValue.includes("email") || isEmailSource(normalizedSource)) {
+      return withSocialContext({
         channel: "email",
         source: normalizedSource,
         icon: normalizedSource,
         referrer,
         attributionMethod: "utm"
-      };
+      }, normalizedSource);
     }
 
-    if (normalizedMedium.includes("referral")) {
-      return {
+    if (mediumValue.includes("referral")) {
+      return withSocialContext({
         channel: "referral",
         source: normalizedSource,
         icon: normalizedSource,
         referrer,
         attributionMethod: "utm"
-      };
+      }, normalizedSource);
     }
 
-    if (normalizedMedium.includes("direct")) {
-      return {
+    if (mediumValue.includes("direct")) {
+      return withSocialContext({
         channel: "direct",
         source: "direct",
         icon: "direct",
         referrer,
         attributionMethod: "utm"
-      };
+      }, normalizedSource);
     }
   }
 
   if (clickIdPresent) {
     const paidSource = normalizeSourceLabel(referrerHost || sourceHint || "paid_campaign");
-    return {
+    return withSocialContext({
       channel: "paid",
       source: paidSource,
       icon: paidSource,
       referrer,
       attributionMethod: "click_id"
-    };
+    }, paidSource);
   }
 
   if (referrerHost) {
     if (internalHosts.has(referrerHost)) {
-      return {
+      return withSocialContext({
         channel: "internal",
         source: referrerHost,
         icon: "internal",
         referrer,
         attributionMethod: "referrer"
-      };
+      }, referrerHost);
     }
 
     const normalizedSource = normalizeSourceLabel(referrerHost);
 
     if (isSearchSource(referrerHost)) {
-      return {
+      return withSocialContext({
         channel: "organic_search",
         source: normalizedSource,
         icon: normalizedSource,
         referrer,
         attributionMethod: "referrer"
-      };
+      }, normalizedSource);
     }
 
     if (isSocialSource(referrerHost)) {
-      return {
+      return withSocialContext({
         channel: "social",
         source: normalizedSource,
         icon: normalizedSource,
         referrer,
         attributionMethod: "referrer"
-      };
+      }, normalizedSource);
     }
 
     if (isEmailSource(referrerHost)) {
-      return {
+      return withSocialContext({
         channel: "email",
         source: normalizedSource,
         icon: normalizedSource,
         referrer,
         attributionMethod: "referrer"
-      };
+      }, normalizedSource);
     }
 
-    return {
+    return withSocialContext({
       channel: "referral",
       source: normalizedSource,
       icon: normalizedSource,
       referrer,
       attributionMethod: "referrer"
-    };
+    }, normalizedSource);
   }
 
   const inferredSocial = inferSocialSourceFromUserAgent(userAgent);
   if (inferredSocial) {
-    return {
+    return withSocialContext({
       channel: "social",
       source: inferredSocial,
       icon: inferredSocial,
       referrer,
       attributionMethod: "user_agent"
-    };
+    }, inferredSocial);
   }
 
-  return {
+  return withSocialContext({
     channel: "direct",
     source: "direct",
     icon: "direct",
     referrer,
     attributionMethod: "fallback_direct"
-  };
+  }, sourceHint || "direct");
 }
 
 function summarizeTrafficSources(sourceRows, internalHosts) {
   const channelMap = new Map();
   const sourceMap = new Map();
+  const socialPlatformMap = new Map();
+  const socialCampaignMap = new Map();
 
   for (const row of sourceRows) {
     const trafficInfo = resolveTrafficSourceFromRecord(row, internalHosts);
@@ -398,7 +729,14 @@ function summarizeTrafficSources(sourceRows, internalHosts) {
       row.sessionId ||
       `${row.ipAddress || "unknown"}:${row.visitStart || row.createdAt || "unknown"}`;
     const channelKey = trafficInfo.channel;
-    const sourceKey = `${trafficInfo.source}::${trafficInfo.channel}`;
+    const sourceKey = [
+      trafficInfo.source,
+      trafficInfo.channel,
+      trafficInfo.socialPlatform || "none",
+      trafficInfo.influencerHandle || "none",
+      trafficInfo.socialCampaignSource || "none",
+      trafficInfo.socialCampaignName || "none"
+    ].join("::");
 
     const channelItem = channelMap.get(channelKey) || {
       channel: channelKey,
@@ -422,13 +760,76 @@ function summarizeTrafficSources(sourceRows, internalHosts) {
       uniqueVisitorsSet: new Set(),
       signUps: 0,
       subscriptions: 0,
-      attributionMethod: trafficInfo.attributionMethod || "unknown"
+      attributionMethod: trafficInfo.attributionMethod || "unknown",
+      socialPlatform: trafficInfo.socialPlatform || null,
+      influencerHandle: trafficInfo.influencerHandle || null,
+      socialCampaignDetected: !!trafficInfo.socialCampaignDetected,
+      socialCampaignSource: trafficInfo.socialCampaignSource || null,
+      socialCampaignName: trafficInfo.socialCampaignName || null,
+      utmSource: trafficInfo.utmSource || null,
+      utmMedium: trafficInfo.utmMedium || null,
+      utmCampaign: trafficInfo.utmCampaign || null
     };
     sourceItem.visits += 1;
     sourceItem.uniqueVisitorsSet.add(sessionKey);
     sourceItem.signUps += row.signedUp ? 1 : 0;
     sourceItem.subscriptions += row.hasSubscription ? 1 : 0;
+    if (!sourceItem.socialPlatform && trafficInfo.socialPlatform) {
+      sourceItem.socialPlatform = trafficInfo.socialPlatform;
+    }
+    if (!sourceItem.influencerHandle && trafficInfo.influencerHandle) {
+      sourceItem.influencerHandle = trafficInfo.influencerHandle;
+    }
+    if (!sourceItem.socialCampaignSource && trafficInfo.socialCampaignSource) {
+      sourceItem.socialCampaignSource = trafficInfo.socialCampaignSource;
+    }
+    if (!sourceItem.socialCampaignName && trafficInfo.socialCampaignName) {
+      sourceItem.socialCampaignName = trafficInfo.socialCampaignName;
+    }
+    if (trafficInfo.socialCampaignDetected) {
+      sourceItem.socialCampaignDetected = true;
+    }
     sourceMap.set(sourceKey, sourceItem);
+
+    if (trafficInfo.channel === "social") {
+      const platformKey = trafficInfo.socialPlatform || trafficInfo.source || "social_unknown";
+      const platformItem = socialPlatformMap.get(platformKey) || {
+        platform: platformKey,
+        icon: trafficInfo.icon || platformKey,
+        visits: 0,
+        uniqueVisitorsSet: new Set(),
+        signUps: 0,
+        subscriptions: 0,
+        influencerHandlesSet: new Set()
+      };
+      platformItem.visits += 1;
+      platformItem.uniqueVisitorsSet.add(sessionKey);
+      platformItem.signUps += row.signedUp ? 1 : 0;
+      platformItem.subscriptions += row.hasSubscription ? 1 : 0;
+      if (trafficInfo.influencerHandle) {
+        platformItem.influencerHandlesSet.add(trafficInfo.influencerHandle);
+      }
+      socialPlatformMap.set(platformKey, platformItem);
+    }
+
+    if (trafficInfo.socialCampaignDetected) {
+      const campaignKey = `${trafficInfo.socialCampaignSource || trafficInfo.socialPlatform || trafficInfo.source || "social"}::${trafficInfo.socialCampaignName || "unnamed_campaign"}`;
+      const campaignItem = socialCampaignMap.get(campaignKey) || {
+        campaignKey,
+        source: trafficInfo.socialCampaignSource || trafficInfo.socialPlatform || trafficInfo.source || "social",
+        campaignName: trafficInfo.socialCampaignName || "unnamed_campaign",
+        platform: trafficInfo.socialPlatform || trafficInfo.source || null,
+        visits: 0,
+        uniqueVisitorsSet: new Set(),
+        signUps: 0,
+        subscriptions: 0
+      };
+      campaignItem.visits += 1;
+      campaignItem.uniqueVisitorsSet.add(sessionKey);
+      campaignItem.signUps += row.signedUp ? 1 : 0;
+      campaignItem.subscriptions += row.hasSubscription ? 1 : 0;
+      socialCampaignMap.set(campaignKey, campaignItem);
+    }
   }
 
   const channels = Array.from(channelMap.values())
@@ -463,6 +864,38 @@ function summarizeTrafficSources(sourceRows, internalHosts) {
     .sort((a, b) => b.visits - a.visits)
     .slice(0, 20);
 
+  const platforms = Array.from(socialPlatformMap.values())
+    .map((item) => ({
+      platform: item.platform,
+      icon: item.icon,
+      visits: item.visits,
+      uniqueVisitors: item.uniqueVisitorsSet.size,
+      signUps: item.signUps,
+      subscriptions: item.subscriptions,
+      influencerAccounts: item.influencerHandlesSet.size,
+      topInfluencers: Array.from(item.influencerHandlesSet).slice(0, 5),
+      conversionRate: item.uniqueVisitorsSet.size > 0
+        ? Number(((item.signUps / item.uniqueVisitorsSet.size) * 100).toFixed(2))
+        : 0
+    }))
+    .sort((a, b) => b.visits - a.visits);
+
+  const campaigns = Array.from(socialCampaignMap.values())
+    .map((item) => ({
+      source: item.source,
+      campaignName: item.campaignName,
+      platform: item.platform,
+      visits: item.visits,
+      uniqueVisitors: item.uniqueVisitorsSet.size,
+      signUps: item.signUps,
+      subscriptions: item.subscriptions,
+      conversionRate: item.uniqueVisitorsSet.size > 0
+        ? Number(((item.signUps / item.uniqueVisitorsSet.size) * 100).toFixed(2))
+        : 0
+    }))
+    .sort((a, b) => b.visits - a.visits)
+    .slice(0, 20);
+
   const summary = channels.reduce(
     (acc, item) => {
       acc.totalVisits += item.visits;
@@ -477,13 +910,22 @@ function summarizeTrafficSources(sourceRows, internalHosts) {
       totalUniqueVisitors: 0,
       totalSignUps: 0,
       totalSubscriptions: 0,
-      byChannel: {}
+      byChannel: {},
+      byPlatform: {},
+      socialCampaigns: 0
     }
   );
+
+  for (const platform of platforms) {
+    summary.byPlatform[platform.platform] = platform.visits;
+  }
+  summary.socialCampaigns = campaigns.length;
 
   return {
     channels,
     topSources,
+    platforms,
+    campaigns,
     summary
   };
 }
@@ -1069,7 +1511,7 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       visitStart: { $gte: start, $lte: end }
     })
       .select(
-        "sessionId ipAddress visitStart createdAt referrer userAgent page landingUrl sourceHint utmSource utmMedium utmCampaign gclid fbclid msclkid ttclid twclid scid signedUp hasSubscription"
+        "sessionId ipAddress visitStart createdAt referrer userAgent page landingUrl sourceHint utmSource utmMedium utmCampaign utmTerm utmContent gclid fbclid msclkid ttclid twclid scid signedUp hasSubscription"
       )
       .sort({ visitStart: -1 })
       .limit(50000)
@@ -1083,7 +1525,7 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       ]
     })
       .select(
-        "sessionId userId ipAddress device browser os country countryCode city region latitude longitude timeSpent signedUp hasSubscription referrer userAgent page pageTitle landingUrl sourceHint utmSource utmMedium utmCampaign gclid fbclid msclkid ttclid twclid scid visitStart visitEnd createdAt"
+        "sessionId userId ipAddress device browser os country countryCode city region latitude longitude timeSpent signedUp hasSubscription referrer userAgent page pageTitle landingUrl sourceHint utmSource utmMedium utmCampaign utmTerm utmContent gclid fbclid msclkid ttclid twclid scid visitStart visitEnd createdAt"
       )
       .sort({ visitEnd: -1, visitStart: -1 })
       .limit(300)
@@ -1141,6 +1583,14 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
         source: sourceInfo.source,
         sourceIcon: sourceInfo.icon || sourceInfo.source,
         sourceAttributionMethod: sourceInfo.attributionMethod || "unknown",
+        socialPlatform: sourceInfo.socialPlatform || null,
+        influencerHandle: sourceInfo.influencerHandle || null,
+        socialCampaignDetected: !!sourceInfo.socialCampaignDetected,
+        socialCampaignSource: sourceInfo.socialCampaignSource || null,
+        socialCampaignName: sourceInfo.socialCampaignName || null,
+        sourceUtmSource: sourceInfo.utmSource || null,
+        sourceUtmMedium: sourceInfo.utmMedium || null,
+        sourceUtmCampaign: sourceInfo.utmCampaign || null,
         referrer: row.referrer || "",
         page: row.page || "",
         pageTitle: row.pageTitle || "",
@@ -1153,6 +1603,8 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
 
     const realtimeDeviceBreakdownMap = new Map();
     const realtimeChannelBreakdownMap = new Map();
+    const realtimePlatformBreakdownMap = new Map();
+    const realtimeCampaignBreakdownMap = new Map();
     for (const row of realtimeRows) {
       const deviceKey = row.device || "unknown";
       realtimeDeviceBreakdownMap.set(
@@ -1165,6 +1617,21 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
         channelKey,
         (realtimeChannelBreakdownMap.get(channelKey) || 0) + 1
       );
+
+      if (row.socialPlatform) {
+        realtimePlatformBreakdownMap.set(
+          row.socialPlatform,
+          (realtimePlatformBreakdownMap.get(row.socialPlatform) || 0) + 1
+        );
+      }
+
+      if (row.socialCampaignDetected) {
+        const campaignKey = `${row.socialCampaignSource || row.socialPlatform || row.source || "social"}::${row.socialCampaignName || "unnamed_campaign"}`;
+        realtimeCampaignBreakdownMap.set(
+          campaignKey,
+          (realtimeCampaignBreakdownMap.get(campaignKey) || 0) + 1
+        );
+      }
     }
 
     const realtimeDeviceBreakdown = Array.from(realtimeDeviceBreakdownMap.entries())
@@ -1172,6 +1639,19 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       .sort((a, b) => b.count - a.count);
     const realtimeChannelBreakdown = Array.from(realtimeChannelBreakdownMap.entries())
       .map(([channel, count]) => ({ channel, count }))
+      .sort((a, b) => b.count - a.count);
+    const realtimePlatformBreakdown = Array.from(realtimePlatformBreakdownMap.entries())
+      .map(([platform, count]) => ({ platform, count }))
+      .sort((a, b) => b.count - a.count);
+    const realtimeCampaignBreakdown = Array.from(realtimeCampaignBreakdownMap.entries())
+      .map(([campaignKey, count]) => {
+        const [source, campaignName] = campaignKey.split("::");
+        return {
+          source,
+          campaignName,
+          count
+        };
+      })
       .sort((a, b) => b.count - a.count);
     const realtimeCountryBreakdownMap = new Map();
     for (const row of realtimeRows) {
@@ -1196,6 +1676,8 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       totalTimeSpent: realtimeRows.reduce((acc, row) => acc + Number(row.timeSpent || 0), 0),
       deviceBreakdown: realtimeDeviceBreakdown,
       sourceBreakdown: realtimeChannelBreakdown,
+      platformBreakdown: realtimePlatformBreakdown,
+      campaignBreakdown: realtimeCampaignBreakdown,
       countryBreakdown: realtimeCountryBreakdown
     };
 
