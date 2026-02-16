@@ -172,12 +172,11 @@ function hasRegulatoryRequirementSignals(numberData = {}) {
 }
 
 function isInstantPurchasableNumber(numberData = {}) {
-  // Prefer safe filtering: hide numbers with known fulfillment/regulatory flags
-  // that commonly fail at checkout for self-serve purchases.
+  // Keep this broad for listing so countries don't get fully hidden.
+  // Regulatory readiness is handled later via requirement-group checks.
   if (numberData.best_effort === true) return false;
   if (numberData.quickship === false) return false;
   if (numberData.reservable === false) return false;
-  if (hasRegulatoryRequirementSignals(numberData)) return false;
   return true;
 }
 
@@ -589,9 +588,14 @@ async function isNumberPurchaseReady({
   const requiresRegulatoryBundle = requirementSignal || regulatoryProbe.hasRequirements;
 
   // If regulatory endpoint is unavailable, fallback to requirement-group availability
-  // for non-US/CA markets to avoid showing non-buyable numbers.
+  // for non-US/CA markets. In non-creating mode we stay optimistic so
+  // country listings are not emptied by transient API limitations.
   if (regulatoryProbe.lookupUnavailable && !requiresRegulatoryBundle) {
     if (!["US", "CA"].includes(normalizedCountry)) {
+      if (!allowRequirementGroupCreate) {
+        setCacheValue(purchasableNumberCache, cacheKey, true, 60000);
+        return true;
+      }
       const fallbackGroupId = await getApprovedRequirementGroupId({
         telnyx,
         countryCode: normalizedCountry,
@@ -631,7 +635,8 @@ async function selectPurchaseReadyNumbers({
   telnyx,
   countryCode,
   candidates,
-  limit = 50
+  limit = 50,
+  allowRequirementGroupCreate = false
 }) {
   const selected = [];
   const safeCandidates = Array.isArray(candidates) ? candidates : [];
@@ -655,7 +660,7 @@ async function selectPurchaseReadyNumbers({
             telnyx,
             countryCode,
             number: candidate,
-            allowRequirementGroupCreate: false
+            allowRequirementGroupCreate
           });
           return { candidate, ready };
         } catch (err) {
@@ -1097,12 +1102,29 @@ router.get(
         // Sort by monthly cost (cheapest first)
         .sort((a, b) => a.monthly_cost - b.monthly_cost);
 
-      const filteredNumbers = await selectPurchaseReadyNumbers({
+      let filteredNumbers = await selectPurchaseReadyNumbers({
         telnyx,
         countryCode: countryInfo.code,
         candidates: candidateNumbers,
-        limit: 50
+        limit: 50,
+        allowRequirementGroupCreate: false
       });
+
+      // If strict precheck produced nothing, retry with requirement-group creation enabled.
+      if (!filteredNumbers.length && candidateNumbers.length) {
+        filteredNumbers = await selectPurchaseReadyNumbers({
+          telnyx,
+          countryCode: countryInfo.code,
+          candidates: candidateNumbers,
+          limit: 50,
+          allowRequirementGroupCreate: true
+        });
+      }
+
+      // Final fallback: never blank out the UI entirely.
+      if (!filteredNumbers.length && candidateNumbers.length) {
+        filteredNumbers = candidateNumbers.slice(0, 50);
+      }
 
       res.json({ 
         success: true,
