@@ -240,24 +240,12 @@ function isAllowedNumberType(numberType, countryCode = "US") {
   const normalizedCountry = String(countryCode || "US").toUpperCase();
 
   const commonAllowed = new Set(["local", "geographic"]);
-  if (normalizedCountry === "US") {
-    return commonAllowed.has(normalizedType);
+  // Keep US strict. For international markets, Telnyx types vary widely and
+  // can still be valid/purchasable, so do not hard-block by type.
+  if (normalizedCountry !== "US") {
+    return true;
   }
-
-  // International inventories may classify equivalent local inventory
-  // as mobile/national/fixed line.
-  const internationalAllowed = new Set([
-    ...commonAllowed,
-    "mobile",
-    "national",
-    "toll_free",
-    "toll-free",
-    "toll free",
-    "fixed_line",
-    "fixed line",
-    "fixedline"
-  ]);
-  return internationalAllowed.has(normalizedType);
+  return commonAllowed.has(normalizedType);
 }
 
 function normalizePhoneNumberType(numberType, countryCode = "US") {
@@ -616,7 +604,7 @@ async function isNumberPurchaseReady({
   }
 
   // Soft inventory checks first.
-  if (!isInstantPurchasableNumber(number)) {
+  if (normalizedCountry === "US" && !isInstantPurchasableNumber(number)) {
     setCacheValue(purchasableNumberCache, cacheKey, false, 120000);
     return false;
   }
@@ -1086,6 +1074,7 @@ router.get(
 
       // RELAXED FILTERING - Allow more numbers but still prioritize cheapest
       // This is the cost control layer but less restrictive
+      const isNonUSCountry = String(countryInfo.code || "US").toUpperCase() !== "US";
       const candidateNumbers = allResults
         .filter(num => {
           // Must have phone_number
@@ -1100,7 +1089,7 @@ router.get(
 
           // Hide numbers that are commonly non-instant-buyable
           // (regulatory/manual fulfillment required).
-          if (!isInstantPurchasableNumber(num)) {
+          if (!isNonUSCountry && !isInstantPurchasableNumber(num)) {
             return false;
           }
 
@@ -1149,6 +1138,7 @@ router.get(
           // RELAXED: Only block explicit premium features
           const features = extractFeatureNames(num);
           if (
+            !isNonUSCountry &&
             features.some(
               (feature) =>
                 feature === "premium_routing" ||
@@ -1157,7 +1147,7 @@ router.get(
           ) {
             return false;
           }
-          if (num.premium === true || num.is_premium === true) {
+          if (!isNonUSCountry && (num.premium === true || num.is_premium === true)) {
             return false;
           }
 
@@ -1200,17 +1190,37 @@ router.get(
         // Sort by monthly cost (cheapest first)
         .sort((a, b) => a.monthly_cost - b.monthly_cost);
 
-      const filteredNumbers = candidateNumbers.slice(0, 50);
+      const unfilteredFallback = allResults
+        .filter((num) => !!num?.phone_number)
+        .map((num) => ({
+          phone_number: normalizePhoneNumberForOrder(num.phone_number),
+          monthly_cost: extractMonthlyCost(num),
+          messaging_rate: extractMessagingRate(num),
+          carrier_group: num.carrier?.group || num.carrier_group || "Unknown",
+          number_type: extractNumberType(num),
+          region_information: normalizeRegionInformation(num.region_information),
+          features: extractFeatureNames(num),
+          quickship: typeof num.quickship === "boolean" ? num.quickship : null,
+          reservable: typeof num.reservable === "boolean" ? num.reservable : null,
+          best_effort: typeof num.best_effort === "boolean" ? num.best_effort : null,
+          requirement_group_id: num.requirement_group_id || num.requirements_group_id || null,
+          country: countryInfo.name,
+          countryCode: countryInfo.code
+        }))
+        .sort((a, b) => a.monthly_cost - b.monthly_cost);
+
+      const hasStrictCandidates = candidateNumbers.length > 0;
+      const filteredNumbers = (hasStrictCandidates ? candidateNumbers : unfilteredFallback).slice(0, 50);
 
       console.log(
-        `📞 Number search ${countryInfo.code}: candidates=${candidateNumbers.length}, returned=${filteredNumbers.length}`
+        `📞 Number search ${countryInfo.code}: raw=${allResults.length}, candidates=${candidateNumbers.length}, returned=${filteredNumbers.length}`
       );
 
       res.json({ 
         success: true,
         numbers: filteredNumbers,
         count: filteredNumbers.length,
-        precheckFallback: false,
+        precheckFallback: !hasStrictCandidates && unfilteredFallback.length > 0,
         country: countryInfo.name,
         countryCode: countryInfo.code
       });
@@ -1339,6 +1349,7 @@ router.post(
           validatedNumber.toll_free === true ||
           validatedNumber.is_toll_free === true;
         const allowTollFree = String(countryInfo.code || "US").toUpperCase() !== "US";
+        const isNonUSCountry = String(countryInfo.code || "US").toUpperCase() !== "US";
         if (!allowTollFree && isTollFreeType) {
           return res.status(403).json({ 
             error: "Number not eligible: Toll-free numbers not allowed" 
@@ -1367,7 +1378,7 @@ router.post(
           validatedNumber.carrier?.carrier_group ||
           normalizeRegionInformation(validatedNumber.region_information)?.carrier_group ||
           null;
-        if (validatedCarrierGroup && String(countryInfo.code || "US").toUpperCase() === "US") {
+        if (validatedCarrierGroup && !isNonUSCountry) {
           const groupUpper = String(validatedCarrierGroup).toUpperCase();
           if (["C", "D", "E", "F", "G", "H"].includes(groupUpper)) {
             return res.status(403).json({ 
@@ -1379,6 +1390,7 @@ router.post(
         // No explicit premium features
         const features = extractFeatureNames(validatedNumber);
         if (
+          !isNonUSCountry &&
           features.some(
             (feature) =>
               feature === "premium_routing" ||
@@ -1389,7 +1401,7 @@ router.post(
             error: "Number not eligible: Premium features not allowed"
           });
         }
-        if (validatedNumber.premium === true || validatedNumber.is_premium === true) {
+        if (!isNonUSCountry && (validatedNumber.premium === true || validatedNumber.is_premium === true)) {
           return res.status(403).json({ 
             error: "Number not eligible: Premium number not allowed" 
           });
