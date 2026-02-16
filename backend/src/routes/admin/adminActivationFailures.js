@@ -3,11 +3,14 @@ import requireAdmin from "../../middleware/requireAdmin.js";
 import SubscriptionActivationFailure from "../../models/SubscriptionActivationFailure.js";
 import User from "../../models/User.js";
 import {
-  repairUserSubscriptionFromStripe
+  repairUserSubscriptionFromStripe,
+  reconcilePaidSubscriptionInvoices
 } from "../../services/stripeSubscriptionService.js";
 
 const router = express.Router();
 router.use(requireAdmin);
+let cachedReconciliation = null;
+let cachedReconciliationAt = 0;
 
 function serializeFailure(doc) {
   return {
@@ -30,16 +33,64 @@ function serializeFailure(doc) {
   };
 }
 
+function parsePositiveInt(value, fallback, maxValue = null) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  if (Number.isFinite(maxValue) && parsed > maxValue) {
+    return maxValue;
+  }
+  return parsed;
+}
+
 router.get("/activation-failures", async (req, res) => {
   try {
     const status = (req.query.status || "open").toString();
     const limit = Math.min(parseInt(req.query.limit || "20", 10), 100);
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const skip = (page - 1) * limit;
+    const shouldReconcile = String(req.query.reconcile || "true")
+      .trim()
+      .toLowerCase() !== "false";
+    const autoRepair = String(req.query.autoRepair || "true")
+      .trim()
+      .toLowerCase() !== "false";
+    const syncFromStripe = String(req.query.syncFromStripe || "false")
+      .trim()
+      .toLowerCase() === "true";
+    const hoursBack = parsePositiveInt(req.query.hoursBack, 24 * 14, 24 * 120);
+    const maxInvoices = parsePositiveInt(req.query.maxInvoices, 300, 1500);
 
     const query = {};
     if (status !== "all") {
       query.status = status;
+    }
+
+    let reconciliation = null;
+    if (shouldReconcile) {
+      const shouldUseCache =
+        !syncFromStripe &&
+        cachedReconciliation &&
+        (Date.now() - cachedReconciliationAt) < (2 * 60 * 1000);
+
+      if (shouldUseCache) {
+        reconciliation = cachedReconciliation;
+      } else {
+        const endDate = new Date();
+        const startDate = new Date(endDate.getTime() - (hoursBack * 60 * 60 * 1000));
+        reconciliation = await reconcilePaidSubscriptionInvoices({
+          startDate,
+          endDate,
+          maxInvoices,
+          autoRepair,
+          performStripeSync: syncFromStripe,
+          reason: "admin_activation_failures_feed"
+        });
+
+        cachedReconciliation = reconciliation;
+        cachedReconciliationAt = Date.now();
+      }
     }
 
     const [rows, total, summaryRows] = await Promise.all([
@@ -73,6 +124,7 @@ router.get("/activation-failures", async (req, res) => {
 
     res.json({
       success: true,
+      reconciliation,
       summary,
       failures: rows.map(serializeFailure),
       pagination: {
@@ -87,6 +139,44 @@ router.get("/activation-failures", async (req, res) => {
     res.status(500).json({
       success: false,
       error: err.message || "Failed to fetch activation failures"
+    });
+  }
+});
+
+router.post("/activation-failures/reconcile", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const hoursBack = parsePositiveInt(body.hoursBack, 24 * 14, 24 * 120);
+    const maxInvoices = parsePositiveInt(body.maxInvoices, 500, 2000);
+    const stripeSyncMaxPages = parsePositiveInt(body.stripeSyncMaxPages, 10, 30);
+    const autoRepair = body.autoRepair !== false;
+    const syncFromStripe = body.syncFromStripe !== false;
+
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - (hoursBack * 60 * 60 * 1000));
+    const reconciliation = await reconcilePaidSubscriptionInvoices({
+      startDate,
+      endDate,
+      maxInvoices,
+      autoRepair,
+      performStripeSync: syncFromStripe,
+      stripeSyncMaxPages,
+      reason: "admin_manual_reconcile"
+    });
+
+    cachedReconciliation = reconciliation;
+    cachedReconciliationAt = Date.now();
+
+    return res.json({
+      success: true,
+      message: "Subscription reconciliation completed",
+      reconciliation
+    });
+  } catch (err) {
+    console.error("Manual activation reconciliation error:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Failed to run activation reconciliation"
     });
   }
 });

@@ -11,6 +11,7 @@ import connectDB from "./config/db.js";
 import { getTelnyx } from "./config/telnyx.js";
 import { validateEnv } from "./src/utils/envValidator.js";
 import { ensureStripeCatalogConsistency } from "./src/services/stripeCatalogBootstrapService.js";
+import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
 
 import authenticateUser from "./src/middleware/authenticateUser.js";
 import loadSubscription from "./src/middleware/loadSubscription.js";
@@ -193,6 +194,12 @@ async function startServer() {
       }
     } catch (catalogErr) {
       console.error("⚠️ Stripe catalog consistency check failed:", catalogErr.message);
+    }
+
+    try {
+      startSubscriptionReconciliationScheduler();
+    } catch (reconciliationErr) {
+      console.error("⚠️ Subscription reconciliation scheduler failed to start:", reconciliationErr.message);
     }
 
     app.listen(PORT, () => {

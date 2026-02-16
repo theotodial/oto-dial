@@ -8,6 +8,7 @@ import StripeInvoice from "../models/StripeInvoice.js";
 import SubscriptionActivationFailure from "../models/SubscriptionActivationFailure.js";
 import Analytics from "../models/Analytics.js";
 import { getStripe } from "../../config/stripe.js";
+import { syncPaidInvoicesFromStripe } from "./stripeInvoiceSyncService.js";
 import {
   getCanonicalPlanKeyFromPriceId,
   isKnownAddonPriceId
@@ -98,6 +99,117 @@ async function recordActivationFailure({
   } catch (err) {
     console.error("❌ Failed to persist activation failure:", err.message);
   }
+}
+
+function getEffectiveInvoiceDate(invoiceDoc) {
+  if (invoiceDoc?.issuedAt instanceof Date && !Number.isNaN(invoiceDoc.issuedAt.getTime())) {
+    return invoiceDoc.issuedAt;
+  }
+  if (invoiceDoc?.createdAt instanceof Date && !Number.isNaN(invoiceDoc.createdAt.getTime())) {
+    return invoiceDoc.createdAt;
+  }
+  return null;
+}
+
+function isWithinDateWindow(date, startDate, endDate) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return false;
+  }
+  if (startDate instanceof Date && !Number.isNaN(startDate.getTime()) && date < startDate) {
+    return false;
+  }
+  if (endDate instanceof Date && !Number.isNaN(endDate.getTime()) && date > endDate) {
+    return false;
+  }
+  return true;
+}
+
+async function upsertOpenFailureFromInvoice({
+  invoiceDoc,
+  userId = null,
+  stripeCustomerId = null,
+  reason,
+  payload = {}
+}) {
+  if (!reason) {
+    throw new Error("Reason is required for activation failure upsert");
+  }
+
+  const safeUserId = isValidObjectId(String(userId || "")) ? userId : null;
+  const safeCustomerId = stripeCustomerId || invoiceDoc?.customerId || null;
+  const query = invoiceDoc?.invoiceId
+    ? { invoiceId: invoiceDoc.invoiceId, status: "open" }
+    : {
+        stripeCustomerId: safeCustomerId,
+        userId: safeUserId,
+        status: "open",
+        sourceEventType: "reconciliation.paid_invoice_scan"
+      };
+
+  const existing = await SubscriptionActivationFailure.findOne(query);
+  if (existing) {
+    existing.sourceEventType = "reconciliation.paid_invoice_scan";
+    existing.invoiceId = invoiceDoc?.invoiceId || existing.invoiceId;
+    existing.stripeSubscriptionId = invoiceDoc?.subscriptionId || existing.stripeSubscriptionId;
+    existing.stripeCustomerId = safeCustomerId || existing.stripeCustomerId;
+    existing.userId = safeUserId || existing.userId;
+    existing.reason = reason;
+    existing.payload = payload;
+    existing.resolvedAt = null;
+    existing.resolvedBy = null;
+    existing.status = "open";
+    await existing.save();
+    return { created: false, failure: existing };
+  }
+
+  const created = await SubscriptionActivationFailure.create({
+    sourceEventId: null,
+    sourceEventType: "reconciliation.paid_invoice_scan",
+    invoiceId: invoiceDoc?.invoiceId || null,
+    checkoutSessionId: invoiceDoc?.checkoutSessionId || null,
+    stripeSubscriptionId: invoiceDoc?.subscriptionId || null,
+    stripeCustomerId: safeCustomerId,
+    userId: safeUserId,
+    planId: isValidObjectId(String(invoiceDoc?.planId || "")) ? invoiceDoc.planId : null,
+    reason,
+    payload,
+    status: "open"
+  });
+
+  return { created: true, failure: created };
+}
+
+async function resolveOpenInvoiceFailures(invoiceId, resolvedBy = "auto_reconciliation") {
+  if (!invoiceId) {
+    return 0;
+  }
+
+  const result = await SubscriptionActivationFailure.updateMany(
+    {
+      invoiceId,
+      status: "open"
+    },
+    {
+      $set: {
+        status: "resolved",
+        resolvedAt: new Date(),
+        resolvedBy
+      }
+    }
+  );
+
+  return result.modifiedCount || 0;
+}
+
+function toPositiveInteger(value, fallback, maxValue = null) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  if (Number.isFinite(maxValue) && parsed > maxValue) {
+    return maxValue;
+  }
+  return parsed;
 }
 
 async function resolvePlan({
@@ -1134,6 +1246,240 @@ export async function selfHealSubscriptionForUser(userId, reason = "self_heal") 
 }
 
 /**
+ * Reconcile paid Stripe invoices with Mongo subscriptions.
+ * This catches missed webhook windows and creates visible activation failures.
+ */
+export async function reconcilePaidSubscriptionInvoices({
+  startDate = null,
+  endDate = null,
+  maxInvoices = 250,
+  autoRepair = true,
+  performStripeSync = false,
+  stripeSyncMaxPages = 6,
+  reason = "reconciliation_scan"
+} = {}) {
+  const stripe = getStripe();
+  const now = new Date();
+  const normalizedStartDate = startDate instanceof Date && !Number.isNaN(startDate.getTime())
+    ? startDate
+    : new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+  const normalizedEndDate = endDate instanceof Date && !Number.isNaN(endDate.getTime())
+    ? endDate
+    : now;
+
+  const summary = {
+    success: true,
+    startDate: normalizedStartDate.toISOString(),
+    endDate: normalizedEndDate.toISOString(),
+    scanned: 0,
+    healthy: 0,
+    mismatchesDetected: 0,
+    repaired: 0,
+    unresolved: 0,
+    failuresCreated: 0,
+    failuresResolved: 0,
+    stripeSync: null,
+    unresolvedSamples: []
+  };
+
+  if (performStripeSync) {
+    try {
+      summary.stripeSync = await syncPaidInvoicesFromStripe({
+        startDate: normalizedStartDate,
+        endDate: normalizedEndDate,
+        maxPages: toPositiveInteger(stripeSyncMaxPages, 6, 30)
+      });
+    } catch (syncErr) {
+      summary.stripeSync = {
+        skipped: false,
+        error: syncErr.message
+      };
+    }
+  }
+
+  const candidateInvoices = await StripeInvoice.find({
+    status: "paid",
+    $or: [
+      { purchaseType: "subscription" },
+      { purchaseType: "unknown", subscriptionId: { $ne: null } }
+    ]
+  })
+    .sort({ issuedAt: -1, createdAt: -1 })
+    .limit(toPositiveInteger(maxInvoices, 250, 1000));
+
+  for (const invoiceDoc of candidateInvoices) {
+    const effectiveDate = getEffectiveInvoiceDate(invoiceDoc);
+    if (!isWithinDateWindow(effectiveDate, normalizedStartDate, normalizedEndDate)) {
+      continue;
+    }
+
+    summary.scanned += 1;
+
+    const customerId = invoiceDoc.customerId && invoiceDoc.customerId !== "unknown"
+      ? invoiceDoc.customerId
+      : null;
+    let user = null;
+
+    if (invoiceDoc.userId && isValidObjectId(String(invoiceDoc.userId))) {
+      user = await User.findById(invoiceDoc.userId);
+    }
+
+    if (!user && customerId) {
+      user = await User.findOne({ stripeCustomerId: customerId });
+    }
+
+    if (!user && stripe && customerId) {
+      try {
+        const stripeCustomer = await stripe.customers.retrieve(customerId);
+        if (stripeCustomer && !stripeCustomer.deleted && stripeCustomer.email) {
+          const normalizedEmail = String(stripeCustomer.email).trim().toLowerCase();
+          user = await User.findOne({ email: normalizedEmail });
+
+          if (user && !user.stripeCustomerId) {
+            user.stripeCustomerId = customerId;
+            await user.save();
+          }
+        }
+      } catch (customerErr) {
+        console.warn(
+          `⚠️ Reconciliation could not retrieve Stripe customer ${customerId}:`,
+          customerErr.message
+        );
+      }
+    }
+
+    if (user && (!invoiceDoc.userId || invoiceDoc.userId.toString() !== user._id.toString())) {
+      invoiceDoc.userId = user._id;
+      await invoiceDoc.save();
+    }
+
+    if (!user) {
+      const upsert = await upsertOpenFailureFromInvoice({
+        invoiceDoc,
+        stripeCustomerId: customerId,
+        reason: "Paid Stripe invoice exists but no matching OTO Dial user was found",
+        payload: {
+          customerId,
+          invoiceId: invoiceDoc.invoiceId,
+          source: reason
+        }
+      });
+      if (upsert.created) {
+        summary.failuresCreated += 1;
+      }
+      summary.unresolved += 1;
+      if (summary.unresolvedSamples.length < 10) {
+        summary.unresolvedSamples.push({
+          invoiceId: invoiceDoc.invoiceId,
+          customerId,
+          reason: "user_not_found"
+        });
+      }
+      continue;
+    }
+
+    if (!user.stripeCustomerId && customerId) {
+      user.stripeCustomerId = customerId;
+      await user.save();
+    }
+
+    const activeSubscription = await Subscription.findOne({
+      userId: user._id,
+      status: "active"
+    }).sort({ updatedAt: -1 });
+
+    if (activeSubscription) {
+      summary.healthy += 1;
+      summary.failuresResolved += await resolveOpenInvoiceFailures(
+        invoiceDoc.invoiceId,
+        "auto_reconciliation"
+      );
+      continue;
+    }
+
+    summary.mismatchesDetected += 1;
+
+    const mismatchUpsert = await upsertOpenFailureFromInvoice({
+      invoiceDoc,
+      userId: user._id,
+      stripeCustomerId: customerId,
+      reason: "Paid Stripe invoice exists but user has no active MongoDB subscription",
+      payload: {
+        userId: user._id,
+        userEmail: user.email,
+        customerId,
+        invoiceId: invoiceDoc.invoiceId,
+        invoiceSubscriptionId: invoiceDoc.subscriptionId || null,
+        source: reason
+      }
+    });
+    if (mismatchUpsert.created) {
+      summary.failuresCreated += 1;
+    }
+
+    let repairResult = null;
+    let repairedSubscriptionId = null;
+
+    if (autoRepair) {
+      repairResult = await repairUserSubscriptionFromStripe({
+        userId: user._id,
+        stripeCustomerId: customerId || user.stripeCustomerId || null,
+        reason: `${reason}:${invoiceDoc.invoiceId || "invoice"}`
+      });
+
+      repairedSubscriptionId = repairResult?.repairedSubscriptionId || null;
+      if (!repairedSubscriptionId) {
+        const activeAfterRepair = await Subscription.findOne({
+          userId: user._id,
+          status: "active"
+        }).select("_id");
+        repairedSubscriptionId = activeAfterRepair?._id || null;
+      }
+    }
+
+    if (repairedSubscriptionId) {
+      summary.repaired += 1;
+      summary.healthy += 1;
+      summary.failuresResolved += await resolveOpenInvoiceFailures(
+        invoiceDoc.invoiceId,
+        "auto_reconciliation"
+      );
+      continue;
+    }
+
+    if (mismatchUpsert?.failure?._id && repairResult) {
+      await SubscriptionActivationFailure.findByIdAndUpdate(
+        mismatchUpsert.failure._id,
+        {
+          $set: {
+            payload: {
+              ...(mismatchUpsert.failure.payload || {}),
+              repairAttempt: {
+                success: !!repairResult.success,
+                error: repairResult.error || null
+              }
+            }
+          }
+        }
+      );
+    }
+
+    summary.unresolved += 1;
+    if (summary.unresolvedSamples.length < 10) {
+      summary.unresolvedSamples.push({
+        invoiceId: invoiceDoc.invoiceId,
+        customerId,
+        userId: user._id,
+        userEmail: user.email,
+        reason: repairResult?.error || "no_active_subscription_after_repair"
+      });
+    }
+  }
+
+  return summary;
+}
+
+/**
  * Check if event was already processed (idempotency)
  */
 export async function isEventProcessed(eventId) {
@@ -1168,6 +1514,7 @@ export default {
   processSubscriptionDeleted,
   repairUserSubscriptionFromStripe,
   selfHealSubscriptionForUser,
+  reconcilePaidSubscriptionInvoices,
   isEventProcessed,
   markEventProcessed
 };
