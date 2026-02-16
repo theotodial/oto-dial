@@ -5,8 +5,10 @@ import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
+import { ComposableMap, Geographies, Geography, Marker } from 'react-simple-maps';
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6'];
+const WORLD_MAP_GEO_JSON = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 const REALTIME_WINDOW_OPTIONS = [
   { value: '15m', label: 'Last 15m' },
   { value: '30m', label: 'Last 30m' },
@@ -106,6 +108,58 @@ function AdminAnalyticsDetail() {
     return parsed.toLocaleString();
   };
 
+  const getSourceIcon = (source, channel) => {
+    const key = String(source || '').toLowerCase();
+    if (key.includes('snapchat')) return '👻';
+    if (key.includes('instagram')) return '📸';
+    if (key.includes('facebook')) return '📘';
+    if (key === 'x' || key.includes('twitter') || key.includes('x.com')) return 'X';
+    if (key.includes('tiktok')) return '🎵';
+    if (key.includes('linkedin')) return '💼';
+    if (key.includes('youtube')) return '▶';
+    if (key.includes('reddit')) return '👽';
+    if (key.includes('pinterest')) return '📌';
+    if (key.includes('google')) return '🔎';
+    if (channel === 'social') return '📱';
+    if (channel === 'organic_search') return '🔍';
+    if (channel === 'email') return '✉';
+    if (channel === 'paid') return '💳';
+    if (channel === 'referral') return '🌐';
+    if (channel === 'internal') return '🏠';
+    return '🔗';
+  };
+
+  const formatSourceLabel = (source) => {
+    const value = String(source || '').trim();
+    if (!value) return 'direct';
+    if (value === 'x') return 'X';
+    return value
+      .split(/[_\-\s]+/)
+      .filter(Boolean)
+      .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+      .join(' ');
+  };
+
+  const getChannelColor = (channel) => {
+    const key = String(channel || '').toLowerCase();
+    if (key === 'social') return '#ec4899';
+    if (key === 'organic_search') return '#10b981';
+    if (key === 'paid') return '#f59e0b';
+    if (key === 'email') return '#6366f1';
+    if (key === 'referral') return '#06b6d4';
+    if (key === 'internal') return '#8b5cf6';
+    return '#334155';
+  };
+
+  const realtimeMapPoints = (realtimeUsers || [])
+    .filter((user) => Number.isFinite(Number(user.latitude)) && Number.isFinite(Number(user.longitude)))
+    .map((user) => ({
+      key: `${user.sessionId || 'session'}-${user.latitude}-${user.longitude}`,
+      coordinates: [Number(user.longitude), Number(user.latitude)],
+      source: user.source || 'direct',
+      sourceChannel: user.sourceChannel || 'direct'
+    }));
+
   if (loading) {
     return (
       <div className="p-6">
@@ -165,6 +219,14 @@ function AdminAnalyticsDetail() {
       byChannel: {}
     }
   };
+  const realtimeChannelChartData = (realtimeSummary.sourceBreakdown || []).map((row) => ({
+    ...row,
+    channelLabel: String(row.channel || 'direct').replace('_', ' ')
+  }));
+  const trafficChannelChartData = (trafficSources.channels || []).map((row) => ({
+    ...row,
+    channelLabel: String(row.channel || 'direct').replace('_', ' ')
+  }));
 
   const renderDetailContent = () => {
     switch (category) {
@@ -515,6 +577,77 @@ function AdminAnalyticsDetail() {
               </div>
             </div>
 
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Realtime Visitor Map</h3>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  Marker color = traffic channel attribution
+                </div>
+              </div>
+              {realtimeMapPoints.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Map points will appear when realtime sessions include geo coordinates.
+                </p>
+              ) : (
+                <div className="w-full h-[420px] rounded-lg overflow-hidden bg-gray-50 dark:bg-slate-900">
+                  <ComposableMap
+                    projectionConfig={{ scale: 145 }}
+                    width={980}
+                    height={420}
+                    style={{ width: '100%', height: '100%' }}
+                  >
+                    <Geographies geography={WORLD_MAP_GEO_JSON}>
+                      {({ geographies }) =>
+                        geographies.map((geo) => (
+                          <Geography
+                            key={geo.rsmKey}
+                            geography={geo}
+                            fill="#e5e7eb"
+                            stroke="#94a3b8"
+                            strokeWidth={0.4}
+                          />
+                        ))
+                      }
+                    </Geographies>
+                    {realtimeMapPoints.slice(0, 250).map((point) => (
+                      <Marker key={point.key} coordinates={point.coordinates}>
+                        <circle
+                          r={4}
+                          fill={getChannelColor(point.sourceChannel)}
+                          fillOpacity={0.85}
+                          stroke="#0f172a"
+                          strokeWidth={0.5}
+                        >
+                          <title>{`${formatSourceLabel(point.source)} (${String(point.sourceChannel || 'direct').replace('_', ' ')})`}</title>
+                        </circle>
+                      </Marker>
+                    ))}
+                  </ComposableMap>
+                </div>
+              )}
+              <div className="mt-4 flex gap-4 flex-wrap text-xs text-gray-600 dark:text-gray-300">
+                {['social', 'organic_search', 'paid', 'email', 'referral', 'internal', 'direct'].map((channel) => (
+                  <span key={channel} className="inline-flex items-center gap-2">
+                    <span
+                      className="inline-block w-2.5 h-2.5 rounded-full"
+                      style={{ backgroundColor: getChannelColor(channel) }}
+                    />
+                    {channel.replace('_', ' ')}
+                  </span>
+                ))}
+              </div>
+              {(realtimeSummary.countryBreakdown || []).length > 0 && (
+                <div className="mt-4 text-xs text-gray-600 dark:text-gray-300">
+                  <span className="font-semibold mr-2">Top countries:</span>
+                  {(realtimeSummary.countryBreakdown || []).slice(0, 8).map((item) => (
+                    <span key={item.country} className="mr-3">
+                      {item.country} ({item.count})
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Device Breakdown</h3>
@@ -531,9 +664,9 @@ function AdminAnalyticsDetail() {
               <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Traffic Channel Breakdown</h3>
                 <ResponsiveContainer width="100%" height={320}>
-                  <BarChart data={realtimeSummary.sourceBreakdown || []}>
+                  <BarChart data={realtimeChannelChartData}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="channel" />
+                    <XAxis dataKey="channelLabel" />
                     <YAxis />
                     <Tooltip />
                     <Bar dataKey="count" fill="#06b6d4" radius={[8, 8, 0, 0]} />
@@ -589,8 +722,14 @@ function AdminAnalyticsDetail() {
                             </span>
                           </td>
                           <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300">
-                            <div className="capitalize">{user.sourceChannel || 'direct'}</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 break-all">{user.source || 'direct'}</div>
+                            <div className="capitalize inline-flex items-center gap-2">
+                              <span>{getSourceIcon(user.sourceIcon || user.source, user.sourceChannel)}</span>
+                              <span>{(user.sourceChannel || 'direct').replace('_', ' ')}</span>
+                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 break-all">{formatSourceLabel(user.source || 'direct')}</div>
+                            <div className="text-[11px] text-gray-400 dark:text-gray-500">
+                              Method: {user.sourceAttributionMethod || 'unknown'}
+                            </div>
                             {user.referrer && (
                               <div className="text-xs text-gray-400 dark:text-gray-500 break-all mt-1">
                                 {user.referrer}
@@ -642,9 +781,9 @@ function AdminAnalyticsDetail() {
               <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Traffic Channels</h3>
                 <ResponsiveContainer width="100%" height={340}>
-                  <BarChart data={trafficSources.channels || []}>
+                  <BarChart data={trafficChannelChartData}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="channel" />
+                    <XAxis dataKey="channelLabel" />
                     <YAxis />
                     <Tooltip />
                     <Legend />
@@ -659,15 +798,15 @@ function AdminAnalyticsDetail() {
                 <ResponsiveContainer width="100%" height={340}>
                   <PieChart>
                     <Pie
-                      data={trafficSources.channels || []}
+                      data={trafficChannelChartData}
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      label={({ channel, percent }) => `${channel}: ${(percent * 100).toFixed(1)}%`}
+                      label={({ channelLabel, percent }) => `${channelLabel}: ${(percent * 100).toFixed(1)}%`}
                       outerRadius={120}
                       dataKey="visits"
                     >
-                      {(trafficSources.channels || []).map((entry, index) => (
+                      {trafficChannelChartData.map((entry, index) => (
                         <Cell key={`source-cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
@@ -694,8 +833,15 @@ function AdminAnalyticsDetail() {
                   <tbody>
                     {(trafficSources.topSources || []).map((source, index) => (
                       <tr key={`${source.source}-${index}`} className="border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50">
-                        <td className="py-3 px-4 text-sm font-medium text-gray-900 dark:text-white break-all">{source.source || 'direct'}</td>
-                        <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300 capitalize">{source.channel || 'direct'}</td>
+                        <td className="py-3 px-4 text-sm font-medium text-gray-900 dark:text-white break-all">
+                          <div className="inline-flex items-center gap-2">
+                            <span>{getSourceIcon(source.icon || source.source, source.channel)}</span>
+                            <span>{formatSourceLabel(source.source || 'direct')}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300 capitalize">
+                          {(source.channel || 'direct').replace('_', ' ')}
+                        </td>
                         <td className="py-3 px-4 text-right text-sm text-gray-900 dark:text-white">{(source.visits || 0).toLocaleString()}</td>
                         <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{(source.uniqueVisitors || 0).toLocaleString()}</td>
                         <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{(source.signUps || 0).toLocaleString()}</td>

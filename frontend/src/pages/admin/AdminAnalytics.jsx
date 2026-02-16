@@ -120,6 +120,32 @@ function AdminAnalytics() {
     return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
   };
 
+  const getSourceIcon = (source) => {
+    const key = String(source || '').toLowerCase();
+    if (key.includes('snapchat')) return '👻';
+    if (key.includes('instagram')) return '📸';
+    if (key.includes('facebook')) return '📘';
+    if (key === 'x' || key.includes('twitter') || key.includes('x.com')) return 'X';
+    if (key.includes('tiktok')) return '🎵';
+    if (key.includes('linkedin')) return '💼';
+    if (key.includes('youtube')) return '▶';
+    if (key.includes('reddit')) return '👽';
+    if (key.includes('pinterest')) return '📌';
+    if (key.includes('google')) return '🔎';
+    return '🔗';
+  };
+
+  const formatSourceLabel = (source) => {
+    const value = String(source || '').trim();
+    if (!value) return 'direct';
+    if (value === 'x') return 'X';
+    return value
+      .split(/[_\-\s]+/)
+      .filter(Boolean)
+      .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+      .join(' ');
+  };
+
   if (loading) {
     return (
       <div className="p-6">
@@ -168,6 +194,10 @@ function AdminAnalytics() {
   };
   const realtimePreviewUsers = (realtimeData?.users || []).slice(0, 3);
   const trafficSources = data?.trafficSources || { channels: [], topSources: [], summary: {} };
+  const topSource = trafficSources.topSources?.[0];
+  const topSourceSubtitle = topSource
+    ? `Top source: ${getSourceIcon(topSource.source)} ${formatSourceLabel(topSource.source)}`
+    : `${(trafficSources.summary?.totalVisits || 0).toLocaleString()} tracked visits`;
 
   // Card component - navigates to detail page
   const MetricCard = ({ id, title, icon, value, subtitle, color, gradient }) => {
@@ -313,7 +343,7 @@ function AdminAnalytics() {
                     {user.ipAddress || 'unknown'} • {user.city && user.country ? `${user.city}, ${user.country}` : (user.country || 'Unknown')}
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {user.sourceChannel || 'direct'} • {formatTime(user.timeSpent || 0)} • {user.conversion || 'none'}
+                    {getSourceIcon(user.source || user.sourceChannel)} {formatSourceLabel(user.source || user.sourceChannel || 'direct')} • {formatTime(user.timeSpent || 0)} • {user.conversion || 'none'}
                   </p>
                 </div>
               ))}
@@ -393,7 +423,7 @@ function AdminAnalytics() {
             </svg>
           }
           value={(trafficSources.channels?.length || 0).toLocaleString()}
-          subtitle={`${(trafficSources.summary?.totalVisits || 0).toLocaleString()} tracked visits`}
+          subtitle={topSourceSubtitle}
           color="text-emerald-600 dark:text-emerald-400"
           gradient="bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20"
         />

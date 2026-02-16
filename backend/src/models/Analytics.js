@@ -58,6 +58,16 @@ const analyticsSchema = new mongoose.Schema(
       type: String
     },
 
+    latitude: {
+      type: Number,
+      default: null
+    },
+
+    longitude: {
+      type: Number,
+      default: null
+    },
+
     // Page tracking
     page: {
       type: String,
@@ -70,6 +80,60 @@ const analyticsSchema = new mongoose.Schema(
     },
 
     referrer: {
+      type: String
+    },
+
+    landingUrl: {
+      type: String
+    },
+
+    sourceHint: {
+      type: String
+    },
+
+    utmSource: {
+      type: String,
+      index: true
+    },
+
+    utmMedium: {
+      type: String,
+      index: true
+    },
+
+    utmCampaign: {
+      type: String
+    },
+
+    utmTerm: {
+      type: String
+    },
+
+    utmContent: {
+      type: String
+    },
+
+    gclid: {
+      type: String
+    },
+
+    fbclid: {
+      type: String
+    },
+
+    ttclid: {
+      type: String
+    },
+
+    msclkid: {
+      type: String
+    },
+
+    twclid: {
+      type: String
+    },
+
+    scid: {
       type: String
     },
 

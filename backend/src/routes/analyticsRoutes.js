@@ -64,6 +64,22 @@ const EMAIL_DOMAINS = [
   "icloud.com"
 ];
 
+const SEARCH_SOURCE_HINTS = ["google", "bing", "yahoo", "duckduckgo", "baidu", "yandex"];
+const SOCIAL_SOURCE_HINTS = [
+  "snapchat",
+  "instagram",
+  "facebook",
+  "twitter",
+  "tiktok",
+  "linkedin",
+  "youtube",
+  "reddit",
+  "pinterest",
+  "telegram",
+  "whatsapp"
+];
+const EMAIL_SOURCE_HINTS = ["email", "newsletter", "mailchimp", "sendgrid", "brevo", "klaviyo"];
+
 function parseRealtimeWindowKey(rawValue) {
   const key = String(rawValue || "15m").trim().toLowerCase();
   if (REALTIME_WINDOW_PRESETS[key]) {
@@ -100,6 +116,13 @@ function safeParseUrl(value) {
     return new URL(trimmed);
   } catch {
     try {
+      if (trimmed.startsWith("/") || trimmed.startsWith("?")) {
+        return new URL(trimmed, "https://otodial.com");
+      }
+    } catch {
+      // Ignore malformed relative path.
+    }
+    try {
       return new URL(`https://${trimmed}`);
     } catch {
       return null;
@@ -107,78 +130,261 @@ function safeParseUrl(value) {
   }
 }
 
-function classifyTrafficSource(referrer, internalHosts) {
-  const rawReferrer = typeof referrer === "string" ? referrer.trim() : "";
-  if (!rawReferrer) {
-    return {
-      channel: "direct",
-      source: "direct",
-      referrer: ""
-    };
+function normalizeSourceLabel(source) {
+  const value = String(source || "").toLowerCase();
+  if (!value) return "direct";
+  if (value.includes("snapchat")) return "snapchat";
+  if (value.includes("instagram")) return "instagram";
+  if (value.includes("facebook") || value.includes("fb.com")) return "facebook";
+  if (value.includes("x.com") || value.includes("twitter") || value.includes("t.co")) return "x";
+  if (value.includes("linkedin") || value.includes("lnkd.in")) return "linkedin";
+  if (value.includes("youtube") || value.includes("youtu.be")) return "youtube";
+  if (value.includes("tiktok")) return "tiktok";
+  if (value.includes("reddit")) return "reddit";
+  if (value.includes("pinterest")) return "pinterest";
+  if (value.includes("telegram")) return "telegram";
+  if (value.includes("whatsapp")) return "whatsapp";
+  if (value.includes("google")) return "google";
+  if (value.includes("bing")) return "bing";
+  if (value.includes("yahoo")) return "yahoo";
+  if (value.includes("duckduckgo")) return "duckduckgo";
+  return value.replace(/^www\./, "");
+}
+
+function isSearchSource(value) {
+  const source = String(value || "").toLowerCase();
+  if (!source) return false;
+  return SEARCH_DOMAINS.some((domain) => source.includes(domain)) ||
+    SEARCH_SOURCE_HINTS.some((hint) => source.includes(hint));
+}
+
+function isSocialSource(value) {
+  const source = String(value || "").toLowerCase();
+  if (!source) return false;
+  if (source === "x") return true;
+  return SOCIAL_DOMAINS.some((domain) => source.includes(domain)) ||
+    SOCIAL_SOURCE_HINTS.some((hint) => source.includes(hint));
+}
+
+function isEmailSource(value) {
+  const source = String(value || "").toLowerCase();
+  if (!source) return false;
+  return EMAIL_DOMAINS.some((domain) => source.includes(domain)) ||
+    EMAIL_SOURCE_HINTS.some((hint) => source.includes(hint));
+}
+
+function inferSocialSourceFromUserAgent(userAgent) {
+  const value = String(userAgent || "").toLowerCase();
+  if (!value) return null;
+  if (value.includes("snapchat")) return "snapchat";
+  if (value.includes("instagram")) return "instagram";
+  if (value.includes("fban") || value.includes("fbav") || value.includes("facebook")) return "facebook";
+  if (value.includes("tiktok")) return "tiktok";
+  if (value.includes("linkedinapp") || value.includes("linkedin")) return "linkedin";
+  if (value.includes("twitter") || value.includes("x-client")) return "x";
+  if (value.includes("reddit")) return "reddit";
+  if (value.includes("pinterest")) return "pinterest";
+  if (value.includes("youtube")) return "youtube";
+  return null;
+}
+
+function readQueryAttribution(urlLike) {
+  const parsed = safeParseUrl(urlLike);
+  if (!parsed) {
+    return {};
   }
 
-  const lowerReferrer = rawReferrer.toLowerCase();
-  const parsed = safeParseUrl(rawReferrer);
-  const hostname = parsed?.hostname?.toLowerCase() || "";
-  const withoutWww = hostname.replace(/^www\./, "");
+  const params = parsed.searchParams;
+  return {
+    utmSource: params.get("utm_source") || null,
+    utmMedium: params.get("utm_medium") || null,
+    utmCampaign: params.get("utm_campaign") || null,
+    gclid: params.get("gclid") || null,
+    fbclid: params.get("fbclid") || null,
+    msclkid: params.get("msclkid") || null,
+    ttclid: params.get("ttclid") || null,
+    twclid: params.get("twclid") || null,
+    scid: params.get("scid") || null,
+    sourceHint: params.get("source") || params.get("src") || null
+  };
+}
 
-  if (withoutWww && internalHosts.has(withoutWww)) {
-    return {
-      channel: "internal",
-      source: withoutWww,
-      referrer: rawReferrer
-    };
+function resolveTrafficSourceFromRecord(row, internalHosts) {
+  const referrer = String(row?.referrer || "").trim();
+  const userAgent = String(row?.userAgent || "").trim();
+  const page = String(row?.page || "").trim();
+  const landingUrl = String(row?.landingUrl || "").trim();
+
+  const pageAttribution = readQueryAttribution(page);
+  const landingAttribution = readQueryAttribution(landingUrl);
+
+  const utmSource = row?.utmSource || landingAttribution.utmSource || pageAttribution.utmSource || null;
+  const utmMedium = row?.utmMedium || landingAttribution.utmMedium || pageAttribution.utmMedium || null;
+  const sourceHint = row?.sourceHint || landingAttribution.sourceHint || pageAttribution.sourceHint || null;
+
+  const gclid = row?.gclid || landingAttribution.gclid || pageAttribution.gclid || null;
+  const fbclid = row?.fbclid || landingAttribution.fbclid || pageAttribution.fbclid || null;
+  const msclkid = row?.msclkid || landingAttribution.msclkid || pageAttribution.msclkid || null;
+  const ttclid = row?.ttclid || landingAttribution.ttclid || pageAttribution.ttclid || null;
+  const twclid = row?.twclid || landingAttribution.twclid || pageAttribution.twclid || null;
+  const scid = row?.scid || landingAttribution.scid || pageAttribution.scid || null;
+
+  const clickIdPresent = !!(gclid || fbclid || msclkid || ttclid || twclid || scid);
+
+  const referrerParsed = safeParseUrl(referrer);
+  const referrerHost = referrerParsed?.hostname?.toLowerCase().replace(/^www\./, "") || "";
+
+  if (utmSource || utmMedium || sourceHint) {
+    const normalizedSource = normalizeSourceLabel(utmSource || sourceHint || referrerHost || "direct");
+    const normalizedMedium = String(utmMedium || "").toLowerCase();
+
+    if (
+      clickIdPresent ||
+      normalizedMedium.includes("paid") ||
+      normalizedMedium.includes("cpc") ||
+      normalizedMedium.includes("ppc") ||
+      normalizedMedium.includes("ad")
+    ) {
+      return {
+        channel: "paid",
+        source: normalizedSource,
+        icon: normalizedSource,
+        referrer,
+        attributionMethod: "utm"
+      };
+    }
+
+    if (normalizedMedium.includes("social") || isSocialSource(normalizedSource)) {
+      return {
+        channel: "social",
+        source: normalizedSource,
+        icon: normalizedSource,
+        referrer,
+        attributionMethod: "utm"
+      };
+    }
+
+    if (normalizedMedium.includes("organic") || isSearchSource(normalizedSource)) {
+      return {
+        channel: "organic_search",
+        source: normalizedSource,
+        icon: normalizedSource,
+        referrer,
+        attributionMethod: "utm"
+      };
+    }
+
+    if (normalizedMedium.includes("email") || isEmailSource(normalizedSource)) {
+      return {
+        channel: "email",
+        source: normalizedSource,
+        icon: normalizedSource,
+        referrer,
+        attributionMethod: "utm"
+      };
+    }
+
+    if (normalizedMedium.includes("referral")) {
+      return {
+        channel: "referral",
+        source: normalizedSource,
+        icon: normalizedSource,
+        referrer,
+        attributionMethod: "utm"
+      };
+    }
+
+    if (normalizedMedium.includes("direct")) {
+      return {
+        channel: "direct",
+        source: "direct",
+        icon: "direct",
+        referrer,
+        attributionMethod: "utm"
+      };
+    }
   }
 
-  const queryText = parsed?.search?.toLowerCase() || lowerReferrer;
-  const hasPaidHints =
-    queryText.includes("gclid=") ||
-    queryText.includes("fbclid=") ||
-    queryText.includes("msclkid=") ||
-    queryText.includes("utm_medium=cpc") ||
-    queryText.includes("utm_medium=ppc") ||
-    queryText.includes("utm_medium=paid") ||
-    queryText.includes("utm_medium=ad");
-
-  const utmSource = parsed?.searchParams?.get("utm_source");
-  const normalizedSource = (utmSource || withoutWww || "direct").toLowerCase();
-
-  if (hasPaidHints) {
+  if (clickIdPresent) {
+    const paidSource = normalizeSourceLabel(referrerHost || sourceHint || "paid_campaign");
     return {
       channel: "paid",
-      source: normalizedSource,
-      referrer: rawReferrer
+      source: paidSource,
+      icon: paidSource,
+      referrer,
+      attributionMethod: "click_id"
     };
   }
 
-  if (SEARCH_DOMAINS.some((domain) => normalizedSource.includes(domain))) {
+  if (referrerHost) {
+    if (internalHosts.has(referrerHost)) {
+      return {
+        channel: "internal",
+        source: referrerHost,
+        icon: "internal",
+        referrer,
+        attributionMethod: "referrer"
+      };
+    }
+
+    const normalizedSource = normalizeSourceLabel(referrerHost);
+
+    if (isSearchSource(referrerHost)) {
+      return {
+        channel: "organic_search",
+        source: normalizedSource,
+        icon: normalizedSource,
+        referrer,
+        attributionMethod: "referrer"
+      };
+    }
+
+    if (isSocialSource(referrerHost)) {
+      return {
+        channel: "social",
+        source: normalizedSource,
+        icon: normalizedSource,
+        referrer,
+        attributionMethod: "referrer"
+      };
+    }
+
+    if (isEmailSource(referrerHost)) {
+      return {
+        channel: "email",
+        source: normalizedSource,
+        icon: normalizedSource,
+        referrer,
+        attributionMethod: "referrer"
+      };
+    }
+
     return {
-      channel: "organic_search",
+      channel: "referral",
       source: normalizedSource,
-      referrer: rawReferrer
+      icon: normalizedSource,
+      referrer,
+      attributionMethod: "referrer"
     };
   }
 
-  if (SOCIAL_DOMAINS.some((domain) => normalizedSource.includes(domain))) {
+  const inferredSocial = inferSocialSourceFromUserAgent(userAgent);
+  if (inferredSocial) {
     return {
       channel: "social",
-      source: normalizedSource,
-      referrer: rawReferrer
-    };
-  }
-
-  if (EMAIL_DOMAINS.some((domain) => normalizedSource.includes(domain))) {
-    return {
-      channel: "email",
-      source: normalizedSource,
-      referrer: rawReferrer
+      source: inferredSocial,
+      icon: inferredSocial,
+      referrer,
+      attributionMethod: "user_agent"
     };
   }
 
   return {
-    channel: "referral",
-    source: normalizedSource,
-    referrer: rawReferrer
+    channel: "direct",
+    source: "direct",
+    icon: "direct",
+    referrer,
+    attributionMethod: "fallback_direct"
   };
 }
 
@@ -187,39 +393,49 @@ function summarizeTrafficSources(sourceRows, internalHosts) {
   const sourceMap = new Map();
 
   for (const row of sourceRows) {
-    const trafficInfo = classifyTrafficSource(row.referrer, internalHosts);
+    const trafficInfo = resolveTrafficSourceFromRecord(row, internalHosts);
+    const sessionKey =
+      row.sessionId ||
+      `${row.ipAddress || "unknown"}:${row.visitStart || row.createdAt || "unknown"}`;
     const channelKey = trafficInfo.channel;
     const sourceKey = `${trafficInfo.source}::${trafficInfo.channel}`;
 
     const channelItem = channelMap.get(channelKey) || {
       channel: channelKey,
       visits: 0,
-      uniqueVisitors: 0,
+      uniqueVisitorsSet: new Set(),
       signUps: 0,
-      subscriptions: 0
+      subscriptions: 0,
+      icon: trafficInfo.icon || trafficInfo.source
     };
-    channelItem.visits += row.visits || 0;
-    channelItem.uniqueVisitors += row.uniqueVisitors || 0;
-    channelItem.signUps += row.signUps || 0;
-    channelItem.subscriptions += row.subscriptions || 0;
+    channelItem.visits += 1;
+    channelItem.uniqueVisitorsSet.add(sessionKey);
+    channelItem.signUps += row.signedUp ? 1 : 0;
+    channelItem.subscriptions += row.hasSubscription ? 1 : 0;
     channelMap.set(channelKey, channelItem);
 
     const sourceItem = sourceMap.get(sourceKey) || {
       source: trafficInfo.source,
       channel: trafficInfo.channel,
+      icon: trafficInfo.icon || trafficInfo.source,
       visits: 0,
-      uniqueVisitors: 0,
+      uniqueVisitorsSet: new Set(),
       signUps: 0,
-      subscriptions: 0
+      subscriptions: 0,
+      attributionMethod: trafficInfo.attributionMethod || "unknown"
     };
-    sourceItem.visits += row.visits || 0;
-    sourceItem.uniqueVisitors += row.uniqueVisitors || 0;
-    sourceItem.signUps += row.signUps || 0;
-    sourceItem.subscriptions += row.subscriptions || 0;
+    sourceItem.visits += 1;
+    sourceItem.uniqueVisitorsSet.add(sessionKey);
+    sourceItem.signUps += row.signedUp ? 1 : 0;
+    sourceItem.subscriptions += row.hasSubscription ? 1 : 0;
     sourceMap.set(sourceKey, sourceItem);
   }
 
   const channels = Array.from(channelMap.values())
+    .map((item) => ({
+      ...item,
+      uniqueVisitors: item.uniqueVisitorsSet.size
+    }))
     .map((item) => ({
       ...item,
       conversionRate: item.uniqueVisitors > 0
@@ -227,16 +443,22 @@ function summarizeTrafficSources(sourceRows, internalHosts) {
         : 0,
       subscriptionRate: item.signUps > 0
         ? Number(((item.subscriptions / item.signUps) * 100).toFixed(2))
-        : 0
+        : 0,
+      uniqueVisitorsSet: undefined
     }))
     .sort((a, b) => b.visits - a.visits);
 
   const topSources = Array.from(sourceMap.values())
     .map((item) => ({
       ...item,
+      uniqueVisitors: item.uniqueVisitorsSet.size
+    }))
+    .map((item) => ({
+      ...item,
       conversionRate: item.uniqueVisitors > 0
         ? Number(((item.signUps / item.uniqueVisitors) * 100).toFixed(2))
-        : 0
+        : 0,
+      uniqueVisitorsSet: undefined
     }))
     .sort((a, b) => b.visits - a.visits)
     .slice(0, 20);
@@ -277,7 +499,20 @@ router.post("/track", async (req, res) => {
       userAgent,
       gaClientId,
       gaSessionId,
-      timeSpent
+      timeSpent,
+      landingUrl,
+      sourceHint,
+      utmSource,
+      utmMedium,
+      utmCampaign,
+      utmTerm,
+      utmContent,
+      gclid,
+      fbclid,
+      ttclid,
+      msclkid,
+      twclid,
+      scid
     } = req.body;
 
     // Extract IP address (handle various proxy scenarios)
@@ -299,6 +534,8 @@ router.post("/track", async (req, res) => {
     const countryCode = geo?.country || 'Unknown';
     const city = geo?.city || 'Unknown';
     const region = geo?.region || 'Unknown';
+    const latitude = Array.isArray(geo?.ll) ? Number(geo.ll[0]) : null;
+    const longitude = Array.isArray(geo?.ll) ? Number(geo.ll[1]) : null;
 
     // Detect device
     let device = 'desktop';
@@ -383,6 +620,26 @@ router.post("/track", async (req, res) => {
       if (pageTitle) {
         existingSession.pageTitle = pageTitle;
       }
+      if (referrer) {
+        existingSession.referrer = referrer;
+      }
+      if (landingUrl) {
+        existingSession.landingUrl = landingUrl;
+      }
+      if (sourceHint) {
+        existingSession.sourceHint = sourceHint;
+      }
+      if (utmSource) existingSession.utmSource = utmSource;
+      if (utmMedium) existingSession.utmMedium = utmMedium;
+      if (utmCampaign) existingSession.utmCampaign = utmCampaign;
+      if (utmTerm) existingSession.utmTerm = utmTerm;
+      if (utmContent) existingSession.utmContent = utmContent;
+      if (gclid) existingSession.gclid = gclid;
+      if (fbclid) existingSession.fbclid = fbclid;
+      if (ttclid) existingSession.ttclid = ttclid;
+      if (msclkid) existingSession.msclkid = msclkid;
+      if (twclid) existingSession.twclid = twclid;
+      if (scid) existingSession.scid = scid;
       // Update user info if provided
       if (userId) {
         existingSession.userId = userId;
@@ -412,9 +669,24 @@ router.post("/track", async (req, res) => {
         countryCode,
         city,
         region,
+        latitude,
+        longitude,
         page,
         pageTitle,
         referrer,
+        landingUrl,
+        sourceHint,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        utmTerm,
+        utmContent,
+        gclid,
+        fbclid,
+        ttclid,
+        msclkid,
+        twclid,
+        scid,
         visitStart: new Date(),
         visitEnd: new Date(),
         timeSpent: timeSpent || 0,
@@ -793,33 +1065,15 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       { $limit: 50 }
     ]);
 
-    const sourceRows = await Analytics.aggregate([
-      {
-        $match: {
-          visitStart: { $gte: start, $lte: end }
-        }
-      },
-      {
-        $group: {
-          _id: { $ifNull: ["$referrer", ""] },
-          visits: { $sum: 1 },
-          uniqueSessions: { $addToSet: "$sessionId" },
-          signUps: { $sum: { $cond: ["$signedUp", 1, 0] } },
-          subscriptions: { $sum: { $cond: ["$hasSubscription", 1, 0] } }
-        }
-      },
-      {
-        $project: {
-          referrer: "$_id",
-          visits: 1,
-          uniqueVisitors: { $size: "$uniqueSessions" },
-          signUps: 1,
-          subscriptions: 1
-        }
-      },
-      { $sort: { visits: -1 } },
-      { $limit: 500 }
-    ]);
+    const sourceRows = await Analytics.find({
+      visitStart: { $gte: start, $lte: end }
+    })
+      .select(
+        "sessionId ipAddress visitStart createdAt referrer userAgent page landingUrl sourceHint utmSource utmMedium utmCampaign gclid fbclid msclkid ttclid twclid scid signedUp hasSubscription"
+      )
+      .sort({ visitStart: -1 })
+      .limit(50000)
+      .lean();
     const trafficSources = summarizeTrafficSources(sourceRows, internalHosts);
 
     const realtimeSessions = await Analytics.find({
@@ -829,7 +1083,7 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       ]
     })
       .select(
-        "sessionId userId ipAddress device browser os country city region timeSpent signedUp hasSubscription referrer page pageTitle visitStart visitEnd"
+        "sessionId userId ipAddress device browser os country countryCode city region latitude longitude timeSpent signedUp hasSubscription referrer userAgent page pageTitle landingUrl sourceHint utmSource utmMedium utmCampaign gclid fbclid msclkid ttclid twclid scid visitStart visitEnd createdAt"
       )
       .sort({ visitEnd: -1, visitStart: -1 })
       .limit(300)
@@ -853,7 +1107,7 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
 
     const realtimeRows = realtimeSessions.map((row) => {
       const user = row.userId ? realtimeUserMap.get(String(row.userId)) : null;
-      const sourceInfo = classifyTrafficSource(row.referrer, internalHosts);
+      const sourceInfo = resolveTrafficSourceFromRecord(row, internalHosts);
       const lastActivity = row.visitEnd || row.visitStart || null;
       const conversion = row.hasSubscription
         ? "subscription"
@@ -871,12 +1125,17 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
         browser: row.browser || "unknown",
         os: row.os || "unknown",
         country: row.country || "Unknown",
+        countryCode: row.countryCode || null,
         city: row.city || "Unknown",
         region: row.region || "Unknown",
+        latitude: Number.isFinite(Number(row.latitude)) ? Number(row.latitude) : null,
+        longitude: Number.isFinite(Number(row.longitude)) ? Number(row.longitude) : null,
         timeSpent: Number(row.timeSpent || 0),
         conversion,
         sourceChannel: sourceInfo.channel,
         source: sourceInfo.source,
+        sourceIcon: sourceInfo.icon || sourceInfo.source,
+        sourceAttributionMethod: sourceInfo.attributionMethod || "unknown",
         referrer: row.referrer || "",
         page: row.page || "",
         pageTitle: row.pageTitle || "",
@@ -909,6 +1168,18 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
     const realtimeChannelBreakdown = Array.from(realtimeChannelBreakdownMap.entries())
       .map(([channel, count]) => ({ channel, count }))
       .sort((a, b) => b.count - a.count);
+    const realtimeCountryBreakdownMap = new Map();
+    for (const row of realtimeRows) {
+      const countryKey = row.country && row.country !== "Unknown" ? row.country : null;
+      if (!countryKey) continue;
+      realtimeCountryBreakdownMap.set(
+        countryKey,
+        (realtimeCountryBreakdownMap.get(countryKey) || 0) + 1
+      );
+    }
+    const realtimeCountryBreakdown = Array.from(realtimeCountryBreakdownMap.entries())
+      .map(([country, count]) => ({ country, count }))
+      .sort((a, b) => b.count - a.count);
 
     const realtimeSummary = {
       windowKey: realtimeWindowKey,
@@ -919,7 +1190,8 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       subscribedUsers: realtimeRows.filter((row) => row.conversion === "subscription").length,
       totalTimeSpent: realtimeRows.reduce((acc, row) => acc + Number(row.timeSpent || 0), 0),
       deviceBreakdown: realtimeDeviceBreakdown,
-      sourceBreakdown: realtimeChannelBreakdown
+      sourceBreakdown: realtimeChannelBreakdown,
+      countryBreakdown: realtimeCountryBreakdown
     };
 
     // Conversion funnel
