@@ -36,11 +36,19 @@ function AdminAnalyticsDetail() {
       const params = new URLSearchParams();
       if (dateRange.startDate) params.append('startDate', dateRange.startDate);
       if (dateRange.endDate) params.append('endDate', dateRange.endDate);
+      const adminToken = localStorage.getItem('adminToken');
 
-      const response = await API.get(`/api/analytics/admin/dashboard?${params.toString()}`);
+      const response = await API.get(`/api/analytics/admin/dashboard?${params.toString()}`, {
+        headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
+      });
       
       if (response.error) {
         console.error('Error fetching analytics:', response.error);
+        if (response.status === 401) {
+          localStorage.removeItem('adminToken');
+          navigate('/adminbobby');
+          return;
+        }
         setData(null);
         setMeta({
           source: 'unavailable',

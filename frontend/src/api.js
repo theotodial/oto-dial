@@ -9,15 +9,36 @@ const axiosInstance = axios.create({
   baseURL: baseURL,
 });
 
+const normalizeRequestPath = (rawUrl = "") => {
+  if (!rawUrl) return "";
+
+  if (/^https?:\/\//i.test(rawUrl)) {
+    try {
+      const parsed = new URL(rawUrl);
+      return parsed.pathname || "";
+    } catch {
+      return rawUrl;
+    }
+  }
+
+  return rawUrl.startsWith("/") ? rawUrl : `/${rawUrl}`;
+};
+
 // Add request interceptor to include auth token
 axiosInstance.interceptors.request.use(
   (config) => {
-    // CRITICAL: Only use adminToken for /api/admin/* and /api/blog/admin/* routes
-    // Use userToken for all other routes to prevent conflicts
-    const isAdminRoute = config.url && (
-      config.url.startsWith('/api/admin') || 
-      config.url.startsWith('/api/blog/admin')
+    // CRITICAL: Use adminToken only for admin-only endpoints.
+    // Use user token for regular user endpoints.
+    const requestPath = normalizeRequestPath(config.url || "");
+    const isAdminRoute = (
+      requestPath.startsWith('/api/admin') ||
+      requestPath.startsWith('/api/blog/admin') ||
+      requestPath.startsWith('/api/analytics/admin')
     );
+
+    if (!config.headers) {
+      config.headers = {};
+    }
     
     if (isAdminRoute) {
       // Admin routes: use adminToken only
