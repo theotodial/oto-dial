@@ -15,13 +15,54 @@ function BlogPost() {
     fetchBlog();
   }, [slug]);
 
+  const normalizeImageUrl = (rawUrl) => {
+    if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+    const value = rawUrl.trim();
+    if (!value) return value;
+    if (value.startsWith('/api/uploads/')) return value;
+    if (value.startsWith('/uploads/')) return `/api${value}`;
+
+    try {
+      const parsed = new URL(value);
+      if (!parsed.pathname.startsWith('/uploads/')) return value;
+      const host = parsed.hostname.toLowerCase();
+      const currentHost = window.location.hostname.toLowerCase();
+      if (host === 'localhost' || host === '127.0.0.1' || host === currentHost) {
+        return `/api${parsed.pathname}${parsed.search || ''}`;
+      }
+    } catch {
+      return value;
+    }
+
+    return value;
+  };
+
+  const normalizeHtmlAssetUrls = (html) => {
+    if (!html || typeof html !== 'string') return html;
+    return html.replace(/(src|href)=(["'])([^"']+)\2/gi, (full, attr, quote, url) => {
+      const normalized = normalizeImageUrl(url);
+      return `${attr}=${quote}${normalized}${quote}`;
+    });
+  };
+
+  const normalizeBlogPayload = (rawBlog) => {
+    if (!rawBlog) return rawBlog;
+    return {
+      ...rawBlog,
+      featuredImage: normalizeImageUrl(rawBlog.featuredImage),
+      ogImage: normalizeImageUrl(rawBlog.ogImage),
+      content: normalizeHtmlAssetUrls(rawBlog.content)
+    };
+  };
+
   const fetchBlog = async () => {
     try {
       setLoading(true);
       const response = await API.get(`/api/blog/${slug}`);
       if (response.data?.success) {
-        setBlog(response.data.blog);
-        fetchRelatedBlogs(response.data.blog);
+        const normalizedBlog = normalizeBlogPayload(response.data.blog);
+        setBlog(normalizedBlog);
+        fetchRelatedBlogs(normalizedBlog);
       } else {
         navigate('/blog');
       }
@@ -44,6 +85,7 @@ function BlogPost() {
         // Filter out current blog
         const related = response.data.blogs
           .filter(b => b._id !== currentBlog._id)
+          .map((item) => normalizeBlogPayload(item))
           .slice(0, 3);
         setRelatedBlogs(related);
       }

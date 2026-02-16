@@ -9,9 +9,93 @@ import crypto from "crypto";
 const router = express.Router();
 const BLOG_IMAGE_MAX_BYTES = 8 * 1024 * 1024; // 8MB
 
+function getBackendHostname() {
+  const backendUrl = String(process.env.BACKEND_URL || "").trim();
+  if (!backendUrl) return null;
+  try {
+    return new URL(backendUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 function getPublicAssetUrl(relativePath) {
   const backendUrl = String(process.env.BACKEND_URL || "").trim().replace(/\/$/, "");
-  return backendUrl ? `${backendUrl}${relativePath}` : relativePath;
+  if (!backendUrl) return relativePath;
+
+  try {
+    const parsed = new URL(backendUrl);
+    const host = parsed.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
+      return relativePath;
+    }
+  } catch {
+    return relativePath;
+  }
+
+  return `${backendUrl}${relativePath}`;
+}
+
+function normalizeUploadUrl(rawUrl, req) {
+  if (!rawUrl || typeof rawUrl !== "string") {
+    return rawUrl;
+  }
+
+  const value = rawUrl.trim();
+  if (!value) {
+    return value;
+  }
+
+  if (value.startsWith("/api/uploads/")) {
+    return value;
+  }
+
+  if (value.startsWith("/uploads/")) {
+    return `/api${value}`;
+  }
+
+  try {
+    const parsed = new URL(value);
+    const pathname = parsed.pathname || "";
+    if (!pathname.startsWith("/uploads/")) {
+      return value;
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    const reqHost = String(req?.get?.("host") || "").toLowerCase().split(":")[0];
+    const backendHost = getBackendHostname();
+    const isInternalHost = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
+    const isKnownHost = (backendHost && host === backendHost) || (reqHost && host === reqHost);
+
+    if (isInternalHost || isKnownHost) {
+      return `/api${pathname}${parsed.search || ""}`;
+    }
+
+    return value;
+  } catch {
+    return value;
+  }
+}
+
+function normalizeBlogContentUrls(content, req) {
+  if (!content || typeof content !== "string") {
+    return content;
+  }
+
+  return content.replace(/(src|href)=(["'])([^"']+)\2/gi, (full, attr, quote, urlValue) => {
+    const normalizedUrl = normalizeUploadUrl(urlValue, req);
+    return `${attr}=${quote}${normalizedUrl}${quote}`;
+  });
+}
+
+function normalizeBlogForResponse(blog, req) {
+  if (!blog) return blog;
+  const plain = typeof blog.toObject === "function" ? blog.toObject() : { ...blog };
+
+  plain.featuredImage = normalizeUploadUrl(plain.featuredImage, req);
+  plain.ogImage = normalizeUploadUrl(plain.ogImage, req);
+  plain.content = normalizeBlogContentUrls(plain.content, req);
+  return plain;
 }
 
 // Public routes - Get all published blogs
@@ -46,10 +130,11 @@ router.get("/", async (req, res) => {
       .select("-content"); // Don't send full content in listing
 
     const total = await Blog.countDocuments(query);
+    const normalizedBlogs = blogs.map((blog) => normalizeBlogForResponse(blog, req));
 
     res.json({
       success: true,
-      blogs,
+      blogs: normalizedBlogs,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -105,7 +190,7 @@ router.get("/:slug", async (req, res) => {
     blog.views += 1;
     await blog.save();
 
-    res.json({ success: true, blog });
+    res.json({ success: true, blog: normalizeBlogForResponse(blog, req) });
   } catch (error) {
     console.error("Error fetching blog:", error);
     res.status(500).json({ success: false, error: "Failed to fetch blog" });
@@ -138,10 +223,11 @@ router.get("/admin/all", authenticateUser, requireAdmin, async (req, res) => {
       .limit(parseInt(limit));
 
     const total = await Blog.countDocuments(query);
+    const normalizedBlogs = blogs.map((blog) => normalizeBlogForResponse(blog, req));
 
     res.json({
       success: true,
-      blogs,
+      blogs: normalizedBlogs,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -165,7 +251,7 @@ router.get("/admin/:id", authenticateUser, requireAdmin, async (req, res) => {
       return res.status(404).json({ success: false, error: "Blog not found" });
     }
 
-    res.json({ success: true, blog });
+    res.json({ success: true, blog: normalizeBlogForResponse(blog, req) });
   } catch (error) {
     console.error("Error fetching blog:", error);
     res.status(500).json({ success: false, error: "Failed to fetch blog" });
@@ -226,7 +312,7 @@ router.post("/admin/upload-image", authenticateUser, requireAdmin, async (req, r
     const fullPath = path.join(uploadDir, generatedName);
     await fs.writeFile(fullPath, buffer);
 
-    const relativeUrl = `/uploads/blog/${generatedName}`;
+    const relativeUrl = `/api/uploads/blog/${generatedName}`;
     const imageUrl = getPublicAssetUrl(relativeUrl);
 
     return res.json({
@@ -311,8 +397,8 @@ router.post("/admin", authenticateUser, requireAdmin, async (req, res) => {
       title,
       slug: finalSlug,
       excerpt,
-      content,
-      featuredImage,
+      content: normalizeBlogContentUrls(content, req),
+      featuredImage: normalizeUploadUrl(featuredImage, req),
       author: req.userId,
       authorName: authorName,
       status: status || "draft",
@@ -320,7 +406,7 @@ router.post("/admin", authenticateUser, requireAdmin, async (req, res) => {
       metaTitle,
       metaDescription,
       metaKeywords: Array.isArray(metaKeywords) ? metaKeywords : [],
-      ogImage,
+      ogImage: normalizeUploadUrl(ogImage, req),
       category,
       tags: Array.isArray(tags) ? tags : [],
       adsenseEnabled: adsenseEnabled !== false,
@@ -330,7 +416,7 @@ router.post("/admin", authenticateUser, requireAdmin, async (req, res) => {
     await blog.save();
 
     console.log("Blog created successfully:", blog._id);
-    res.status(201).json({ success: true, blog });
+    res.status(201).json({ success: true, blog: normalizeBlogForResponse(blog, req) });
   } catch (error) {
     console.error("Error creating blog:", error);
     res.status(500).json({ 
@@ -388,12 +474,12 @@ router.put("/admin/:id", authenticateUser, requireAdmin, async (req, res) => {
     if (title !== undefined) blog.title = title;
     if (slug !== undefined) blog.slug = slug;
     if (excerpt !== undefined) blog.excerpt = excerpt;
-    if (content !== undefined) blog.content = content;
-    if (featuredImage !== undefined) blog.featuredImage = featuredImage;
+    if (content !== undefined) blog.content = normalizeBlogContentUrls(content, req);
+    if (featuredImage !== undefined) blog.featuredImage = normalizeUploadUrl(featuredImage, req);
     if (metaTitle !== undefined) blog.metaTitle = metaTitle;
     if (metaDescription !== undefined) blog.metaDescription = metaDescription;
     if (metaKeywords !== undefined) blog.metaKeywords = Array.isArray(metaKeywords) ? metaKeywords : [];
-    if (ogImage !== undefined) blog.ogImage = ogImage;
+    if (ogImage !== undefined) blog.ogImage = normalizeUploadUrl(ogImage, req);
     if (category !== undefined) blog.category = category;
     if (tags !== undefined) blog.tags = Array.isArray(tags) ? tags : [];
     if (adsenseEnabled !== undefined) blog.adsenseEnabled = adsenseEnabled;
@@ -410,7 +496,7 @@ router.put("/admin/:id", authenticateUser, requireAdmin, async (req, res) => {
     await blog.save();
 
     console.log("Blog updated successfully:", blog._id);
-    res.json({ success: true, blog });
+    res.json({ success: true, blog: normalizeBlogForResponse(blog, req) });
   } catch (error) {
     console.error("Error updating blog:", error);
     res.status(500).json({ 

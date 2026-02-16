@@ -21,6 +21,28 @@ function Blog() {
     fetchMeta();
   }, [filters]);
 
+  const normalizeImageUrl = (rawUrl) => {
+    if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+    const value = rawUrl.trim();
+    if (!value) return value;
+    if (value.startsWith('/api/uploads/')) return value;
+    if (value.startsWith('/uploads/')) return `/api${value}`;
+
+    try {
+      const parsed = new URL(value);
+      if (!parsed.pathname.startsWith('/uploads/')) return value;
+      const host = parsed.hostname.toLowerCase();
+      const currentHost = window.location.hostname.toLowerCase();
+      if (host === 'localhost' || host === '127.0.0.1' || host === currentHost) {
+        return `/api${parsed.pathname}${parsed.search || ''}`;
+      }
+    } catch {
+      return value;
+    }
+
+    return value;
+  };
+
   const fetchBlogs = async () => {
     try {
       setLoading(true);
@@ -40,7 +62,12 @@ function Blog() {
       }
       
       if (response.data?.success) {
-        setBlogs(response.data.blogs || []);
+        const normalizedBlogs = (response.data.blogs || []).map((blog) => ({
+          ...blog,
+          featuredImage: normalizeImageUrl(blog.featuredImage),
+          ogImage: normalizeImageUrl(blog.ogImage)
+        }));
+        setBlogs(normalizedBlogs);
         setPagination(response.data.pagination || { page: 1, pages: 1, total: 0 });
       } else {
         console.error('Blog fetch failed:', response.data);

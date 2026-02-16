@@ -52,6 +52,28 @@ function AdminBlog() {
     }
   }, [page, filters, isEdit, isNew]);
 
+  const normalizeImageUrl = (rawUrl) => {
+    if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+    const value = rawUrl.trim();
+    if (!value) return value;
+    if (value.startsWith('/api/uploads/')) return value;
+    if (value.startsWith('/uploads/')) return `/api${value}`;
+
+    try {
+      const parsed = new URL(value);
+      if (!parsed.pathname.startsWith('/uploads/')) return value;
+      const host = parsed.hostname.toLowerCase();
+      const currentHost = window.location.hostname.toLowerCase();
+      if (host === 'localhost' || host === '127.0.0.1' || host === currentHost) {
+        return `/api${parsed.pathname}${parsed.search || ''}`;
+      }
+    } catch {
+      return value;
+    }
+
+    return value;
+  };
+
   const fetchBlogs = async () => {
     setLoading(true);
     try {
@@ -64,7 +86,11 @@ function AdminBlog() {
       const response = await API.get(`/api/blog/admin/all?${params.toString()}`);
 
       if (response.data?.success) {
-        setBlogs(response.data.blogs || []);
+        setBlogs((response.data.blogs || []).map((blog) => ({
+          ...blog,
+          featuredImage: normalizeImageUrl(blog.featuredImage),
+          ogImage: normalizeImageUrl(blog.ogImage)
+        })));
         setTotalPages(response.data.pagination?.pages || 1);
       }
     } catch (err) {
@@ -88,12 +114,12 @@ function AdminBlog() {
           slug: blog.slug || '',
           excerpt: blog.excerpt || '',
           content: blog.content || '',
-          featuredImage: blog.featuredImage || '',
+          featuredImage: normalizeImageUrl(blog.featuredImage) || '',
           status: blog.status || 'draft',
           metaTitle: blog.metaTitle || '',
           metaDescription: blog.metaDescription || '',
           metaKeywords: Array.isArray(blog.metaKeywords) ? blog.metaKeywords.join(', ') : '',
-          ogImage: blog.ogImage || '',
+          ogImage: normalizeImageUrl(blog.ogImage) || '',
           category: blog.category || '',
           tags: Array.isArray(blog.tags) ? blog.tags.join(', ') : '',
           adsenseEnabled: blog.adsenseEnabled !== false,
@@ -193,8 +219,8 @@ function AdminBlog() {
       };
 
       payload.content = await uploadInlineImagesToServer(payload.content);
-      payload.featuredImage = await uploadSingleInlineImageField(payload.featuredImage, 'featured-image');
-      payload.ogImage = await uploadSingleInlineImageField(payload.ogImage, 'og-image');
+      payload.featuredImage = await uploadSingleInlineImageField(normalizeImageUrl(payload.featuredImage), 'featured-image');
+      payload.ogImage = await uploadSingleInlineImageField(normalizeImageUrl(payload.ogImage), 'og-image');
 
       let response;
       if (isEdit) {
