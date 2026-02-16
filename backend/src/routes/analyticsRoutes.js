@@ -1109,6 +1109,11 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       const user = row.userId ? realtimeUserMap.get(String(row.userId)) : null;
       const sourceInfo = resolveTrafficSourceFromRecord(row, internalHosts);
       const lastActivity = row.visitEnd || row.visitStart || null;
+      const fallbackGeo = (!Number.isFinite(Number(row.latitude)) || !Number.isFinite(Number(row.longitude))) && row.ipAddress
+        ? geoip.lookup(row.ipAddress)
+        : null;
+      const fallbackLatitude = Array.isArray(fallbackGeo?.ll) ? Number(fallbackGeo.ll[0]) : null;
+      const fallbackLongitude = Array.isArray(fallbackGeo?.ll) ? Number(fallbackGeo.ll[1]) : null;
       const conversion = row.hasSubscription
         ? "subscription"
         : row.signedUp
@@ -1128,8 +1133,8 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
         countryCode: row.countryCode || null,
         city: row.city || "Unknown",
         region: row.region || "Unknown",
-        latitude: Number.isFinite(Number(row.latitude)) ? Number(row.latitude) : null,
-        longitude: Number.isFinite(Number(row.longitude)) ? Number(row.longitude) : null,
+        latitude: Number.isFinite(Number(row.latitude)) ? Number(row.latitude) : fallbackLatitude,
+        longitude: Number.isFinite(Number(row.longitude)) ? Number(row.longitude) : fallbackLongitude,
         timeSpent: Number(row.timeSpent || 0),
         conversion,
         sourceChannel: sourceInfo.channel,
