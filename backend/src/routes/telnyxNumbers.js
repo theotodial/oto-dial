@@ -10,11 +10,14 @@ const router = express.Router();
 const MAX_MONTHLY_NUMBER_COST = Number(process.env.TELNYX_MAX_MONTHLY_NUMBER_COST || 3.0);
 const MAX_MESSAGING_RATE = Number(process.env.TELNYX_MAX_MESSAGING_RATE || 0.02);
 const MAX_MONTHLY_NUMBER_COST_NON_US = Number(
-  process.env.TELNYX_MAX_MONTHLY_NUMBER_COST_NON_US || 50.0
+  process.env.TELNYX_MAX_MONTHLY_NUMBER_COST_NON_US || 500.0
 );
 const MAX_MESSAGING_RATE_NON_US = Number(
-  process.env.TELNYX_MAX_MESSAGING_RATE_NON_US || 1.0
+  process.env.TELNYX_MAX_MESSAGING_RATE_NON_US || 5.0
 );
+const ENFORCE_NON_US_COST_CAPS = String(
+  process.env.TELNYX_ENFORCE_NON_US_COST_CAPS || "false"
+).toLowerCase() === "true";
 const REGULATORY_CACHE_TTL_MS = Number(process.env.TELNYX_REGULATORY_CACHE_TTL_MS || 600000);
 const REQUIREMENT_GROUP_CACHE_TTL_MS = Number(process.env.TELNYX_REQUIREMENT_GROUP_CACHE_TTL_MS || 600000);
 const PURCHASEABLE_CHECK_MAX_CANDIDATES = Number(
@@ -744,6 +747,7 @@ async function findAlternativePurchaseNumber({
 }) {
   const normalizedCountry = String(countryCode || "").toUpperCase();
   const { monthlyLimit, messagingLimit } = getNumberCostLimits(normalizedCountry);
+  const enforceCostCaps = normalizedCountry === "US" || ENFORCE_NON_US_COST_CAPS;
   const excludeDigits = normalizeDigits(excludePhoneNumber);
 
   const rawCandidates = await listCountryWideCandidates(telnyx, normalizedCountry);
@@ -771,8 +775,8 @@ async function findAlternativePurchaseNumber({
       ).toUpperCase();
       if (["C", "D", "E", "F", "G", "H"].includes(carrierGroup)) return false;
 
-      if (row.monthly_cost > monthlyLimit) return false;
-      if (row.messaging_rate > messagingLimit) return false;
+      if (enforceCostCaps && row.monthly_cost > monthlyLimit) return false;
+      if (enforceCostCaps && row.messaging_rate > messagingLimit) return false;
 
       if (row.premium === true || row.is_premium === true) return false;
       if (row.features.some((f) => f === "premium_routing" || f === "toll_free")) return false;
@@ -1028,33 +1032,41 @@ router.get(
       const hasUSAreaCode = isUS && areaCode && /^\d{3}$/.test(areaCode);
       const numericSearchPattern = normalizeDigits(searchPattern);
       const { monthlyLimit, messagingLimit } = getNumberCostLimits(countryInfo?.code || "US");
+      const enforceCostCaps = isUS || ENFORCE_NON_US_COST_CAPS;
 
-      // Multi-pass strategy:
-      // 1) Voice+SMS (strictest)
-      // 2) Voice only (common for some international inventories)
-      // 3) No feature filter (broad fallback)
-      const baseAttemptFilters = [
-        {
-          country_code: normalizedCountryCode,
-          features: ["voice", "sms"],
-          quickship: true,
-          reservable: true
-        },
-        {
-          country_code: normalizedCountryCode,
-          features: ["voice"],
-          quickship: true,
-          reservable: true
-        },
-        {
-          country_code: normalizedCountryCode,
-          quickship: true,
-          reservable: true
-        },
-        { country_code: normalizedCountryCode, features: ["voice", "sms"] },
-        { country_code: normalizedCountryCode, features: ["voice"] },
-        { country_code: normalizedCountryCode }
+      // Multi-pass strategy with broad country/type coverage.
+      const phoneTypeVariants = isUS
+        ? [undefined, "local"]
+        : [undefined, "local", "mobile", "national", "toll_free"];
+      const featureVariants = [
+        ["voice", "sms"],
+        ["voice"],
+        undefined
       ];
+      const shippingVariants = [
+        { quickship: true, reservable: true },
+        { quickship: true },
+        {}
+      ];
+
+      const baseAttemptFilters = [];
+      for (const ship of shippingVariants) {
+        for (const phoneType of phoneTypeVariants) {
+          for (const features of featureVariants) {
+            const filter = {
+              country_code: normalizedCountryCode,
+              ...ship
+            };
+            if (phoneType) {
+              filter.phone_number_type = phoneType;
+            }
+            if (features) {
+              filter.features = features;
+            }
+            baseAttemptFilters.push(filter);
+          }
+        }
+      }
 
       const pushResults = async (attemptFilter, pageSize = 200) => {
         const rows = await listAvailableNumbersSafe(telnyx, {
@@ -1189,14 +1201,14 @@ router.get(
 
           // Allow up to configured monthly cap.
           const monthlyCost = extractMonthlyCost(num);
-          if (monthlyCost > monthlyLimit) {
+          if (enforceCostCaps && monthlyCost > monthlyLimit) {
             console.log(`🚫 COST CONTROL: Blocked expensive number ${num.phone_number}: $${monthlyCost.toFixed(2)}/month (limit: $${monthlyLimit.toFixed(2)})`);
             return false;
           }
 
           // Allow messaging rates up to configured cap.
           const messagingRate = extractMessagingRate(num);
-          if (messagingRate > messagingLimit) {
+          if (enforceCostCaps && messagingRate > messagingLimit) {
             console.log(`🚫 COST CONTROL: Blocked number with high messaging rate ${num.phone_number}: $${messagingRate.toFixed(4)}/msg (limit: $${messagingLimit.toFixed(4)})`);
             return false;
           }
@@ -1324,6 +1336,8 @@ router.post(
         });
       }
       const { monthlyLimit, messagingLimit } = getNumberCostLimits(countryInfo.code);
+      const enforceCostCaps =
+        String(countryInfo.code || "US").toUpperCase() === "US" || ENFORCE_NON_US_COST_CAPS;
 
       let validatedNumber = null;
       let validatedCarrierGroup = null;
@@ -1434,7 +1448,7 @@ router.post(
 
         // Check monthly cost - CRITICAL
         validatedMonthlyCost = extractMonthlyCost(validatedNumber);
-        if (validatedMonthlyCost > monthlyLimit) {
+        if (enforceCostCaps && validatedMonthlyCost > monthlyLimit) {
           return res.status(403).json({ 
             error: `Number not eligible: Monthly cost ($${validatedMonthlyCost.toFixed(2)}) exceeds $${monthlyLimit.toFixed(2)} limit` 
           });
@@ -1442,7 +1456,7 @@ router.post(
 
         // Check messaging rate - CRITICAL
         validatedMessagingRate = extractMessagingRate(validatedNumber);
-        if (validatedMessagingRate > messagingLimit) {
+        if (enforceCostCaps && validatedMessagingRate > messagingLimit) {
           return res.status(403).json({ 
             error: `Number not eligible: Messaging rate ($${validatedMessagingRate.toFixed(4)}) exceeds $${messagingLimit.toFixed(4)} limit` 
           });
@@ -1527,7 +1541,10 @@ router.post(
         validatedCarrierGroup;
       validatedMonthlyCost = extractMonthlyCost(validatedNumber);
       validatedMessagingRate = extractMessagingRate(validatedNumber);
-      if (validatedMonthlyCost > monthlyLimit || validatedMessagingRate > messagingLimit) {
+      if (
+        enforceCostCaps &&
+        (validatedMonthlyCost > monthlyLimit || validatedMessagingRate > messagingLimit)
+      ) {
         return res.status(409).json({
           error:
             "Selected number changed in provider inventory and is no longer eligible. Please refresh and choose again."
