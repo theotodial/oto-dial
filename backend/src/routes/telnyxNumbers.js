@@ -18,10 +18,10 @@ const MAX_MESSAGING_RATE_NON_US = Number(
 const REGULATORY_CACHE_TTL_MS = Number(process.env.TELNYX_REGULATORY_CACHE_TTL_MS || 600000);
 const REQUIREMENT_GROUP_CACHE_TTL_MS = Number(process.env.TELNYX_REQUIREMENT_GROUP_CACHE_TTL_MS || 600000);
 const PURCHASEABLE_CHECK_MAX_CANDIDATES = Number(
-  process.env.TELNYX_PURCHASEABLE_CHECK_MAX_CANDIDATES || 120
+  process.env.TELNYX_PURCHASEABLE_CHECK_MAX_CANDIDATES || 300
 );
 const PURCHASEABLE_CHECK_BATCH_SIZE = Number(
-  process.env.TELNYX_PURCHASEABLE_CHECK_BATCH_SIZE || 8
+  process.env.TELNYX_PURCHASEABLE_CHECK_BATCH_SIZE || 12
 );
 
 const regulatoryProbeCache = new Map();
@@ -172,8 +172,8 @@ function hasRegulatoryRequirementSignals(numberData = {}) {
 }
 
 function isInstantPurchasableNumber(numberData = {}) {
-  // Keep this broad for listing so countries don't get fully hidden.
-  // Regulatory readiness is handled later via requirement-group checks.
+  // Require predictable inventory behavior so users don't click numbers
+  // that are likely to fail immediately.
   if (numberData.best_effort === true) return false;
   if (numberData.quickship === false) return false;
   if (numberData.reservable === false) return false;
@@ -588,14 +588,9 @@ async function isNumberPurchaseReady({
   const requiresRegulatoryBundle = requirementSignal || regulatoryProbe.hasRequirements;
 
   // If regulatory endpoint is unavailable, fallback to requirement-group availability
-  // for non-US/CA markets. In non-creating mode we stay optimistic so
-  // country listings are not emptied by transient API limitations.
+  // for non-US/CA markets.
   if (regulatoryProbe.lookupUnavailable && !requiresRegulatoryBundle) {
     if (!["US", "CA"].includes(normalizedCountry)) {
-      if (!allowRequirementGroupCreate) {
-        setCacheValue(purchasableNumberCache, cacheKey, true, 60000);
-        return true;
-      }
       const fallbackGroupId = await getApprovedRequirementGroupId({
         telnyx,
         countryCode: normalizedCountry,
@@ -1102,29 +1097,17 @@ router.get(
         // Sort by monthly cost (cheapest first)
         .sort((a, b) => a.monthly_cost - b.monthly_cost);
 
-      let filteredNumbers = await selectPurchaseReadyNumbers({
+      const filteredNumbers = await selectPurchaseReadyNumbers({
         telnyx,
         countryCode: countryInfo.code,
         candidates: candidateNumbers,
         limit: 50,
-        allowRequirementGroupCreate: false
+        allowRequirementGroupCreate: true
       });
 
-      // If strict precheck produced nothing, retry with requirement-group creation enabled.
-      if (!filteredNumbers.length && candidateNumbers.length) {
-        filteredNumbers = await selectPurchaseReadyNumbers({
-          telnyx,
-          countryCode: countryInfo.code,
-          candidates: candidateNumbers,
-          limit: 50,
-          allowRequirementGroupCreate: true
-        });
-      }
-
-      // Final fallback: never blank out the UI entirely.
-      if (!filteredNumbers.length && candidateNumbers.length) {
-        filteredNumbers = candidateNumbers.slice(0, 50);
-      }
+      console.log(
+        `📞 Number search ${countryInfo.code}: candidates=${candidateNumbers.length}, purchaseReady=${filteredNumbers.length}`
+      );
 
       res.json({ 
         success: true,
@@ -1351,6 +1334,19 @@ router.post(
         return res.status(409).json({
           error:
             "This number needs an approved regulatory profile before purchase. Please complete regulatory setup in Telnyx or choose another number."
+        });
+      }
+
+      const purchaseReady = await isNumberPurchaseReady({
+        telnyx,
+        countryCode: detectedCountryCode,
+        number: validatedNumber,
+        allowRequirementGroupCreate: true
+      });
+      if (!purchaseReady) {
+        return res.status(409).json({
+          error:
+            "This number is currently not purchase-ready in provider inventory. Please refresh and choose another number."
         });
       }
 
