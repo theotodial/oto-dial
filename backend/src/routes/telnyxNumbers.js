@@ -125,16 +125,70 @@ function dedupeNumbersByPhone(rawNumbers = []) {
 }
 
 async function listAvailableNumbersSafe(telnyx, { filter, size = 200 }) {
+  const normalizedFilter = {
+    ...(filter || {}),
+    limit: Math.max(1, Number(size || 200))
+  };
+
   try {
     const response = await telnyx.availablePhoneNumbers.list({
-      filter,
-      page: { size }
+      filter: normalizedFilter
     });
     return response?.data || [];
   } catch (err) {
-    console.warn("Available number lookup failed:", err.message);
-    return [];
+    // Backward-compatible fallback for API variants accepting page params.
+    try {
+      const response = await telnyx.availablePhoneNumbers.list({
+        filter: filter || {},
+        page: { size: Math.max(1, Number(size || 200)) }
+      });
+      return response?.data || [];
+    } catch (fallbackErr) {
+      console.warn("Available number lookup failed:", extractTelnyxErrorMessage(fallbackErr));
+      return [];
+    }
   }
+}
+
+function buildPhoneFilterVariants(requestedDigits = "") {
+  const suffixes = Array.from(
+    new Set([
+      requestedDigits,
+      requestedDigits.slice(-10),
+      requestedDigits.slice(-8),
+      requestedDigits.slice(-6)
+    ].filter((value) => value && value.length >= 4))
+  );
+
+  return suffixes.map((suffix) => ({
+    phone_number: { contains: suffix }
+  }));
+}
+
+async function listCountryWideCandidates(telnyx, countryCode) {
+  const filters = [
+    { country_code: countryCode, features: ["voice", "sms"], quickship: true, reservable: true },
+    { country_code: countryCode, features: ["voice"], quickship: true, reservable: true },
+    { country_code: countryCode, quickship: true },
+    { country_code: countryCode, features: ["voice", "sms"] },
+    { country_code: countryCode, features: ["voice"] },
+    { country_code: countryCode }
+  ];
+
+  let rows = [];
+  for (const filter of filters) {
+    const chunk = await listAvailableNumbersSafe(telnyx, {
+      filter,
+      size: 500
+    });
+    if (chunk.length) {
+      rows = dedupeNumbersByPhone([...rows, ...chunk]);
+    }
+    if (rows.length >= 500) {
+      break;
+    }
+  }
+  return rows;
 }
 
 function hasMeaningfulValue(value) {
@@ -197,6 +251,9 @@ function isAllowedNumberType(numberType, countryCode = "US") {
     ...commonAllowed,
     "mobile",
     "national",
+    "toll_free",
+    "toll-free",
+    "toll free",
     "fixed_line",
     "fixed line",
     "fixedline"
@@ -363,45 +420,37 @@ async function createNumberOrderWithFallback(telnyx, phoneNumber, options = {}) 
 async function lookupNumberCandidateForPurchase({
   telnyx,
   countryCode,
-  phoneNumber,
-  maxPages = 8,
-  pageSize = 250
+  phoneNumber
 }) {
   const requestedDigits = normalizeDigits(phoneNumber);
   if (!requestedDigits) return null;
 
+  const phoneFilterVariants = buildPhoneFilterVariants(requestedDigits);
   const exactAttempts = [
-    { country_code: countryCode, phone_number: phoneNumber },
-    { phone_number: phoneNumber }
+    ...phoneFilterVariants.map((phoneFilter) => ({
+      country_code: countryCode,
+      ...phoneFilter
+    })),
+    ...phoneFilterVariants
   ];
 
   for (const filter of exactAttempts) {
-    const exactRows = await listAvailableNumbersSafe(telnyx, { filter, size: 50 });
+    const exactRows = await listAvailableNumbersSafe(telnyx, { filter, size: 500 });
+    if (!exactRows.length) continue;
     const exactMatch = exactRows.find(
       (item) => normalizeDigits(item?.phone_number) === requestedDigits
     );
-    if (exactMatch) return exactMatch;
+    if (exactMatch) {
+      return exactMatch;
+    }
   }
 
-  // Fallback: paginate country inventory and match locally.
-  for (let page = 1; page <= maxPages; page += 1) {
-    try {
-      const response = await telnyx.availablePhoneNumbers.list({
-        filter: { country_code: countryCode },
-        page: { size: pageSize, number: page }
-      });
-      const rows = response?.data || [];
-      const matched = rows.find(
-        (item) => normalizeDigits(item?.phone_number) === requestedDigits
-      );
-      if (matched) return matched;
-      if (!rows.length || rows.length < pageSize) {
-        break;
-      }
-    } catch (err) {
-      console.warn("Paged number lookup failed:", extractTelnyxErrorMessage(err));
-      break;
-    }
+  const countryRows = await listCountryWideCandidates(telnyx, countryCode);
+  const countryMatch = countryRows.find(
+    (item) => normalizeDigits(item?.phone_number) === requestedDigits
+  );
+  if (countryMatch) {
+    return countryMatch;
   }
 
   return null;
@@ -588,21 +637,9 @@ async function isNumberPurchaseReady({
   const requirementSignal = hasRegulatoryRequirementSignals(number);
   const requiresRegulatoryBundle = requirementSignal || regulatoryProbe.hasRequirements;
 
-  // If regulatory endpoint is unavailable, fallback to requirement-group availability
-  // for non-US/CA markets.
+  // If regulatory endpoint is unavailable and no explicit requirement signal exists,
+  // do not block purchase readiness at this stage.
   if (regulatoryProbe.lookupUnavailable && !requiresRegulatoryBundle) {
-    if (!["US", "CA"].includes(normalizedCountry)) {
-      const fallbackGroupId = await getApprovedRequirementGroupId({
-        telnyx,
-        countryCode: normalizedCountry,
-        numberType,
-        allowCreate: allowRequirementGroupCreate
-      });
-      const ok = Boolean(fallbackGroupId);
-      setCacheValue(purchasableNumberCache, cacheKey, ok, 120000);
-      return ok;
-    }
-
     setCacheValue(purchasableNumberCache, cacheKey, true, 120000);
     return true;
   }
@@ -709,24 +746,7 @@ async function findAlternativePurchaseNumber({
   const { monthlyLimit, messagingLimit } = getNumberCostLimits(normalizedCountry);
   const excludeDigits = normalizeDigits(excludePhoneNumber);
 
-  const searchFilters = [
-    { country_code: normalizedCountry, features: ["voice", "sms"], quickship: true, reservable: true },
-    { country_code: normalizedCountry, features: ["voice"], quickship: true, reservable: true },
-    { country_code: normalizedCountry, features: ["voice", "sms"] },
-    { country_code: normalizedCountry, features: ["voice"] },
-    { country_code: normalizedCountry }
-  ];
-
-  let rawCandidates = [];
-  for (const filter of searchFilters) {
-    const rows = await listAvailableNumbersSafe(telnyx, { filter, size: 250 });
-    if (rows.length) {
-      rawCandidates = dedupeNumbersByPhone([...rawCandidates, ...rows]);
-    }
-    if (rawCandidates.length >= 250) {
-      break;
-    }
-  }
+  const rawCandidates = await listCountryWideCandidates(telnyx, normalizedCountry);
 
   if (!rawCandidates.length) return null;
 
@@ -1112,8 +1132,14 @@ router.get(
 
           // No toll-free numbers (check various field names)
           const numberType = extractNumberType(num);
-          if (numberType === 'toll-free' || numberType === 'toll_free' || 
-              num.toll_free === true || num.is_toll_free === true) {
+          const isTollFreeType =
+            numberType === "toll-free" ||
+            numberType === "toll_free" ||
+            numberType === "toll free" ||
+            num.toll_free === true ||
+            num.is_toll_free === true;
+          const allowTollFree = String(countryInfo.code || "US").toUpperCase() !== "US";
+          if (!allowTollFree && isTollFreeType) {
             return false;
           }
 
@@ -1134,7 +1160,11 @@ router.get(
                               num.carrier_group || 
                               num.carrier?.carrier_group ||
                               num.region_information?.carrier_group;
-          if (carrierGroup && !['A', 'B', 'a', 'b'].includes(String(carrierGroup).toUpperCase())) {
+          if (
+            String(countryInfo.code || "US").toUpperCase() === "US" &&
+            carrierGroup &&
+            !["A", "B", "a", "b"].includes(String(carrierGroup).toUpperCase())
+          ) {
             // Only block if explicitly C or higher
             const groupUpper = String(carrierGroup).toUpperCase();
             if (['C', 'D', 'E', 'F', 'G', 'H'].includes(groupUpper)) {
@@ -1144,7 +1174,13 @@ router.get(
 
           // RELAXED: Only block explicit premium features
           const features = extractFeatureNames(num);
-          if (features.some((feature) => feature === "premium_routing" || feature === "toll_free")) {
+          if (
+            features.some(
+              (feature) =>
+                feature === "premium_routing" ||
+                (!allowTollFree && (feature === "toll_free" || feature === "toll-free"))
+            )
+          ) {
             return false;
           }
           if (num.premium === true || num.is_premium === true) {
@@ -1333,8 +1369,14 @@ router.post(
         // No toll-free numbers
         const numberType = extractNumberType(validatedNumber);
         detectedNumberType = numberType;
-        if (numberType === 'toll-free' || numberType === 'toll_free' || 
-            validatedNumber.toll_free === true || validatedNumber.is_toll_free === true) {
+        const isTollFreeType =
+          numberType === "toll-free" ||
+          numberType === "toll_free" ||
+          numberType === "toll free" ||
+          validatedNumber.toll_free === true ||
+          validatedNumber.is_toll_free === true;
+        const allowTollFree = String(countryInfo.code || "US").toUpperCase() !== "US";
+        if (!allowTollFree && isTollFreeType) {
           return res.status(403).json({ 
             error: "Number not eligible: Toll-free numbers not allowed" 
           });
@@ -1362,7 +1404,7 @@ router.post(
           validatedNumber.carrier?.carrier_group ||
           normalizeRegionInformation(validatedNumber.region_information)?.carrier_group ||
           null;
-        if (validatedCarrierGroup) {
+        if (validatedCarrierGroup && String(countryInfo.code || "US").toUpperCase() === "US") {
           const groupUpper = String(validatedCarrierGroup).toUpperCase();
           if (["C", "D", "E", "F", "G", "H"].includes(groupUpper)) {
             return res.status(403).json({ 
@@ -1373,7 +1415,13 @@ router.post(
 
         // No explicit premium features
         const features = extractFeatureNames(validatedNumber);
-        if (features.some((feature) => feature === "premium_routing" || feature === "toll_free")) {
+        if (
+          features.some(
+            (feature) =>
+              feature === "premium_routing" ||
+              (!allowTollFree && (feature === "toll_free" || feature === "toll-free"))
+          )
+        ) {
           return res.status(403).json({
             error: "Number not eligible: Premium features not allowed"
           });
@@ -1418,9 +1466,7 @@ router.post(
         phoneNumber
       });
       const requiresRegulatoryBundle =
-        regulatoryProbe.hasRequirements ||
-        hasRegulatoryRequirementSignals(validatedNumber) ||
-        (regulatoryProbe.lookupUnavailable && !["US", "CA"].includes(String(detectedCountryCode || "").toUpperCase()));
+        regulatoryProbe.hasRequirements || hasRegulatoryRequirementSignals(validatedNumber);
 
       if (requiresRegulatoryBundle && !selectedRequirementGroupId) {
         selectedRequirementGroupId = await getApprovedRequirementGroupId({
@@ -1530,12 +1576,66 @@ router.post(
       const orderPhoneNumber = normalizePhoneNumberForOrder(
         validatedNumber?.phone_number || phoneNumber
       );
-      const orderResponse = await createNumberOrderWithFallback(telnyx, orderPhoneNumber, {
-        connectionId: process.env.TELNYX_CONNECTION_ID || null,
-        messagingProfileId: user.messagingProfileId || null,
-        requirementGroupId: selectedRequirementGroupId
-      });
-      const orderSettlement = await waitForNumberOrderSettlement(telnyx, orderResponse);
+      phoneNumber = orderPhoneNumber;
+      const requiresGroupFromMessage = (message) =>
+        /regulatory|requirement|bundle|compliance|document|requirements are not met/i.test(
+          String(message || "")
+        );
+
+      const placeAndSettleOrder = async () => {
+        const orderResponse = await createNumberOrderWithFallback(telnyx, orderPhoneNumber, {
+          connectionId: process.env.TELNYX_CONNECTION_ID || null,
+          messagingProfileId: user.messagingProfileId || null,
+          requirementGroupId: selectedRequirementGroupId
+        });
+        const settlement = await waitForNumberOrderSettlement(telnyx, orderResponse);
+        return { orderResponse, settlement };
+      };
+
+      let orderAttempt = null;
+      let firstAttemptErrorMessage = "";
+      try {
+        orderAttempt = await placeAndSettleOrder();
+      } catch (orderErr) {
+        firstAttemptErrorMessage = extractTelnyxErrorMessage(orderErr);
+      }
+
+      const firstAttemptFailed =
+        !orderAttempt || orderAttempt.settlement?.state === "failure";
+      const firstAttemptFailureMessage =
+        firstAttemptErrorMessage || orderAttempt?.settlement?.failure || "";
+
+      if (firstAttemptFailed && requiresGroupFromMessage(firstAttemptFailureMessage)) {
+        if (!selectedRequirementGroupId) {
+          selectedRequirementGroupId = await getApprovedRequirementGroupId({
+            telnyx,
+            countryCode: detectedCountryCode,
+            numberType: detectedNumberType,
+            allowCreate: true
+          });
+        }
+        if (selectedRequirementGroupId) {
+          try {
+            orderAttempt = await placeAndSettleOrder();
+          } catch (retryErr) {
+            return res.status(409).json({
+              error:
+                extractTelnyxErrorMessage(retryErr) ||
+                "Number order failed on provider side. Please pick another available number."
+            });
+          }
+        }
+      }
+
+      if (!orderAttempt) {
+        return res.status(409).json({
+          error:
+            firstAttemptFailureMessage ||
+            "Number order failed on provider side. Please pick another available number."
+        });
+      }
+
+      const orderSettlement = orderAttempt.settlement;
       if (orderSettlement.state === "failure") {
         return res.status(409).json({
           error:
@@ -1548,7 +1648,8 @@ router.post(
           "Number order is still processing on provider side. It may take a few moments to fully activate."
         );
       }
-      const order = orderSettlement.order || orderResponse?.data || orderResponse;
+      const order =
+        orderSettlement.order || orderAttempt.orderResponse?.data || orderAttempt.orderResponse;
 
       // Get number cost details and region information from Telnyx
       let finalMonthlyCost = validatedMonthlyCost;
@@ -1560,7 +1661,7 @@ router.post(
       let city = null;
       
       try {
-        const numDetails = await telnyx.phoneNumbers.retrieve(phoneNumber);
+        const numDetails = await telnyx.phoneNumbers.retrieve(orderPhoneNumber);
         finalMonthlyCost = numDetails.data.monthly_cost || numDetails.data.monthly_rate || validatedMonthlyCost;
         oneTimeFees = numDetails.data.one_time_cost || 0;
         finalCarrierGroup = numDetails.data.carrier?.group || numDetails.data.carrier_group || validatedCarrierGroup;
