@@ -2,6 +2,7 @@ import { useMemo, useRef } from 'react';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import './RichTextEditor.css';
+import API from '../../api';
 
 function RichTextEditor({ value, onChange, placeholder = "Start writing..." }) {
   const quillRef = useRef(null);
@@ -16,17 +17,49 @@ function RichTextEditor({ value, onChange, placeholder = "Start writing..." }) {
     input.onchange = async () => {
       const file = input.files[0];
       if (file) {
-        // For now, we'll use a data URL or prompt for URL
-        // In production, you'd upload to your server
-        const reader = new FileReader();
-        reader.onload = () => {
-          const imageUrl = reader.result;
-          const quill = quillRef.current?.getEditor();
+        if (!file.type.startsWith('image/')) {
+          alert('Only image files are allowed.');
+          return;
+        }
+
+        const maxBytes = 8 * 1024 * 1024; // 8MB
+        if (file.size > maxBytes) {
+          alert('Image is too large. Maximum allowed size is 8MB.');
+          return;
+        }
+
+        const quill = quillRef.current?.getEditor();
+        if (!quill) {
+          alert('Editor is not ready. Please try again.');
+          return;
+        }
+
+        try {
+          const imageData = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('Failed to read image file'));
+            reader.readAsDataURL(file);
+          });
+
+          const response = await API.post('/api/blog/admin/upload-image', {
+            imageData,
+            fileName: file.name
+          });
+
+          if (response.error || !response.data?.success || !response.data?.imageUrl) {
+            const errorMsg = response.error || response.data?.error || 'Failed to upload image';
+            alert(`Image upload failed: ${errorMsg}`);
+            return;
+          }
+
           const range = quill.getSelection(true);
-          quill.insertEmbed(range.index, 'image', imageUrl);
-          quill.setSelection(range.index + 1);
-        };
-        reader.readAsDataURL(file);
+          const insertAt = range?.index ?? quill.getLength();
+          quill.insertEmbed(insertAt, 'image', response.data.imageUrl);
+          quill.setSelection(insertAt + 1);
+        } catch (error) {
+          alert(error?.message || 'Failed to upload image');
+        }
       }
     };
   };

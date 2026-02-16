@@ -1,10 +1,18 @@
 import express from "express";
 import Blog from "../models/Blog.js";
-import User from "../models/User.js";
 import authenticateUser from "../middleware/authenticateUser.js";
 import requireAdmin from "../middleware/requireAdmin.js";
+import { promises as fs } from "fs";
+import path from "path";
+import crypto from "crypto";
 
 const router = express.Router();
+const BLOG_IMAGE_MAX_BYTES = 8 * 1024 * 1024; // 8MB
+
+function getPublicAssetUrl(relativePath) {
+  const backendUrl = String(process.env.BACKEND_URL || "").trim().replace(/\/$/, "");
+  return backendUrl ? `${backendUrl}${relativePath}` : relativePath;
+}
 
 // Public routes - Get all published blogs
 router.get("/", async (req, res) => {
@@ -161,6 +169,77 @@ router.get("/admin/:id", authenticateUser, requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Error fetching blog:", error);
     res.status(500).json({ success: false, error: "Failed to fetch blog" });
+  }
+});
+
+/**
+ * POST /api/blog/admin/upload-image
+ * Upload blog image and return a hosted URL (prevents large inline base64 content).
+ */
+router.post("/admin/upload-image", authenticateUser, requireAdmin, async (req, res) => {
+  try {
+    const { imageData, fileName } = req.body || {};
+
+    if (!imageData || typeof imageData !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: "imageData is required"
+      });
+    }
+
+    const match = imageData.match(/^data:image\/(png|jpe?g|webp|gif);base64,(.+)$/i);
+    if (!match) {
+      return res.status(400).json({
+        success: false,
+        error: "Only PNG, JPG, JPEG, WEBP, and GIF images are allowed"
+      });
+    }
+
+    const [, rawExt, base64Payload] = match;
+    const buffer = Buffer.from(base64Payload, "base64");
+    if (!buffer.length) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid image payload"
+      });
+    }
+
+    if (buffer.length > BLOG_IMAGE_MAX_BYTES) {
+      return res.status(400).json({
+        success: false,
+        error: "Image exceeds 8MB limit"
+      });
+    }
+
+    const ext = rawExt.toLowerCase() === "jpeg" ? "jpg" : rawExt.toLowerCase();
+    const safeName = String(fileName || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, "-")
+      .replace(/-{2,}/g, "-")
+      .replace(/(^-|-$)/g, "")
+      .slice(0, 40);
+
+    const uploadDir = path.join(process.cwd(), "uploads", "blog");
+    await fs.mkdir(uploadDir, { recursive: true });
+
+    const generatedName = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeName ? `-${safeName}` : ""}.${ext}`;
+    const fullPath = path.join(uploadDir, generatedName);
+    await fs.writeFile(fullPath, buffer);
+
+    const relativeUrl = `/uploads/blog/${generatedName}`;
+    const imageUrl = getPublicAssetUrl(relativeUrl);
+
+    return res.json({
+      success: true,
+      imageUrl,
+      sizeBytes: buffer.length
+    });
+  } catch (error) {
+    console.error("Error uploading blog image:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to upload image"
+    });
   }
 });
 

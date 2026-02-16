@@ -127,11 +127,74 @@ function AdminBlog() {
     e.preventDefault();
     setSaving(true);
     try {
+      const uploadInlineImagesToServer = async (htmlContent) => {
+        if (!htmlContent || typeof htmlContent !== 'string') return htmlContent;
+        const hasInlineDataImage = /data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(htmlContent);
+        if (!hasInlineDataImage) return htmlContent;
+
+        const dataUrlRegex = /src=(["'])(data:image\/(?:png|jpe?g|webp|gif);base64,[^"']+)\1/gi;
+        const replacementMap = new Map();
+        let match;
+        let imageIndex = 0;
+
+        while ((match = dataUrlRegex.exec(htmlContent)) !== null) {
+          const dataUrl = match[2];
+          if (replacementMap.has(dataUrl)) continue;
+
+          imageIndex += 1;
+          const uploadResponse = await API.post('/api/blog/admin/upload-image', {
+            imageData: dataUrl,
+            fileName: `inline-image-${imageIndex}`
+          });
+
+          if (uploadResponse.error || !uploadResponse.data?.success || !uploadResponse.data?.imageUrl) {
+            const errorMsg = uploadResponse.error || uploadResponse.data?.error || 'Failed to upload inline image';
+            throw new Error(errorMsg);
+          }
+
+          replacementMap.set(dataUrl, uploadResponse.data.imageUrl);
+        }
+
+        let normalizedHtml = htmlContent;
+        replacementMap.forEach((uploadedUrl, dataUrl) => {
+          normalizedHtml = normalizedHtml.split(dataUrl).join(uploadedUrl);
+        });
+        return normalizedHtml;
+      };
+
+      const uploadSingleInlineImageField = async (value, fileLabel) => {
+        if (!value || typeof value !== 'string') return value;
+        if (!/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(value)) return value;
+
+        const uploadResponse = await API.post('/api/blog/admin/upload-image', {
+          imageData: value,
+          fileName: fileLabel
+        });
+
+        if (uploadResponse.error || !uploadResponse.data?.success || !uploadResponse.data?.imageUrl) {
+          const errorMsg = uploadResponse.error || uploadResponse.data?.error || `Failed to upload ${fileLabel}`;
+          throw new Error(errorMsg);
+        }
+
+        return uploadResponse.data.imageUrl;
+      };
+
+      const normalizeBlogErrorMessage = (responseLike) => {
+        if (responseLike?.status === 413) {
+          return 'Blog content is too large. Use Media Library/Upload for images instead of embedding huge inline image data.';
+        }
+        return responseLike?.error || responseLike?.data?.error || 'Failed to save blog';
+      };
+
       const payload = {
         ...formData,
         metaKeywords: formData.metaKeywords.split(',').map(k => k.trim()).filter(k => k),
         tags: formData.tags.split(',').map(t => t.trim()).filter(t => t)
       };
+
+      payload.content = await uploadInlineImagesToServer(payload.content);
+      payload.featuredImage = await uploadSingleInlineImageField(payload.featuredImage, 'featured-image');
+      payload.ogImage = await uploadSingleInlineImageField(payload.ogImage, 'og-image');
 
       let response;
       if (isEdit) {
@@ -149,7 +212,7 @@ function AdminBlog() {
           navigate('/adminbobby');
           return;
         }
-        const errorMsg = response.error || response.data?.error || 'Failed to save blog';
+        const errorMsg = normalizeBlogErrorMessage(response);
         alert(`Error: ${errorMsg}`);
         return;
       }
@@ -179,7 +242,7 @@ function AdminBlog() {
           navigate('/adminbobby/blog');
         }
       } else {
-        const errorMsg = response.data?.error || response.error || 'Failed to save blog';
+        const errorMsg = normalizeBlogErrorMessage(response);
         console.error('Blog save failed:', response);
         alert(`Error: ${errorMsg}`);
       }
@@ -190,7 +253,9 @@ function AdminBlog() {
         localStorage.removeItem('adminToken');
         navigate('/adminbobby');
       } else {
-        const errorMessage = err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to save blog';
+        const errorMessage = err.response?.status === 413
+          ? 'Blog content is too large. Use Media Library/Upload for images instead of embedding huge inline image data.'
+          : (err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to save blog');
         alert(`Error: ${errorMessage}`);
       }
     } finally {
