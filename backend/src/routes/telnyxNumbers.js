@@ -1251,6 +1251,7 @@ router.post(
         return res.status(400).json({ error: "Phone number required" });
       }
       let phoneNumber = normalizePhoneNumberForOrder(requestedPhoneNumber);
+      const originalRequestedPhoneNumber = phoneNumber;
 
       const telnyx = getTelnyxClient();
       if (!telnyx) {
@@ -1436,36 +1437,37 @@ router.post(
         validatedNumber?.requirements_group_id ||
         null;
 
-      const regulatoryProbe = await getRegulatoryRequirementsForNumber({
-        telnyx,
-        phoneNumber
-      });
-      const requiresRegulatoryBundle =
-        regulatoryProbe.hasRequirements || hasRegulatoryRequirementSignals(validatedNumber);
+      let candidateResolved = false;
+      const attemptedPhones = new Set([normalizePhoneNumberForOrder(phoneNumber)]);
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const regulatoryProbe = await getRegulatoryRequirementsForNumber({
+          telnyx,
+          phoneNumber
+        });
+        const requiresRegulatoryBundle =
+          regulatoryProbe.hasRequirements || hasRegulatoryRequirementSignals(validatedNumber);
 
-      if (requiresRegulatoryBundle && !selectedRequirementGroupId) {
-        selectedRequirementGroupId = await getApprovedRequirementGroupId({
+        if (requiresRegulatoryBundle && !selectedRequirementGroupId) {
+          selectedRequirementGroupId = await getApprovedRequirementGroupId({
+            telnyx,
+            countryCode: detectedCountryCode,
+            numberType: detectedNumberType,
+            allowCreate: true
+          });
+        }
+
+        const purchaseReady = await isNumberPurchaseReady({
           telnyx,
           countryCode: detectedCountryCode,
-          numberType: detectedNumberType,
-          allowCreate: true
+          number: validatedNumber,
+          allowRequirementGroupCreate: true
         });
-      }
 
-      if (requiresRegulatoryBundle && !selectedRequirementGroupId) {
-        return res.status(409).json({
-          error:
-            "This number needs an approved regulatory profile before purchase. Please complete regulatory setup in Telnyx or choose another number."
-        });
-      }
+        if ((!requiresRegulatoryBundle || selectedRequirementGroupId) && purchaseReady) {
+          candidateResolved = true;
+          break;
+        }
 
-      const purchaseReady = await isNumberPurchaseReady({
-        telnyx,
-        countryCode: detectedCountryCode,
-        number: validatedNumber,
-        allowRequirementGroupCreate: true
-      });
-      if (!purchaseReady) {
         const alternative = await findAlternativePurchaseNumber({
           telnyx,
           countryCode: detectedCountryCode,
@@ -1473,24 +1475,37 @@ router.post(
           limit: 1
         });
         if (!alternative) {
+          if (requiresRegulatoryBundle && !selectedRequirementGroupId) {
+            return res.status(409).json({
+              error:
+                "This number needs an approved regulatory profile before purchase. Please complete regulatory setup in Telnyx or choose another number."
+            });
+          }
           return res.status(409).json({
             error:
               "This number is currently not purchase-ready in provider inventory. Please refresh and choose another number."
           });
         }
 
-        phoneNumber = normalizePhoneNumberForOrder(alternative.phone_number);
+        const nextPhone = normalizePhoneNumberForOrder(alternative.phone_number);
+        if (attemptedPhones.has(nextPhone)) {
+          break;
+        }
+        attemptedPhones.add(nextPhone);
+        phoneNumber = nextPhone;
         validatedNumber = alternative;
         detectedNumberType = extractNumberType(alternative);
         selectedRequirementGroupId =
           alternative.requirement_group_id ||
           alternative.requirements_group_id ||
-          (await getApprovedRequirementGroupId({
-            telnyx,
-            countryCode: detectedCountryCode,
-            numberType: detectedNumberType,
-            allowCreate: true
-          }));
+          null;
+      }
+
+      if (!candidateResolved) {
+        return res.status(409).json({
+          error:
+            "Unable to find a purchase-ready number in this country at the moment. Please try again shortly."
+        });
       }
 
       // Recompute pricing snapshot if selected number was replaced.
@@ -1543,6 +1558,11 @@ router.post(
         ? `${process.env.BACKEND_URL}/api/webhooks/telnyx/sms`
         : null;
       const provisioningWarnings = [];
+      if (normalizeDigits(phoneNumber) !== normalizeDigits(originalRequestedPhoneNumber)) {
+        provisioningWarnings.push(
+          `Selected number became unavailable; purchasing closest available alternative ${phoneNumber}.`
+        );
+      }
 
       // PURCHASE NUMBER (ONLY AFTER ALL VALIDATIONS PASSED)
       console.log(`✅ COST CONTROL: Number ${phoneNumber} passed all validations, purchasing...`);
