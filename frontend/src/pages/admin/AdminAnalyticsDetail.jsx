@@ -7,6 +7,20 @@ import {
 } from 'recharts';
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6'];
+const REALTIME_WINDOW_OPTIONS = [
+  { value: '15m', label: 'Last 15m' },
+  { value: '30m', label: 'Last 30m' },
+  { value: '45m', label: 'Last 45m' },
+  { value: '1h', label: 'Last 1h' },
+  { value: '2h', label: 'Last 2h' },
+  { value: '4h', label: 'Last 4h' },
+  { value: '6h', label: 'Last 6h' },
+  { value: '8h', label: 'Last 8h' },
+  { value: '12h', label: 'Last 12h' },
+  { value: '24h', label: 'Last 24h' },
+  { value: '28h', label: 'Last 28h' },
+  { value: '72h', label: 'Last 72h' }
+];
 
 function AdminAnalyticsDetail() {
   const { category } = useParams();
@@ -15,6 +29,7 @@ function AdminAnalyticsDetail() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(location.state?.data || null);
   const [meta, setMeta] = useState(location.state?.meta || null);
+  const [realtimeWindow, setRealtimeWindow] = useState(location.state?.realtimeWindow || '15m');
   const [dateRange, setDateRange] = useState(
     location.state?.dateRange || {
       startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -23,12 +38,8 @@ function AdminAnalyticsDetail() {
   );
 
   useEffect(() => {
-    if (!data) {
-      fetchAnalytics();
-    } else {
-      setLoading(false);
-    }
-  }, [dateRange]);
+    fetchAnalytics();
+  }, [dateRange, realtimeWindow]);
 
   const fetchAnalytics = async () => {
     try {
@@ -36,6 +47,7 @@ function AdminAnalyticsDetail() {
       const params = new URLSearchParams();
       if (dateRange.startDate) params.append('startDate', dateRange.startDate);
       if (dateRange.endDate) params.append('endDate', dateRange.endDate);
+      params.append('realtimeWindow', realtimeWindow);
       const adminToken = localStorage.getItem('adminToken');
 
       const response = await API.get(`/api/analytics/admin/dashboard?${params.toString()}`, {
@@ -87,6 +99,13 @@ function AdminAnalyticsDetail() {
     return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
   };
 
+  const formatDateTime = (value) => {
+    if (!value) return 'N/A';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'N/A';
+    return parsed.toLocaleString();
+  };
+
   if (loading) {
     return (
       <div className="p-6">
@@ -123,6 +142,29 @@ function AdminAnalyticsDetail() {
   const pages = data?.pages || [];
   const dailyVisitors = data?.dailyVisitors || [];
   const topIPs = data?.topIPs || [];
+  const realtime = data?.realtime || {};
+  const realtimeSummary = realtime?.summary || {
+    windowKey: realtimeWindow,
+    totalUsers: 0,
+    activeNow: 0,
+    signedUpUsers: 0,
+    subscribedUsers: 0,
+    totalTimeSpent: 0,
+    deviceBreakdown: [],
+    sourceBreakdown: []
+  };
+  const realtimeUsers = realtime?.users || [];
+  const trafficSources = data?.trafficSources || {
+    channels: [],
+    topSources: [],
+    summary: {
+      totalVisits: 0,
+      totalUniqueVisitors: 0,
+      totalSignUps: 0,
+      totalSubscriptions: 0,
+      byChannel: {}
+    }
+  };
 
   const renderDetailContent = () => {
     switch (category) {
@@ -434,6 +476,239 @@ function AdminAnalyticsDetail() {
           </div>
         );
 
+      case 'realtime':
+        return (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg p-6">
+                <div className="text-sm text-emerald-600 dark:text-emerald-400 mb-1">Users in Window</div>
+                <div className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">
+                  {(Number(realtimeSummary.totalUsers) || 0).toLocaleString()}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                  Window: {realtimeSummary.windowKey || realtimeWindow}
+                </div>
+              </div>
+              <div className="bg-cyan-50 dark:bg-cyan-900/20 rounded-lg p-6">
+                <div className="text-sm text-cyan-600 dark:text-cyan-400 mb-1">Active Now (5m)</div>
+                <div className="text-3xl font-bold text-cyan-600 dark:text-cyan-400">
+                  {(Number(realtimeSummary.activeNow) || 0).toLocaleString()}
+                </div>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-6">
+                <div className="text-sm text-blue-600 dark:text-blue-400 mb-1">Conversions</div>
+                <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
+                  {(Number(realtimeSummary.signedUpUsers) || 0).toLocaleString()}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                  Signups + subscribers
+                </div>
+              </div>
+              <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-6">
+                <div className="text-sm text-indigo-600 dark:text-indigo-400 mb-1">Subscribers</div>
+                <div className="text-3xl font-bold text-indigo-600 dark:text-indigo-400">
+                  {(Number(realtimeSummary.subscribedUsers) || 0).toLocaleString()}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                  Total time spent: {formatTime(Number(realtimeSummary.totalTimeSpent) || 0)}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Device Breakdown</h3>
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={realtimeSummary.deviceBreakdown || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="device" />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#10b981" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Traffic Channel Breakdown</h3>
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={realtimeSummary.sourceBreakdown || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="channel" />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#06b6d4" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Realtime Users Detail</h3>
+              {realtimeUsers.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400">No users detected in the selected realtime window.</p>
+              ) : (
+                <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
+                  <table className="w-full">
+                    <thead className="sticky top-0 bg-gray-50 dark:bg-slate-700">
+                      <tr>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">User</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Device</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">IP</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Geo</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Time Spent</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Conversion</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Source</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Last Activity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {realtimeUsers.map((user, index) => (
+                        <tr key={`${user.sessionId || index}-${index}`} className="border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                          <td className="py-3 px-4 text-sm text-gray-900 dark:text-white">
+                            <div className="font-medium">{user.userEmail || user.userName || 'Anonymous'}</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">{user.sessionId || 'session'}</div>
+                          </td>
+                          <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300">
+                            <div>{user.device || 'unknown'}</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">{user.browser || 'unknown'} / {user.os || 'unknown'}</div>
+                          </td>
+                          <td className="py-3 px-4 text-sm font-mono text-gray-700 dark:text-gray-300">{user.ipAddress || 'unknown'}</td>
+                          <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300">
+                            {user.city && user.country ? `${user.city}, ${user.country}` : (user.country || 'Unknown')}
+                          </td>
+                          <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{formatTime(user.timeSpent || 0)}</td>
+                          <td className="py-3 px-4 text-sm">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              user.conversion === 'subscription'
+                                ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300'
+                                : user.conversion === 'signup'
+                                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                                  : 'bg-gray-100 text-gray-700 dark:bg-slate-700 dark:text-gray-300'
+                            }`}>
+                              {user.conversion || 'none'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300">
+                            <div className="capitalize">{user.sourceChannel || 'direct'}</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 break-all">{user.source || 'direct'}</div>
+                            {user.referrer && (
+                              <div className="text-xs text-gray-400 dark:text-gray-500 break-all mt-1">
+                                {user.referrer}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-sm text-gray-600 dark:text-gray-400">{formatDateTime(user.lastActivity)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+
+      case 'sources':
+        return (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg p-6">
+                <div className="text-sm text-emerald-600 dark:text-emerald-400 mb-1">Total Visits</div>
+                <div className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">
+                  {(trafficSources.summary?.totalVisits || 0).toLocaleString()}
+                </div>
+              </div>
+              <div className="bg-cyan-50 dark:bg-cyan-900/20 rounded-lg p-6">
+                <div className="text-sm text-cyan-600 dark:text-cyan-400 mb-1">Unique Visitors</div>
+                <div className="text-3xl font-bold text-cyan-600 dark:text-cyan-400">
+                  {(trafficSources.summary?.totalUniqueVisitors || 0).toLocaleString()}
+                </div>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-6">
+                <div className="text-sm text-blue-600 dark:text-blue-400 mb-1">Signups</div>
+                <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
+                  {(trafficSources.summary?.totalSignUps || 0).toLocaleString()}
+                </div>
+              </div>
+              <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-6">
+                <div className="text-sm text-indigo-600 dark:text-indigo-400 mb-1">Subscriptions</div>
+                <div className="text-3xl font-bold text-indigo-600 dark:text-indigo-400">
+                  {(trafficSources.summary?.totalSubscriptions || 0).toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Traffic Channels</h3>
+                <ResponsiveContainer width="100%" height={340}>
+                  <BarChart data={trafficSources.channels || []}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="channel" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="visits" fill="#10b981" name="Visits" />
+                    <Bar dataKey="uniqueVisitors" fill="#06b6d4" name="Unique Visitors" />
+                    <Bar dataKey="signUps" fill="#6366f1" name="Signups" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Channel Share</h3>
+                <ResponsiveContainer width="100%" height={340}>
+                  <PieChart>
+                    <Pie
+                      data={trafficSources.channels || []}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={({ channel, percent }) => `${channel}: ${(percent * 100).toFixed(1)}%`}
+                      outerRadius={120}
+                      dataKey="visits"
+                    >
+                      {(trafficSources.channels || []).map((entry, index) => (
+                        <Cell key={`source-cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Top Sources</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-200 dark:border-slate-700">
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Source</th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Channel</th>
+                      <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Visits</th>
+                      <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Unique</th>
+                      <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Signups</th>
+                      <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700 dark:text-gray-300">Conv. Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(trafficSources.topSources || []).map((source, index) => (
+                      <tr key={`${source.source}-${index}`} className="border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                        <td className="py-3 px-4 text-sm font-medium text-gray-900 dark:text-white break-all">{source.source || 'direct'}</td>
+                        <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300 capitalize">{source.channel || 'direct'}</td>
+                        <td className="py-3 px-4 text-right text-sm text-gray-900 dark:text-white">{(source.visits || 0).toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{(source.uniqueVisitors || 0).toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{(source.signUps || 0).toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{Number(source.conversionRate || 0).toFixed(2)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+
       default:
         return (
           <div className="text-center py-12">
@@ -451,7 +726,9 @@ function AdminAnalyticsDetail() {
       geographic: 'Geographic Data',
       devices: 'Device Analytics',
       pages: 'Page Performance',
-      visitors: 'Visitor Details'
+      visitors: 'Visitor Details',
+      realtime: 'Realtime Active Users',
+      sources: 'Traffic Sources'
     };
     return titles[category] || 'Analytics Detail';
   };
@@ -473,7 +750,20 @@ function AdminAnalyticsDetail() {
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Detailed analytics and insights</p>
           </div>
         </div>
-        <div className="flex gap-4">
+        <div className="flex gap-4 flex-wrap justify-end">
+          {category === 'realtime' && (
+            <select
+              value={realtimeWindow}
+              onChange={(e) => setRealtimeWindow(e.target.value)}
+              className="px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
+            >
+              {REALTIME_WINDOW_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          )}
           <input
             type="date"
             value={dateRange.startDate}

@@ -7,6 +7,20 @@ import {
 } from 'recharts';
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6'];
+const REALTIME_WINDOW_OPTIONS = [
+  { value: '15m', label: 'Last 15m' },
+  { value: '30m', label: 'Last 30m' },
+  { value: '45m', label: 'Last 45m' },
+  { value: '1h', label: 'Last 1h' },
+  { value: '2h', label: 'Last 2h' },
+  { value: '4h', label: 'Last 4h' },
+  { value: '6h', label: 'Last 6h' },
+  { value: '8h', label: 'Last 8h' },
+  { value: '12h', label: 'Last 12h' },
+  { value: '24h', label: 'Last 24h' },
+  { value: '28h', label: 'Last 28h' },
+  { value: '72h', label: 'Last 72h' }
+];
 
 // Chevron icon for expand/collapse
 const ChevronDownIcon = () => (
@@ -26,6 +40,7 @@ function AdminAnalytics() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [meta, setMeta] = useState(null);
+  const [realtimeWindow, setRealtimeWindow] = useState('15m');
   const [dateRange, setDateRange] = useState({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
@@ -33,7 +48,7 @@ function AdminAnalytics() {
 
   useEffect(() => {
     fetchAnalytics();
-  }, [dateRange]);
+  }, [dateRange, realtimeWindow]);
 
   const fetchAnalytics = async () => {
     try {
@@ -41,6 +56,7 @@ function AdminAnalytics() {
       const params = new URLSearchParams();
       if (dateRange.startDate) params.append('startDate', dateRange.startDate);
       if (dateRange.endDate) params.append('endDate', dateRange.endDate);
+      params.append('realtimeWindow', realtimeWindow);
       const adminToken = localStorage.getItem('adminToken');
 
       const response = await API.get(`/api/analytics/admin/dashboard?${params.toString()}`, {
@@ -93,7 +109,7 @@ function AdminAnalytics() {
 
   const handleCardClick = (cardId) => {
     navigate(`/adminbobby/analytics/${cardId}`, {
-      state: { data, dateRange, meta }
+      state: { data, dateRange, realtimeWindow, meta }
     });
   };
 
@@ -142,6 +158,16 @@ function AdminAnalytics() {
   const dailyVisitors = data?.dailyVisitors || [];
   const topIPs = data?.topIPs || [];
   const uniqueIpVisitors = Number(overview?.uniqueIpVisitors || 0);
+  const realtimeData = data?.realtime || {};
+  const realtimeSummary = realtimeData?.summary || {
+    totalUsers: 0,
+    activeNow: 0,
+    signedUpUsers: 0,
+    subscribedUsers: 0,
+    windowKey: realtimeWindow
+  };
+  const realtimePreviewUsers = (realtimeData?.users || []).slice(0, 3);
+  const trafficSources = data?.trafficSources || { channels: [], topSources: [], summary: {} };
 
   // Card component - navigates to detail page
   const MetricCard = ({ id, title, icon, value, subtitle, color, gradient }) => {
@@ -225,7 +251,18 @@ function AdminAnalytics() {
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Analytics Dashboard</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Track your audience and performance metrics</p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex gap-3 flex-wrap justify-end">
+          <select
+            value={realtimeWindow}
+            onChange={(e) => setRealtimeWindow(e.target.value)}
+            className="px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
+          >
+            {REALTIME_WINDOW_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
           <input
             type="date"
             value={dateRange.startDate}
@@ -238,6 +275,50 @@ function AdminAnalytics() {
             onChange={(e) => setDateRange(prev => ({ ...prev, endDate: e.target.value }))}
             className="px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
           />
+        </div>
+      </div>
+
+      <div className="mb-6">
+        <div
+          onClick={() => handleCardClick('realtime')}
+          className="bg-gradient-to-r from-emerald-50 to-cyan-50 dark:from-emerald-900/20 dark:to-cyan-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl shadow-sm hover:shadow-lg hover:scale-[1.01] transition-all duration-300 cursor-pointer p-6"
+        >
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Realtime Active Users ({realtimeSummary.windowKey || realtimeWindow})</p>
+              <p className="mt-1 text-4xl font-bold text-emerald-700 dark:text-emerald-300">
+                {(Number(realtimeSummary.totalUsers) || 0).toLocaleString()}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-600 dark:text-gray-300">
+                <span>Active now (5m): <strong>{Number(realtimeSummary.activeNow || 0).toLocaleString()}</strong></span>
+                <span>Conversions: <strong>{Number(realtimeSummary.signedUpUsers || 0).toLocaleString()}</strong></span>
+                <span>Subscribers: <strong>{Number(realtimeSummary.subscribedUsers || 0).toLocaleString()}</strong></span>
+              </div>
+            </div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              View realtime users by device, IP, geo, source, and conversion
+            </div>
+          </div>
+          {realtimePreviewUsers.length > 0 && (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+              {realtimePreviewUsers.map((user, idx) => (
+                <div key={`${user.sessionId || idx}-${idx}`} className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-white/70 dark:bg-slate-900/40 p-3">
+                  <p className="text-xs font-semibold text-gray-900 dark:text-white truncate">
+                    {user.userEmail || user.userName || 'Anonymous'}
+                  </p>
+                  <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                    {user.device || 'unknown'} • {user.browser || 'unknown'}
+                  </p>
+                  <p className="text-xs text-gray-600 dark:text-gray-300">
+                    {user.ipAddress || 'unknown'} • {user.city && user.country ? `${user.city}, ${user.country}` : (user.country || 'Unknown')}
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {user.sourceChannel || 'direct'} • {formatTime(user.timeSpent || 0)} • {user.conversion || 'none'}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -300,6 +381,21 @@ function AdminAnalytics() {
           subtitle="Countries"
           color="text-red-600 dark:text-red-400"
           gradient="bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20"
+        />
+
+        {/* Traffic Sources Card */}
+        <MetricCard
+          id="sources"
+          title="Traffic Sources"
+          icon={
+            <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          }
+          value={(trafficSources.channels?.length || 0).toLocaleString()}
+          subtitle={`${(trafficSources.summary?.totalVisits || 0).toLocaleString()} tracked visits`}
+          color="text-emerald-600 dark:text-emerald-400"
+          gradient="bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20"
         />
 
         {/* Device Analytics Card */}
