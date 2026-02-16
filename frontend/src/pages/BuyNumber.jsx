@@ -19,6 +19,12 @@ function BuyNumber() {
   const [countryNotice, setCountryNotice] = useState('');
   const [subscriptionActive, setSubscriptionActive] = useState(false);
   const isMountedRef = useRef(true);
+  const availableCountryOptions = SUPPORTED_COUNTRIES.filter(
+    (country) => country.numberProvisioningEnabled !== false
+  );
+  const comingSoonCountryOptions = SUPPORTED_COUNTRIES.filter(
+    (country) => country.numberProvisioningEnabled === false
+  );
   const selectedCountryMeta = SUPPORTED_COUNTRIES.find((country) => country.code === selectedCountry);
   const isSelectedCountryProvisioningEnabled = selectedCountryMeta?.numberProvisioningEnabled !== false;
 
@@ -343,6 +349,10 @@ function BuyNumber() {
               onChange={(e) => {
                 const nextCountry = e.target.value;
                 const nextCountryMeta = SUPPORTED_COUNTRIES.find((country) => country.code === nextCountry);
+                if (nextCountryMeta?.numberProvisioningEnabled === false) {
+                  setCountryNotice(buildComingSoonMessage(nextCountry));
+                  return;
+                }
                 setSelectedCountry(nextCountry);
                 setAvailableNumbers([]);
                 setSelectedNumber(null);
@@ -358,11 +368,20 @@ function BuyNumber() {
               disabled={!subscriptionActive || searching}
               className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
             >
-              {SUPPORTED_COUNTRIES.map((country) => (
-                <option key={country.code} value={country.code}>
-                  {country.flag} {country.name}{country.numberProvisioningEnabled ? '' : ' (Coming soon)'}
-                </option>
-              ))}
+              <optgroup label="Available now">
+                {availableCountryOptions.map((country) => (
+                  <option key={country.code} value={country.code}>
+                    {country.flag} {country.name}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Coming soon">
+                {comingSoonCountryOptions.map((country) => (
+                  <option key={country.code} value={country.code} disabled>
+                    {country.flag} {country.name} (Coming soon)
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </div>
 
