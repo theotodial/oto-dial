@@ -122,7 +122,8 @@ function BuyNumber() {
 
     try {
       // Extract area code if 3 digits provided
-      const areaCode = /^\d{3}$/.test(searchQuery) ? searchQuery : null;
+      const areaCode =
+        selectedCountry === 'US' && /^\d{3}$/.test(searchQuery) ? searchQuery : null;
       const searchPattern = searchQuery || null;
 
       const numbers = await searchNumbers(areaCode, searchPattern, selectedCountry);
@@ -345,7 +346,9 @@ function BuyNumber() {
               <p className="text-xs">
                 {searchQuery 
                   ? "Try a different area code or search pattern. Only affordable local numbers are available."
-                  : "Enter an area code (e.g., 212) or search pattern to find numbers, or browse available numbers below."
+                  : (selectedCountry === 'US'
+                    ? "Enter an area code (e.g., 212) or search pattern to find numbers, or browse available numbers below."
+                    : "Enter a search pattern or leave blank to load available numbers in this country.")
                 }
               </p>
             </div>

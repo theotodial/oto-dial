@@ -9,6 +9,53 @@ import { isCountrySupported, getCountryByCode, getSupportedCountries } from "../
 const router = express.Router();
 const MAX_MONTHLY_NUMBER_COST = Number(process.env.TELNYX_MAX_MONTHLY_NUMBER_COST || 3.0);
 const MAX_MESSAGING_RATE = Number(process.env.TELNYX_MAX_MESSAGING_RATE || 0.02);
+const MAX_MONTHLY_NUMBER_COST_NON_US = Number(
+  process.env.TELNYX_MAX_MONTHLY_NUMBER_COST_NON_US || 15.0
+);
+const MAX_MESSAGING_RATE_NON_US = Number(
+  process.env.TELNYX_MAX_MESSAGING_RATE_NON_US || 0.2
+);
+
+function getNumberCostLimits(countryCode = "US") {
+  const normalized = String(countryCode || "US").toUpperCase();
+  if (normalized === "US") {
+    return {
+      monthlyLimit: MAX_MONTHLY_NUMBER_COST,
+      messagingLimit: MAX_MESSAGING_RATE
+    };
+  }
+  return {
+    monthlyLimit: MAX_MONTHLY_NUMBER_COST_NON_US,
+    messagingLimit: MAX_MESSAGING_RATE_NON_US
+  };
+}
+
+function normalizeDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function dedupeNumbersByPhone(rawNumbers = []) {
+  const map = new Map();
+  for (const row of rawNumbers || []) {
+    const key = row?.phone_number;
+    if (!key || map.has(key)) continue;
+    map.set(key, row);
+  }
+  return Array.from(map.values());
+}
+
+async function listAvailableNumbersSafe(telnyx, { filter, size = 200 }) {
+  try {
+    const response = await telnyx.availablePhoneNumbers.list({
+      filter,
+      page: { size }
+    });
+    return response?.data || [];
+  } catch (err) {
+    console.warn("Available number lookup failed:", err.message);
+    return [];
+  }
+}
 
 /**
  * GET /api/numbers/search
@@ -53,56 +100,70 @@ router.get(
         countryInfo = requestedCountry;
       }
       
-      // Build filter - RELAXED to show more numbers
-      // Note: Telnyx API filter structure may vary, so we filter results after fetching
-      const filter = {
-        country_code: countryCode,
-        features: ["voice", "sms"]
+      const normalizedCountryCode = String(countryCode).toUpperCase();
+      const isUS = normalizedCountryCode === "US";
+      const hasUSAreaCode = isUS && areaCode && /^\d{3}$/.test(areaCode);
+      const numericSearchPattern = normalizeDigits(searchPattern);
+      const { monthlyLimit, messagingLimit } = getNumberCostLimits(countryInfo?.code || "US");
+
+      // Multi-pass strategy:
+      // 1) Voice+SMS (strictest)
+      // 2) Voice only (common for some international inventories)
+      // 3) No feature filter (broad fallback)
+      const baseAttemptFilters = [
+        { country_code: normalizedCountryCode, features: ["voice", "sms"] },
+        { country_code: normalizedCountryCode, features: ["voice"] },
+        { country_code: normalizedCountryCode }
+      ];
+
+      const pushResults = async (attemptFilter, pageSize = 200) => {
+        const rows = await listAvailableNumbersSafe(telnyx, {
+          filter: attemptFilter,
+          size: pageSize
+        });
+        return rows;
       };
 
-      // Add area code filter if provided (Telnyx uses npa for area code)
-      if (areaCode && /^\d{3}$/.test(areaCode)) {
-        filter.npa = areaCode; // NPA = Numbering Plan Area (area code)
-      }
-
-      // If no area code, try popular area codes to show default numbers (US only)
-      // For other countries, search without area code filter
-      const popularAreaCodes = countryCode === "US" 
-        ? ['212', '310', '415', '646', '213', '323', '424', '818', '347', '929']
-        : [];
       let allResults = [];
 
-      if (areaCode && /^\d{3}$/.test(areaCode)) {
-        // Search specific area code
-        try {
-          const available = await telnyx.availablePhoneNumbers.list({
-            filter,
-            page: { size: 200 } // Get more results
-          });
-          if (available.data) {
-            allResults = available.data;
+      if (hasUSAreaCode) {
+        for (const attempt of baseAttemptFilters) {
+          const rows = await pushResults({ ...attempt, npa: areaCode }, 250);
+          if (rows.length) {
+            allResults = dedupeNumbersByPhone([...allResults, ...rows]);
           }
-        } catch (err) {
-          console.error(`Error searching area code ${areaCode}:`, err.message);
+        }
+      } else if (isUS) {
+        // US fallback: popular area-codes first, then broad country search.
+        const popularAreaCodes = ["212", "310", "415", "646", "213", "323", "424", "818", "347", "929"];
+        for (const npa of popularAreaCodes.slice(0, 6)) {
+          for (const attempt of baseAttemptFilters) {
+            const rows = await pushResults({ ...attempt, npa }, 40);
+            if (rows.length) {
+              allResults = dedupeNumbersByPhone([...allResults, ...rows]);
+            }
+          }
+          if (allResults.length >= 120) {
+            break;
+          }
+        }
+
+        if (!allResults.length) {
+          for (const attempt of baseAttemptFilters) {
+            const rows = await pushResults(attempt, 250);
+            if (rows.length) {
+              allResults = dedupeNumbersByPhone([...allResults, ...rows]);
+            }
+          }
         }
       } else {
-        // No area code specified - search popular area codes to show default numbers
-        // This mimics Google Voice/TextNow behavior
-        const searchPromises = popularAreaCodes.slice(0, 5).map(async (code) => {
-          try {
-            const available = await telnyx.availablePhoneNumbers.list({
-              filter: { ...filter, npa: code },
-              page: { size: 20 }
-            });
-            return available.data || [];
-          } catch (err) {
-            console.error(`Error searching area code ${code}:`, err.message);
-            return [];
+        // Non-US: always query the selected country directly (no US area-code assumptions).
+        for (const attempt of baseAttemptFilters) {
+          const rows = await pushResults(attempt, 300);
+          if (rows.length) {
+            allResults = dedupeNumbersByPhone([...allResults, ...rows]);
           }
-        });
-
-        const results = await Promise.all(searchPromises);
-        allResults = results.flat();
+        }
       }
 
       if (!allResults || allResults.length === 0) {
@@ -131,8 +192,9 @@ router.get(
           }
 
           // No short codes (must be 10+ digits)
-          const cleanNumber = num.phone_number.replace(/\D/g, '');
-          if (cleanNumber.length < 10) {
+          const cleanNumber = normalizeDigits(num.phone_number);
+          // Keep out short-codes while allowing international local numbers.
+          if (cleanNumber.length < 7) {
             return false;
           }
 
@@ -162,41 +224,42 @@ router.get(
           }
 
           // Allow up to configured monthly cap.
-          const monthlyCost = num.monthly_cost || 
-                             num.monthly_rate || 
-                             num.cost?.monthly ||
-                             num.region_information?.monthly_cost ||
-                             num.pricing?.monthly ||
-                             0;
-          if (monthlyCost > MAX_MONTHLY_NUMBER_COST) {
-            console.log(`🚫 COST CONTROL: Blocked expensive number ${num.phone_number}: $${monthlyCost.toFixed(2)}/month (limit: $${MAX_MONTHLY_NUMBER_COST.toFixed(2)})`);
+          const monthlyCost = Number(
+            num.monthly_cost ||
+              num.monthly_rate ||
+              num.cost?.monthly ||
+              num.region_information?.monthly_cost ||
+              num.pricing?.monthly ||
+              0
+          );
+          if (monthlyCost > monthlyLimit) {
+            console.log(`🚫 COST CONTROL: Blocked expensive number ${num.phone_number}: $${monthlyCost.toFixed(2)}/month (limit: $${monthlyLimit.toFixed(2)})`);
             return false;
           }
 
           // Allow messaging rates up to configured cap.
-          const messagingRate = num.messaging_rate || 
-                               num.cost?.messaging || 
-                               num.pricing?.messaging ||
-                               num.region_information?.messaging_rate ||
-                               0;
-          if (messagingRate > MAX_MESSAGING_RATE) {
-            console.log(`🚫 COST CONTROL: Blocked number with high messaging rate ${num.phone_number}: $${messagingRate.toFixed(4)}/msg (limit: $${MAX_MESSAGING_RATE.toFixed(4)})`);
+          const messagingRate = Number(
+            num.messaging_rate ||
+              num.cost?.messaging ||
+              num.pricing?.messaging ||
+              num.region_information?.messaging_rate ||
+              0
+          );
+          if (messagingRate > messagingLimit) {
+            console.log(`🚫 COST CONTROL: Blocked number with high messaging rate ${num.phone_number}: $${messagingRate.toFixed(4)}/msg (limit: $${messagingLimit.toFixed(4)})`);
             return false;
           }
 
           // Apply search pattern if provided
-          if (searchPattern) {
-            const pattern = searchPattern.replace(/\D/g, '');
-            if (!cleanNumber.includes(pattern)) {
+          if (numericSearchPattern && !cleanNumber.includes(numericSearchPattern)) {
               return false;
-            }
           }
 
           return true;
         })
         .map(num => ({
           phone_number: num.phone_number,
-          monthly_cost: num.monthly_cost || num.monthly_rate || num.cost?.monthly || 0,
+          monthly_cost: Number(num.monthly_cost || num.monthly_rate || num.cost?.monthly || 0),
           carrier_group: num.carrier?.group || num.carrier_group || 'Unknown',
           region_information: num.region_information || null,
           features: num.features || [],
@@ -289,6 +352,7 @@ router.post(
           error: `Country ${countryInfo?.name || "Unknown"} is not supported. Supported countries: ${getSupportedCountries().map(c => c.name).join(", ")}` 
         });
       }
+      const { monthlyLimit, messagingLimit } = getNumberCostLimits(countryInfo.code);
 
       let validatedNumber = null;
       let validatedCarrierGroup = null;
@@ -310,7 +374,7 @@ router.post(
           try {
             const fallbackDetails = await telnyx.availablePhoneNumbers.list({
               filter: { country_code: detectedCountryCode },
-              page: { size: 250 }
+              page: { size: 500 }
             });
             candidates = fallbackDetails?.data || [];
           } catch (fallbackErr) {
@@ -322,7 +386,7 @@ router.post(
         validatedNumber = candidates.find((item) => {
           const itemDigits = String(item?.phone_number || "").replace(/\D/g, "");
           return itemDigits && itemDigits === requestedDigits;
-        }) || candidates[0] || null;
+        }) || null;
 
         if (!validatedNumber) {
           return res.status(400).json({ error: "Number not available" });
@@ -355,7 +419,7 @@ router.post(
 
         // No short codes
         const cleanNumber = validatedNumber.phone_number.replace(/\D/g, '');
-        if (cleanNumber.length < 10) {
+        if (cleanNumber.length < 7) {
           return res.status(403).json({ 
             error: "Number not eligible: Short codes not allowed" 
           });
@@ -396,29 +460,31 @@ router.post(
         }
 
         // Check monthly cost - CRITICAL
-        validatedMonthlyCost =
+        validatedMonthlyCost = Number(
           validatedNumber.monthly_cost ||
-          validatedNumber.monthly_rate ||
-          validatedNumber.cost?.monthly ||
-          validatedNumber.region_information?.monthly_cost ||
-          validatedNumber.pricing?.monthly ||
-          0;
-        if (validatedMonthlyCost > MAX_MONTHLY_NUMBER_COST) {
+            validatedNumber.monthly_rate ||
+            validatedNumber.cost?.monthly ||
+            validatedNumber.region_information?.monthly_cost ||
+            validatedNumber.pricing?.monthly ||
+            0
+        );
+        if (validatedMonthlyCost > monthlyLimit) {
           return res.status(403).json({ 
-            error: `Number not eligible: Monthly cost ($${validatedMonthlyCost.toFixed(2)}) exceeds $${MAX_MONTHLY_NUMBER_COST.toFixed(2)} limit` 
+            error: `Number not eligible: Monthly cost ($${validatedMonthlyCost.toFixed(2)}) exceeds $${monthlyLimit.toFixed(2)} limit` 
           });
         }
 
         // Check messaging rate - CRITICAL
-        validatedMessagingRate =
+        validatedMessagingRate = Number(
           validatedNumber.messaging_rate ||
-          validatedNumber.cost?.messaging ||
-          validatedNumber.pricing?.messaging ||
-          validatedNumber.region_information?.messaging_rate ||
-          0;
-        if (validatedMessagingRate > MAX_MESSAGING_RATE) {
+            validatedNumber.cost?.messaging ||
+            validatedNumber.pricing?.messaging ||
+            validatedNumber.region_information?.messaging_rate ||
+            0
+        );
+        if (validatedMessagingRate > messagingLimit) {
           return res.status(403).json({ 
-            error: `Number not eligible: Messaging rate ($${validatedMessagingRate.toFixed(4)}) exceeds $${MAX_MESSAGING_RATE.toFixed(4)} limit` 
+            error: `Number not eligible: Messaging rate ($${validatedMessagingRate.toFixed(4)}) exceeds $${messagingLimit.toFixed(4)} limit` 
           });
         }
 
@@ -441,9 +507,12 @@ router.post(
         : null;
 
       if (!user.messagingProfileId) {
+        const whitelistedDestinations = Array.from(
+          new Set([countryInfo.telnyxCode, "US", "CA"].filter(Boolean))
+        );
         const profileData = {
           name: `user-${user._id}`,
-          whitelisted_destinations: ["US", "CA"]
+          whitelisted_destinations: whitelistedDestinations
         };
 
         if (webhookUrl) {
@@ -459,10 +528,14 @@ router.post(
         console.log(`✅ Created messaging profile ${profile.data.id} for user ${user._id}`);
       } else if (webhookUrl) {
         try {
+          const whitelistedDestinations = Array.from(
+            new Set([countryInfo.telnyxCode, "US", "CA"].filter(Boolean))
+          );
           await telnyx.messaging.messagingProfiles.update(user.messagingProfileId, {
             webhook_url: webhookUrl,
             webhook_failover_url: webhookUrl,
-            webhook_api_version: "2"
+            webhook_api_version: "2",
+            whitelisted_destinations: whitelistedDestinations
           });
         } catch (updateErr) {
           console.warn(`⚠️ Could not update messaging profile webhook:`, updateErr.message);

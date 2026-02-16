@@ -50,6 +50,8 @@ const optionalEnvVars = {
   REQUEST_BODY_LIMIT: '25mb',
   TELNYX_MAX_MONTHLY_NUMBER_COST: '3.0',
   TELNYX_MAX_MESSAGING_RATE: '0.02',
+  TELNYX_MAX_MONTHLY_NUMBER_COST_NON_US: '15.0',
+  TELNYX_MAX_MESSAGING_RATE_NON_US: '0.2',
 };
 
 export function validateEnv() {
