@@ -2,6 +2,7 @@ import express from "express";
 import Analytics from "../models/Analytics.js";
 import User from "../models/User.js";
 import Subscription from "../models/Subscription.js";
+import StripeInvoice from "../models/StripeInvoice.js";
 import authenticateUser from "../middleware/authenticateUser.js";
 import requireAdmin from "../middleware/requireAdmin.js";
 import geoip from "geoip-lite";
@@ -273,17 +274,61 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       isNewVisitor: true
     });
 
-    // Users who signed up
-    const signUps = await Analytics.countDocuments({
-      visitStart: { $gte: start, $lte: end },
-      signedUp: true
+    // Sign-ups are sourced from user records for accuracy.
+    const signUps = await User.countDocuments({
+      createdAt: { $gte: start, $lte: end },
+      role: { $ne: "admin" }
     });
 
-    // Users with active subscriptions
-    const usersWithSubscription = await Analytics.distinct("userId", {
+    // Paid subscription conversions are sourced from Stripe invoices for accuracy.
+    const paidSubscriptionConversionCount = await StripeInvoice.aggregate([
+      {
+        $match: {
+          status: "paid",
+          $or: [
+            { purchaseType: "subscription" },
+            { purchaseType: "unknown", subscriptionId: { $ne: null } }
+          ]
+        }
+      },
+      {
+        $addFields: {
+          effectiveIssuedAt: { $ifNull: ["$issuedAt", "$createdAt"] }
+        }
+      },
+      {
+        $match: {
+          effectiveIssuedAt: { $gte: start, $lte: end }
+        }
+      },
+      {
+        $addFields: {
+          conversionKey: {
+            $ifNull: [{ $toString: "$userId" }, "$customerId"]
+          }
+        }
+      },
+      {
+        $match: {
+          conversionKey: { $nin: [null, "", "unknown"] }
+        }
+      },
+      {
+        $group: {
+          _id: "$conversionKey"
+        }
+      },
+      {
+        $count: "total"
+      }
+    ]);
+    const usersWithSubscription = paidSubscriptionConversionCount[0]?.total || 0;
+
+    // Distinct IP visitors for accurate visitor-details card metric.
+    const uniqueIpVisitors = await Analytics.distinct("ipAddress", {
       visitStart: { $gte: start, $lte: end },
-      hasSubscription: true
-    }).then(users => users.length);
+      ipAddress: { $nin: [null, "", "unknown"] }
+    }).then((ips) => ips.length);
 
     // Countries
     const countriesData = await Analytics.aggregate([
@@ -495,8 +540,8 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       uniqueVisitors: uniqueVisitors,
       signedUp: signUps,
       withSubscription: usersWithSubscription,
-      conversionRate: uniqueVisitors > 0 ? ((signUps / uniqueVisitors) * 100).toFixed(2) : 0,
-      subscriptionRate: signUps > 0 ? ((usersWithSubscription / signUps) * 100).toFixed(2) : 0
+      conversionRate: uniqueVisitors > 0 ? Number(((signUps / uniqueVisitors) * 100).toFixed(2)) : 0,
+      subscriptionRate: signUps > 0 ? Number(((usersWithSubscription / signUps) * 100).toFixed(2)) : 0
     };
 
     const internalData = {
@@ -507,6 +552,7 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
         newVisitors,
         signUps,
         usersWithSubscription,
+        uniqueIpVisitors,
         avgTimeSpent: avgTimeSpent[0]?.avgTime ? Math.round(avgTimeSpent[0].avgTime) : 0
       },
       countries: countriesData,
@@ -544,6 +590,42 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
       warnings.push(gaResult.error || "GA4 data unavailable and internal analytics are empty");
     }
 
+    const normalizedSignUps = signUps;
+    const normalizedSubscriptionConversions = usersWithSubscription;
+    const normalizedUniqueIpVisitors =
+      uniqueIpVisitors > 0
+        ? uniqueIpVisitors
+        : (internalData.topIPs?.length || selectedData?.overview?.uniqueVisitors || 0);
+
+    const selectedOverview = selectedData?.overview || {};
+    const selectedFunnel = selectedData?.funnel || {};
+
+    selectedData = {
+      ...selectedData,
+      overview: {
+        ...selectedOverview,
+        signUps: normalizedSignUps,
+        usersWithSubscription: normalizedSubscriptionConversions,
+        uniqueIpVisitors: normalizedUniqueIpVisitors
+      },
+      funnel: {
+        ...selectedFunnel,
+        signedUp: normalizedSignUps,
+        withSubscription: normalizedSubscriptionConversions,
+        conversionRate: (selectedOverview.uniqueVisitors || 0) > 0
+          ? Number(((normalizedSignUps / selectedOverview.uniqueVisitors) * 100).toFixed(2))
+          : 0,
+        subscriptionRate: normalizedSignUps > 0
+          ? Number(((normalizedSubscriptionConversions / normalizedSignUps) * 100).toFixed(2))
+          : 0
+      },
+      // GA does not expose visitor IPs; use internal top IPs when available.
+      topIPs:
+        Array.isArray(selectedData?.topIPs) && selectedData.topIPs.length > 0
+          ? selectedData.topIPs
+          : internalData.topIPs
+    };
+
     res.json({
       success: true,
       data: selectedData,
@@ -563,7 +645,8 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
           ]
         },
         internal: {
-          totalVisitors: internalTotalVisitors
+          totalVisitors: internalTotalVisitors,
+          uniqueIpVisitors
         }
       }
     });
@@ -584,8 +667,16 @@ router.get("/admin/visitors", authenticateUser, requireAdmin, async (req, res) =
     if (device) query.device = device;
     if (startDate || endDate) {
       query.visitStart = {};
-      if (startDate) query.visitStart.$gte = new Date(startDate);
-      if (endDate) query.visitStart.$lte = new Date(endDate);
+      if (startDate) {
+        const parsedStart = new Date(startDate);
+        parsedStart.setHours(0, 0, 0, 0);
+        query.visitStart.$gte = parsedStart;
+      }
+      if (endDate) {
+        const parsedEnd = new Date(endDate);
+        parsedEnd.setHours(23, 59, 59, 999);
+        query.visitStart.$lte = parsedEnd;
+      }
     }
 
     const visitors = await Analytics.find(query)
