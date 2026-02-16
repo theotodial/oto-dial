@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { trackSignUp } from '../utils/analytics';
 
@@ -99,6 +99,7 @@ const countries = [
 
 function Signup() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { signup, isAuthenticated } = useAuth();
 
   const [formData, setFormData] = useState({ 
@@ -117,9 +118,22 @@ function Signup() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  const buildGoogleOAuthUrl = () => {
+    const apiBase = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+    return apiBase ? `${apiBase}/api/auth/google` : '/api/auth/google';
+  };
+
   useEffect(() => {
     if (isAuthenticated) navigate('/dashboard');
   }, [isAuthenticated, navigate]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const oauthError = params.get('oauth_error');
+    if (oauthError) {
+      setError(oauthError);
+    }
+  }, [location.search]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -170,7 +184,7 @@ function Signup() {
   };
 
   const handleGoogleSignup = () => {
-    window.location.href = `${import.meta.env.VITE_API_URL}/api/auth/google`;
+    window.location.href = buildGoogleOAuthUrl();
   };
 
   return (

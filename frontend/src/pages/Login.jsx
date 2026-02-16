@@ -24,6 +24,11 @@ const EyeOffIcon = () => (
   </svg>
 );
 
+const buildGoogleOAuthUrl = () => {
+  const apiBase = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+  return apiBase ? `${apiBase}/api/auth/google` : '/api/auth/google';
+};
+
 function Login() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -42,6 +47,14 @@ function Login() {
       navigate(from, { replace: true });
     }
   }, [isAuthenticated, navigate, from]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const oauthError = params.get('oauth_error');
+    if (oauthError) {
+      setError(oauthError);
+    }
+  }, [location.search]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -78,7 +91,7 @@ function Login() {
   };
 
   const handleGoogleLogin = () => {
-    window.location.href = `${import.meta.env.VITE_API_URL}/api/auth/google`;
+    window.location.href = buildGoogleOAuthUrl();
   };
 
   return (

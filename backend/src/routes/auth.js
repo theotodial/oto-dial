@@ -10,6 +10,39 @@ import { selfHealSubscriptionForUser } from "../services/stripeSubscriptionServi
 
 const router = express.Router();
 
+const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID || "").trim();
+const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_OAUTH_CLIENT_SECRET || "").trim();
+const GOOGLE_CALLBACK_URL = (
+  process.env.GOOGLE_CALLBACK_URL ||
+  process.env.GOOGLE_REDIRECT_URI ||
+  process.env.GOOGLE_OAUTH_CALLBACK_URL ||
+  (process.env.BACKEND_URL ? `${process.env.BACKEND_URL.replace(/\/+$/, "")}/api/auth/google/callback` : "")
+).trim();
+
+function resolveFrontendUrl(req) {
+  const configuredUrl = (process.env.FRONTEND_URL || process.env.APP_URL || "").trim();
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/+$/, "");
+  }
+
+  const originHeader = req.get("origin");
+  if (originHeader && /^https?:\/\//i.test(originHeader)) {
+    return originHeader.replace(/\/+$/, "");
+  }
+
+  const host = req.get("host");
+  if (host) {
+    return `${req.protocol}://${host}`;
+  }
+
+  return "http://localhost:5173";
+}
+
+function buildFrontendErrorRedirect(req, message, path = "/login") {
+  const frontendUrl = resolveFrontendUrl(req);
+  return `${frontendUrl}${path}?oauth_error=${encodeURIComponent(message)}`;
+}
+
 /**
  * =========================================
  * Google OAuth
@@ -17,21 +50,17 @@ const router = express.Router();
  */
 let googleOAuthEnabled = false;
 
-if (
-  process.env.GOOGLE_CLIENT_ID &&
-  process.env.GOOGLE_CLIENT_SECRET &&
-  process.env.GOOGLE_CALLBACK_URL
-) {
+if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_CALLBACK_URL) {
   passport.use(
     new GoogleStrategy(
       {
-        clientID: process.env.GOOGLE_CLIENT_ID,
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-        callbackURL: process.env.GOOGLE_CALLBACK_URL
+        clientID: GOOGLE_CLIENT_ID,
+        clientSecret: GOOGLE_CLIENT_SECRET,
+        callbackURL: GOOGLE_CALLBACK_URL
       },
       async (_, __, profile, done) => {
         try {
-          const email = profile.emails?.[0]?.value;
+          const email = (profile.emails?.[0]?.value || "").trim().toLowerCase();
           if (!email) {
             return done(new Error("No email from Google"), null);
           }
@@ -59,8 +88,11 @@ if (
 
   googleOAuthEnabled = true;
   console.log("✅ Google OAuth enabled");
+  console.log(`🔐 Google callback URL: ${GOOGLE_CALLBACK_URL}`);
 } else {
-  console.warn("⚠️ Google OAuth disabled (env vars missing)");
+  console.warn(
+    "⚠️ Google OAuth disabled (missing client ID/secret/callback URL)"
+  );
 }
 
 /**
@@ -68,32 +100,62 @@ if (
  * Google OAuth Routes
  * =========================================
  */
+router.get("/google/status", (_req, res) => {
+  res.json({
+    success: true,
+    googleOAuthEnabled,
+    config: {
+      hasClientId: !!GOOGLE_CLIENT_ID,
+      hasClientSecret: !!GOOGLE_CLIENT_SECRET,
+      callbackUrl: GOOGLE_CALLBACK_URL || null
+    }
+  });
+});
+
 router.get("/google", (req, res, next) => {
   if (!googleOAuthEnabled) {
-    return res.status(503).json({ error: "Google OAuth not configured" });
+    return res.redirect(
+      buildFrontendErrorRedirect(req, "Google sign-in is not configured yet.")
+    );
   }
 
   passport.authenticate("google", {
     scope: ["email", "profile"],
-    session: false
+    session: false,
+    prompt: "select_account"
   })(req, res, next);
 });
 
-router.get(
-  "/google/callback",
-  passport.authenticate("google", { session: false }),
-  (req, res) => {
+router.get("/google/callback", (req, res, next) => {
+  if (!googleOAuthEnabled) {
+    return res.redirect(
+      buildFrontendErrorRedirect(req, "Google sign-in is not configured yet.")
+    );
+  }
+
+  return passport.authenticate("google", { session: false }, (authErr, user) => {
+    if (authErr || !user?._id) {
+      console.error("GOOGLE OAUTH ERROR:", authErr?.message || "No user returned");
+      return res.redirect(
+        buildFrontendErrorRedirect(
+          req,
+          "Google authentication failed. Please try again."
+        )
+      );
+    }
+
     const token = jwt.sign(
-      { userId: req.user._id },
+      { userId: user._id },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
+    const frontendUrl = resolveFrontendUrl(req);
     res.redirect(
-      `${process.env.FRONTEND_URL}/oauth-success?token=${token}`
+      `${frontendUrl}/oauth-success?token=${encodeURIComponent(token)}`
     );
-  }
-);
+  })(req, res, next);
+});
 
 /**
  * =========================================
