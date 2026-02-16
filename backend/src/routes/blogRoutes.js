@@ -57,7 +57,7 @@ function normalizeUploadUrl(rawUrl, req) {
   try {
     const parsed = new URL(value);
     const pathname = parsed.pathname || "";
-    if (!pathname.startsWith("/uploads/")) {
+    if (!pathname.startsWith("/uploads/") && !pathname.startsWith("/api/uploads/")) {
       return value;
     }
 
@@ -68,6 +68,9 @@ function normalizeUploadUrl(rawUrl, req) {
     const isKnownHost = (backendHost && host === backendHost) || (reqHost && host === reqHost);
 
     if (isInternalHost || isKnownHost) {
+      if (pathname.startsWith("/api/uploads/")) {
+        return `${pathname}${parsed.search || ""}`;
+      }
       return `/api${pathname}${parsed.search || ""}`;
     }
 

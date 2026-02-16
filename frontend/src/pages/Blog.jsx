@@ -30,10 +30,13 @@ function Blog() {
 
     try {
       const parsed = new URL(value);
-      if (!parsed.pathname.startsWith('/uploads/')) return value;
+      if (!parsed.pathname.startsWith('/uploads/') && !parsed.pathname.startsWith('/api/uploads/')) return value;
       const host = parsed.hostname.toLowerCase();
       const currentHost = window.location.hostname.toLowerCase();
       if (host === 'localhost' || host === '127.0.0.1' || host === currentHost) {
+        if (parsed.pathname.startsWith('/api/uploads/')) {
+          return `${parsed.pathname}${parsed.search || ''}`;
+        }
         return `/api${parsed.pathname}${parsed.search || ''}`;
       }
     } catch {

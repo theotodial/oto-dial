@@ -55,6 +55,8 @@ const PORT = process.env.PORT || 5000;
 const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || "25mb";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const backendUploadsDir = path.join(__dirname, "uploads");
+const cwdUploadsDir = path.resolve(process.cwd(), "uploads");
 
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', true);
@@ -98,8 +100,14 @@ app.use(
 
 app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-app.use("/api/uploads", express.static(path.join(__dirname, "uploads")));
+app.use("/uploads", express.static(backendUploadsDir));
+app.use("/api/uploads", express.static(backendUploadsDir));
+
+// Support deployments where PM2 cwd differs from backend directory.
+if (cwdUploadsDir !== backendUploadsDir) {
+  app.use("/uploads", express.static(cwdUploadsDir));
+  app.use("/api/uploads", express.static(cwdUploadsDir));
+}
 
 // ========================
 // WEBHOOKS
