@@ -92,6 +92,168 @@ async function listAvailableNumbersSafe(telnyx, { filter, size = 200 }) {
   }
 }
 
+function extractTelnyxErrorMessage(err) {
+  if (!err) return "Unknown Telnyx error";
+  return (
+    err?.raw?.errors?.[0]?.detail ||
+    err?.raw?.errors?.[0]?.title ||
+    err?.response?.data?.errors?.[0]?.detail ||
+    err?.response?.data?.error ||
+    err?.message ||
+    "Unknown Telnyx error"
+  );
+}
+
+function resolveOrderedNumberId(orderData, fallbackNumber) {
+  const nestedNumber =
+    orderData?.phone_numbers?.[0]?.id ||
+    orderData?.phone_numbers?.[0]?.phone_number_id ||
+    orderData?.phone_numbers?.[0]?.phone_number ||
+    orderData?.data?.phone_numbers?.[0]?.id ||
+    orderData?.data?.phone_numbers?.[0]?.phone_number_id ||
+    orderData?.data?.phone_numbers?.[0]?.phone_number;
+
+  return nestedNumber || orderData?.id || fallbackNumber;
+}
+
+async function createNumberOrderWithFallback(telnyx, phoneNumber) {
+  const attempts = [
+    { phone_numbers: [{ phone_number: phoneNumber }] },
+    { phone_numbers: [phoneNumber] }
+  ];
+
+  let lastError = null;
+  for (const payload of attempts) {
+    try {
+      return await telnyx.numberOrders.create(payload);
+    } catch (err) {
+      lastError = err;
+      console.warn("Number order attempt failed:", extractTelnyxErrorMessage(err));
+    }
+  }
+
+  throw lastError || new Error("Failed to create Telnyx number order");
+}
+
+function buildWhitelistedDestinations(countryInfo) {
+  return Array.from(new Set([countryInfo?.telnyxCode, "US", "CA"].filter(Boolean)));
+}
+
+async function ensureUserMessagingProfile({ telnyx, user, countryInfo, webhookUrl }) {
+  const destinations = buildWhitelistedDestinations(countryInfo);
+  const updatePayload = {};
+  if (webhookUrl) {
+    updatePayload.webhook_url = webhookUrl;
+    updatePayload.webhook_failover_url = webhookUrl;
+    updatePayload.webhook_api_version = "2";
+  }
+  if (destinations.length) {
+    updatePayload.whitelisted_destinations = destinations;
+  }
+
+  if (user.messagingProfileId) {
+    try {
+      if (Object.keys(updatePayload).length > 0) {
+        await telnyx.messaging.messagingProfiles.update(user.messagingProfileId, updatePayload);
+      }
+      return user.messagingProfileId;
+    } catch (err) {
+      const msg = extractTelnyxErrorMessage(err);
+      console.warn(`⚠️ Could not update messaging profile ${user.messagingProfileId}: ${msg}`);
+      // If profile still exists but update failed (permissions/validation), keep current ID.
+      if (!/not found|does not exist|invalid/i.test(msg)) {
+        return user.messagingProfileId;
+      }
+      user.messagingProfileId = null;
+      await user.save();
+    }
+  }
+
+  const baseCreatePayload = {
+    name: `user-${user._id}`
+  };
+  if (webhookUrl) {
+    baseCreatePayload.webhook_url = webhookUrl;
+    baseCreatePayload.webhook_failover_url = webhookUrl;
+    baseCreatePayload.webhook_api_version = "2";
+  }
+
+  const createAttempts = [
+    {
+      ...baseCreatePayload,
+      whitelisted_destinations: destinations
+    },
+    {
+      ...baseCreatePayload,
+      whitelisted_destinations: ["US", "CA"]
+    },
+    baseCreatePayload
+  ];
+
+  let lastError = null;
+  for (const payload of createAttempts) {
+    try {
+      const profile = await telnyx.messaging.messagingProfiles.create(payload);
+      const profileId = profile?.data?.id || null;
+      if (profileId) {
+        user.messagingProfileId = profileId;
+        await user.save();
+      }
+      return profileId;
+    } catch (err) {
+      lastError = err;
+      console.warn("Messaging profile create attempt failed:", extractTelnyxErrorMessage(err));
+    }
+  }
+
+  if (lastError) {
+    console.warn("⚠️ Could not create messaging profile:", extractTelnyxErrorMessage(lastError));
+  }
+  return null;
+}
+
+async function attachNumberToMessagingProfile({ telnyx, profileId, phoneNumber }) {
+  if (!profileId) {
+    return {
+      attached: false,
+      warning: "Messaging profile not configured. Number purchased but SMS profile attach is pending."
+    };
+  }
+
+  try {
+    await telnyx.messaging.messagingProfiles.phoneNumbers.create(profileId, {
+      phone_number: phoneNumber
+    });
+    return { attached: true, warning: null };
+  } catch (err) {
+    const msg = extractTelnyxErrorMessage(err);
+    if (/already|exists|duplicate|associated/i.test(msg)) {
+      return { attached: true, warning: null };
+    }
+    return { attached: false, warning: msg };
+  }
+}
+
+function normalizePurchaseFailure(err) {
+  const raw = extractTelnyxErrorMessage(err);
+  const message = raw || "Failed to purchase number";
+
+  if (/number limit reached|active subscription required|phone number required|not eligible|not available/i.test(message)) {
+    return { status: 400, message };
+  }
+  if (/already|reserved|inventory|unavailable|taken/i.test(message)) {
+    return { status: 409, message };
+  }
+  if (/insufficient|balance|funds|payment required/i.test(message)) {
+    return { status: 402, message };
+  }
+  if (/forbidden|permission|unauthorized/i.test(message)) {
+    return { status: 403, message };
+  }
+
+  return { status: 500, message };
+}
+
 /**
  * GET /api/numbers/search
  * Search for available numbers with STRICT cost filters
@@ -339,13 +501,7 @@ router.post(
         return res.status(403).json({ error: "Active subscription required" });
       }
 
-      // HARD STOP — LIMIT CHECK
-      if (req.subscription.numbers.length >= 1) {
-        return res.status(400).json({ error: "Number limit reached" });
-      }
-
-      const { phoneNumber } = req.body;
-
+      const phoneNumber = String(req.body?.phoneNumber || "").trim();
       if (!phoneNumber) {
         return res.status(400).json({ error: "Phone number required" });
       }
@@ -548,46 +704,32 @@ router.post(
         return res.status(404).json({ error: "User not found" });
       }
 
-      // Ensure messaging profile with webhook URL
-      const webhookUrl = process.env.BACKEND_URL 
+      // Idempotency + hard one-number limit check from DB.
+      const requestedDigits = normalizeDigits(phoneNumber);
+      const existingActiveNumbers = await PhoneNumber.find({
+        userId: user._id,
+        status: "active"
+      }).select("phoneNumber");
+
+      if (existingActiveNumbers.length > 0) {
+        const sameNumber = existingActiveNumbers.find(
+          (item) => normalizeDigits(item.phoneNumber) === requestedDigits
+        );
+        if (sameNumber) {
+          return res.json({
+            success: true,
+            phoneNumber: sameNumber.phoneNumber,
+            alreadyOwned: true,
+            message: "Number is already active on this account."
+          });
+        }
+        return res.status(400).json({ error: "Number limit reached" });
+      }
+
+      const webhookUrl = process.env.BACKEND_URL
         ? `${process.env.BACKEND_URL}/api/webhooks/telnyx/sms`
         : null;
-
-      if (!user.messagingProfileId) {
-        const whitelistedDestinations = Array.from(
-          new Set([countryInfo.telnyxCode, "US", "CA"].filter(Boolean))
-        );
-        const profileData = {
-          name: `user-${user._id}`,
-          whitelisted_destinations: whitelistedDestinations
-        };
-
-        if (webhookUrl) {
-          profileData.webhook_url = webhookUrl;
-          profileData.webhook_failover_url = webhookUrl;
-          profileData.webhook_api_version = "2";
-        }
-
-        const profile = await telnyx.messaging.messagingProfiles.create(profileData);
-        user.messagingProfileId = profile.data.id;
-        await user.save();
-        
-        console.log(`✅ Created messaging profile ${profile.data.id} for user ${user._id}`);
-      } else if (webhookUrl) {
-        try {
-          const whitelistedDestinations = Array.from(
-            new Set([countryInfo.telnyxCode, "US", "CA"].filter(Boolean))
-          );
-          await telnyx.messaging.messagingProfiles.update(user.messagingProfileId, {
-            webhook_url: webhookUrl,
-            webhook_failover_url: webhookUrl,
-            webhook_api_version: "2",
-            whitelisted_destinations: whitelistedDestinations
-          });
-        } catch (updateErr) {
-          console.warn(`⚠️ Could not update messaging profile webhook:`, updateErr.message);
-        }
-      }
+      const provisioningWarnings = [];
 
       // PURCHASE NUMBER (ONLY AFTER ALL VALIDATIONS PASSED)
       console.log(`✅ COST CONTROL: Number ${phoneNumber} passed all validations, purchasing...`);
@@ -595,10 +737,8 @@ router.post(
       console.log(`   Carrier Group: ${validatedCarrierGroup || 'Unknown'}`);
       console.log(`   Monthly Cost: $${Number(validatedMonthlyCost || 0).toFixed(2)}`);
       console.log(`   Messaging Rate: $${Number(validatedMessagingRate || 0).toFixed(4)}`);
-      
-      const order = await telnyx.numberOrders.create({
-        phone_numbers: [{ phone_number: phoneNumber }]
-      });
+
+      const order = await createNumberOrderWithFallback(telnyx, phoneNumber);
 
       // Get number cost details and region information from Telnyx
       let finalMonthlyCost = validatedMonthlyCost;
@@ -620,12 +760,11 @@ router.post(
         if (regionInfo) {
           // Use detected country info, but allow Telnyx to override if it provides more specific data
           const telnyxCountry = regionInfo.country_name || regionInfo.country;
-          if (telnyxCountry && isCountrySupported(telnyxCountry)) {
-            const telnyxCountryInfo = getCountryByCode(telnyxCountry);
-            if (telnyxCountryInfo) {
-              country = telnyxCountryInfo.name;
-              countryInfo = telnyxCountryInfo;
-            }
+          const telnyxCountryCode = resolveSupportedCountryCode(telnyxCountry);
+          if (telnyxCountryCode) {
+            const telnyxCountryInfo = getCountryByCode(telnyxCountryCode);
+            country = telnyxCountryInfo?.name || country;
+            countryInfo = telnyxCountryInfo || countryInfo;
           }
           state = regionInfo.region_name || regionInfo.state || regionInfo.region || null;
           city = regionInfo.locality || regionInfo.city || null;
@@ -636,38 +775,64 @@ router.post(
         if (validatedNumber?.region_information) {
           regionInfo = validatedNumber.region_information;
           const telnyxCountry = regionInfo.country_name || regionInfo.country;
-          if (telnyxCountry && isCountrySupported(telnyxCountry)) {
-            const telnyxCountryInfo = getCountryByCode(telnyxCountry);
-            if (telnyxCountryInfo) {
-              country = telnyxCountryInfo.name;
-              countryInfo = telnyxCountryInfo;
-            }
+          const telnyxCountryCode = resolveSupportedCountryCode(telnyxCountry);
+          if (telnyxCountryCode) {
+            const telnyxCountryInfo = getCountryByCode(telnyxCountryCode);
+            country = telnyxCountryInfo?.name || country;
+            countryInfo = telnyxCountryInfo || countryInfo;
           }
           state = regionInfo.region_name || regionInfo.state || regionInfo.region || null;
           city = regionInfo.locality || regionInfo.city || null;
         }
       }
 
-      // SAVE IMMEDIATELY with cost tracking, region information, and country metadata
-      const phoneNumberDoc = await PhoneNumber.create({
-        userId: user._id,
-        phoneNumber,
-        telnyxPhoneNumberId: order.data.id,
-        messagingProfileId: user.messagingProfileId,
-        status: "active",
-        monthlyCost: finalMonthlyCost,
-        oneTimeFees: oneTimeFees,
-        carrierGroup: finalCarrierGroup,
-        country: country,
-        countryCode: countryInfo.code,
-        countryName: countryInfo.name,
-        iso2: countryInfo.iso2,
-        lockedCountry: true, // Always lock to country
-        state: state,
-        city: city,
-        regionInformation: regionInfo,
-        purchaseDate: new Date()
-      });
+      const resolvedCountryInfo = getCountryByCode(countryInfo?.code) || getCountryByCode("US");
+      const existingNumberRecord = await PhoneNumber.findOne({ phoneNumber }).select("userId status");
+      if (
+        existingNumberRecord &&
+        existingNumberRecord.status === "active" &&
+        String(existingNumberRecord.userId) !== String(user._id)
+      ) {
+        return res.status(409).json({
+          error: "Number was just purchased by another account. Please select another number."
+        });
+      }
+
+      const orderedNumberId = resolveOrderedNumberId(order?.data || order, phoneNumber);
+
+      // Save/rehydrate locally (including previously released records) so order success is never lost.
+      const phoneNumberDoc = await PhoneNumber.findOneAndUpdate(
+        { phoneNumber },
+        {
+          $set: {
+            userId: user._id,
+            telnyxPhoneNumberId: orderedNumberId,
+            messagingProfileId: user.messagingProfileId || null,
+            status: "active",
+            monthlyCost: finalMonthlyCost,
+            oneTimeFees: oneTimeFees,
+            carrierGroup: finalCarrierGroup,
+            country: country || resolvedCountryInfo.name,
+            countryCode: resolvedCountryInfo.code,
+            countryName: resolvedCountryInfo.name,
+            iso2: resolvedCountryInfo.iso2,
+            lockedCountry: true,
+            state: state,
+            city: city,
+            regionInformation: regionInfo,
+            purchaseDate: new Date()
+          },
+          $setOnInsert: {
+            phoneNumber
+          }
+        },
+        {
+          new: true,
+          upsert: true,
+          runValidators: true,
+          setDefaultsOnInsert: true
+        }
+      );
       
       console.log(`✅ Number ${phoneNumber} purchased successfully for user ${user._id}`);
 
@@ -689,11 +854,38 @@ router.post(
         await phoneNumberDoc.save();
       }
 
-      // ATTACH TO MESSAGING PROFILE
-      await telnyx.messaging.messagingProfiles.phoneNumbers.create(
-        user.messagingProfileId,
-        { phone_number: phoneNumber }
-      );
+      // Non-critical provisioning steps should never convert a successful purchase into failure.
+      // Keep warnings and return success so users are never charged without seeing their number active.
+      let activeMessagingProfileId = user.messagingProfileId || null;
+      try {
+        activeMessagingProfileId = await ensureUserMessagingProfile({
+          telnyx,
+          user,
+          countryInfo: resolvedCountryInfo,
+          webhookUrl
+        });
+
+        if (activeMessagingProfileId && phoneNumberDoc.messagingProfileId !== activeMessagingProfileId) {
+          phoneNumberDoc.messagingProfileId = activeMessagingProfileId;
+          await phoneNumberDoc.save();
+        }
+      } catch (profileErr) {
+        const profileMsg = extractTelnyxErrorMessage(profileErr);
+        provisioningWarnings.push(`Messaging profile setup pending: ${profileMsg}`);
+      }
+
+      try {
+        const attachResult = await attachNumberToMessagingProfile({
+          telnyx,
+          profileId: activeMessagingProfileId,
+          phoneNumber
+        });
+        if (attachResult.warning) {
+          provisioningWarnings.push(`Messaging attach pending: ${attachResult.warning}`);
+        }
+      } catch (attachErr) {
+        provisioningWarnings.push(`Messaging attach pending: ${extractTelnyxErrorMessage(attachErr)}`);
+      }
 
       // CONFIGURE VOICE - Set connection ID for incoming calls
       const connectionId = process.env.TELNYX_CONNECTION_ID;
@@ -704,14 +896,21 @@ router.post(
           });
           console.log(`✅ Voice connection ${connectionId} set for ${phoneNumber}`);
         } catch (voiceErr) {
-          console.warn(`⚠️ Could not set voice connection:`, voiceErr.message);
+          const voiceMsg = extractTelnyxErrorMessage(voiceErr);
+          console.warn(`⚠️ Could not set voice connection:`, voiceMsg);
+          provisioningWarnings.push(`Voice connection setup pending: ${voiceMsg}`);
         }
       }
 
-      res.json({ success: true, phoneNumber });
+      res.json({
+        success: true,
+        phoneNumber,
+        warnings: provisioningWarnings.length ? provisioningWarnings : undefined
+      });
     } catch (err) {
       console.error("PURCHASE NUMBER ERROR:", err);
-      res.status(500).json({ error: "Failed to purchase number", details: err.message });
+      const normalizedFailure = normalizePurchaseFailure(err);
+      res.status(normalizedFailure.status).json({ error: normalizedFailure.message });
     }
   }
 );
