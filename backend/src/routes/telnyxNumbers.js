@@ -4,7 +4,12 @@ import loadSubscription from "../middleware/loadSubscription.js";
 import getTelnyxClient from "../services/telnyxService.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import User from "../models/User.js";
-import { isCountrySupported, getCountryByCode, getSupportedCountries } from "../utils/countryUtils.js";
+import {
+  isCountrySupported,
+  getCountryByCode,
+  getSupportedCountries,
+  isNumberProvisioningEnabledCountry
+} from "../utils/countryUtils.js";
 
 const router = express.Router();
 const MAX_MONTHLY_NUMBER_COST = Number(process.env.TELNYX_MAX_MONTHLY_NUMBER_COST || 3.0);
@@ -30,6 +35,11 @@ const PURCHASEABLE_CHECK_BATCH_SIZE = Number(
 const regulatoryProbeCache = new Map();
 const requirementGroupCache = new Map();
 const purchasableNumberCache = new Map();
+
+function buildComingSoonMessage(countryInfo) {
+  const countryName = countryInfo?.name || "This country";
+  return `${countryName} numbers are coming soon. Right now, phone number purchase is available for United States and Norway.`;
+}
 
 function getCacheValue(store, key) {
   const hit = store.get(key);
@@ -1010,6 +1020,18 @@ router.get(
         countryCode = requestedCountry.telnyxCode;
         countryInfo = requestedCountry;
       }
+
+      if (!isNumberProvisioningEnabledCountry(countryInfo.code)) {
+        return res.json({
+          success: true,
+          numbers: [],
+          count: 0,
+          country: countryInfo.name,
+          countryCode: countryInfo.code,
+          comingSoon: true,
+          message: buildComingSoonMessage(countryInfo)
+        });
+      }
       
       const normalizedCountryCode = String(countryCode).toUpperCase();
       const isUS = normalizedCountryCode === "US";
@@ -1293,6 +1315,13 @@ router.post(
       if (!countryInfo || !isCountrySupported(countryInfo.code)) {
         return res.status(400).json({ 
           error: `Country ${countryInfo?.name || "Unknown"} is not supported. Supported countries: ${getSupportedCountries().map(c => c.name).join(", ")}` 
+        });
+      }
+
+      if (!isNumberProvisioningEnabledCountry(countryInfo.code)) {
+        return res.status(403).json({
+          error: buildComingSoonMessage(countryInfo),
+          comingSoon: true
         });
       }
       const { monthlyLimit, messagingLimit } = getNumberCostLimits(countryInfo.code);
@@ -2282,7 +2311,9 @@ router.get("/supported-countries", async (req, res) => {
       code: c.code,
       name: c.name,
       iso2: c.iso2,
-      telnyxCode: c.telnyxCode
+      telnyxCode: c.telnyxCode,
+      numberProvisioningEnabled: !!c.numberProvisioningEnabled,
+      comingSoon: !c.numberProvisioningEnabled
     }));
     res.json({ success: true, countries });
   } catch (err) {
