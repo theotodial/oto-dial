@@ -1328,7 +1328,10 @@ router.post(
           });
         }
 
-        if (!isInstantPurchasableNumber(validatedNumber)) {
+        if (
+          String(countryInfo.code || "US").toUpperCase() === "US" &&
+          !isInstantPurchasableNumber(validatedNumber)
+        ) {
           return res.status(409).json({
             error: "This number requires manual regulatory setup and cannot be instant-purchased. Please select another number."
           });
@@ -1438,6 +1441,7 @@ router.post(
         null;
 
       let candidateResolved = false;
+      let preflightWarning = null;
       const attemptedPhones = new Set([normalizePhoneNumberForOrder(phoneNumber)]);
       for (let attempt = 0; attempt < 4; attempt += 1) {
         const regulatoryProbe = await getRegulatoryRequirementsForNumber({
@@ -1476,19 +1480,21 @@ router.post(
         });
         if (!alternative) {
           if (requiresRegulatoryBundle && !selectedRequirementGroupId) {
-            return res.status(409).json({
-              error:
-                "This number needs an approved regulatory profile before purchase. Please complete regulatory setup in Telnyx or choose another number."
-            });
+            preflightWarning =
+              "Could not auto-resolve regulatory profile in preflight; attempting direct provider order.";
+          } else {
+            preflightWarning =
+              "Could not find a prevalidated alternative number; attempting direct provider order.";
           }
-          return res.status(409).json({
-            error:
-              "This number is currently not purchase-ready in provider inventory. Please refresh and choose another number."
-          });
+          candidateResolved = true;
+          break;
         }
 
         const nextPhone = normalizePhoneNumberForOrder(alternative.phone_number);
         if (attemptedPhones.has(nextPhone)) {
+          preflightWarning =
+            "Alternative inventory loop detected; attempting direct provider order.";
+          candidateResolved = true;
           break;
         }
         attemptedPhones.add(nextPhone);
@@ -1502,10 +1508,8 @@ router.post(
       }
 
       if (!candidateResolved) {
-        return res.status(409).json({
-          error:
-            "Unable to find a purchase-ready number in this country at the moment. Please try again shortly."
-        });
+        preflightWarning =
+          "Preflight could not confirm purchase-ready inventory; attempting direct provider order.";
       }
 
       // Recompute pricing snapshot if selected number was replaced.
@@ -1558,6 +1562,9 @@ router.post(
         ? `${process.env.BACKEND_URL}/api/webhooks/telnyx/sms`
         : null;
       const provisioningWarnings = [];
+      if (preflightWarning) {
+        provisioningWarnings.push(preflightWarning);
+      }
       if (normalizeDigits(phoneNumber) !== normalizeDigits(originalRequestedPhoneNumber)) {
         provisioningWarnings.push(
           `Selected number became unavailable; purchasing closest available alternative ${phoneNumber}.`
