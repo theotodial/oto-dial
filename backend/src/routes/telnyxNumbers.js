@@ -10,10 +10,10 @@ const router = express.Router();
 const MAX_MONTHLY_NUMBER_COST = Number(process.env.TELNYX_MAX_MONTHLY_NUMBER_COST || 3.0);
 const MAX_MESSAGING_RATE = Number(process.env.TELNYX_MAX_MESSAGING_RATE || 0.02);
 const MAX_MONTHLY_NUMBER_COST_NON_US = Number(
-  process.env.TELNYX_MAX_MONTHLY_NUMBER_COST_NON_US || 15.0
+  process.env.TELNYX_MAX_MONTHLY_NUMBER_COST_NON_US || 50.0
 );
 const MAX_MESSAGING_RATE_NON_US = Number(
-  process.env.TELNYX_MAX_MESSAGING_RATE_NON_US || 0.2
+  process.env.TELNYX_MAX_MESSAGING_RATE_NON_US || 1.0
 );
 
 function getNumberCostLimits(countryCode = "US") {
@@ -32,6 +32,41 @@ function getNumberCostLimits(countryCode = "US") {
 
 function normalizeDigits(value) {
   return String(value || "").replace(/\D/g, "");
+}
+
+function resolveSupportedCountryCode(value) {
+  if (!value) return null;
+  const normalized = String(value).trim();
+  const byCode = getCountryByCode(normalized);
+  if (byCode?.code) {
+    return byCode.code;
+  }
+  const byName = getSupportedCountries().find(
+    (country) => String(country.name || "").toLowerCase() === normalized.toLowerCase()
+  );
+  return byName?.code || null;
+}
+
+function matchesRequestedCountry(numberData, requestedCountryCode) {
+  const requested = resolveSupportedCountryCode(requestedCountryCode);
+  if (!requested) return true;
+
+  const rawSignals = [
+    numberData?.country_code,
+    numberData?.country,
+    numberData?.region_information?.country_code,
+    numberData?.region_information?.country,
+    numberData?.region_information?.country_name,
+    numberData?.region_information?.country_iso
+  ].filter(Boolean);
+
+  const resolvedSignals = rawSignals
+    .map((signal) => resolveSupportedCountryCode(signal))
+    .filter(Boolean);
+
+  // If Telnyx does not provide explicit country metadata, trust the country filter.
+  if (!resolvedSignals.length) return true;
+  return resolvedSignals.includes(requested);
 }
 
 function dedupeNumbersByPhone(rawNumbers = []) {
@@ -176,6 +211,11 @@ router.get(
         .filter(num => {
           // Must have phone_number
           if (!num.phone_number) {
+            return false;
+          }
+
+          // Enforce country match with selected country.
+          if (!matchesRequestedCountry(num, countryInfo.code)) {
             return false;
           }
 
@@ -390,6 +430,13 @@ router.post(
 
         if (!validatedNumber) {
           return res.status(400).json({ error: "Number not available" });
+        }
+
+        // If frontend provided selected country, enforce exact country consistency.
+        if (req.body.countryCode && !matchesRequestedCountry(validatedNumber, req.body.countryCode)) {
+          return res.status(400).json({
+            error: "Selected number does not belong to the chosen country. Please refresh search and pick another number."
+          });
         }
 
         // HARD BLOCK CHECKS - Same logic as search endpoint for consistency
