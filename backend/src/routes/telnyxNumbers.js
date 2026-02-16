@@ -92,6 +92,72 @@ async function listAvailableNumbersSafe(telnyx, { filter, size = 200 }) {
   }
 }
 
+function hasMeaningfulValue(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  if (typeof value === "string") return value.trim().length > 0;
+  return true;
+}
+
+function hasRegulatoryRequirementSignals(numberData = {}) {
+  const requirementFields = [
+    numberData.requirement_group_id,
+    numberData.requirements,
+    numberData.regulatory_requirements,
+    numberData.regulatory_requirement,
+    numberData.requirement_types,
+    numberData.regulatory_bundle_requirements,
+    numberData.compliance_requirements,
+    numberData.number_requirements
+  ];
+
+  if (requirementFields.some(hasMeaningfulValue)) {
+    return true;
+  }
+
+  const nestedRequirementFields = [
+    numberData.region_information?.requirements,
+    numberData.region_information?.regulatory_requirements,
+    numberData.region_information?.regulatory_requirement
+  ];
+
+  return nestedRequirementFields.some(hasMeaningfulValue);
+}
+
+function isInstantPurchasableNumber(numberData = {}) {
+  // Prefer safe filtering: hide numbers with known fulfillment/regulatory flags
+  // that commonly fail at checkout for self-serve purchases.
+  if (numberData.quickship === false) return false;
+  if (numberData.reservable === false) return false;
+  if (hasRegulatoryRequirementSignals(numberData)) return false;
+  return true;
+}
+
+function isAllowedNumberType(numberType, countryCode = "US") {
+  if (!numberType) return true;
+  const normalizedType = String(numberType).toLowerCase();
+  const normalizedCountry = String(countryCode || "US").toUpperCase();
+
+  const commonAllowed = new Set(["local", "geographic"]);
+  if (normalizedCountry === "US") {
+    return commonAllowed.has(normalizedType);
+  }
+
+  // International inventories may classify equivalent local inventory
+  // as mobile/national/fixed line.
+  const internationalAllowed = new Set([
+    ...commonAllowed,
+    "mobile",
+    "national",
+    "fixed_line",
+    "fixed line",
+    "fixedline"
+  ]);
+  return internationalAllowed.has(normalizedType);
+}
+
 function extractTelnyxErrorMessage(err) {
   if (!err) return "Unknown Telnyx error";
   return (
@@ -116,8 +182,24 @@ function resolveOrderedNumberId(orderData, fallbackNumber) {
   return nestedNumber || orderData?.id || fallbackNumber;
 }
 
-async function createNumberOrderWithFallback(telnyx, phoneNumber) {
+function buildOrderPhoneNumberPayload(phoneNumber, options = {}) {
+  const payload = { phone_number: phoneNumber };
+  if (options.connectionId) {
+    payload.connection_id = options.connectionId;
+  }
+  if (options.messagingProfileId) {
+    payload.messaging_profile_id = options.messagingProfileId;
+  }
+  if (options.requirementGroupId) {
+    payload.requirement_group_id = options.requirementGroupId;
+  }
+  return payload;
+}
+
+async function createNumberOrderWithFallback(telnyx, phoneNumber, options = {}) {
+  const enrichedPayload = buildOrderPhoneNumberPayload(phoneNumber, options);
   const attempts = [
+    { phone_numbers: [enrichedPayload] },
     { phone_numbers: [{ phone_number: phoneNumber }] },
     { phone_numbers: [phoneNumber] }
   ];
@@ -133,6 +215,53 @@ async function createNumberOrderWithFallback(telnyx, phoneNumber) {
   }
 
   throw lastError || new Error("Failed to create Telnyx number order");
+}
+
+async function lookupNumberCandidateForPurchase({
+  telnyx,
+  countryCode,
+  phoneNumber,
+  maxPages = 8,
+  pageSize = 250
+}) {
+  const requestedDigits = normalizeDigits(phoneNumber);
+  if (!requestedDigits) return null;
+
+  const exactAttempts = [
+    { country_code: countryCode, phone_number: phoneNumber },
+    { phone_number: phoneNumber }
+  ];
+
+  for (const filter of exactAttempts) {
+    const exactRows = await listAvailableNumbersSafe(telnyx, { filter, size: 50 });
+    const exactMatch = exactRows.find(
+      (item) => normalizeDigits(item?.phone_number) === requestedDigits
+    );
+    if (exactMatch) return exactMatch;
+  }
+
+  // Fallback: paginate country inventory and match locally.
+  for (let page = 1; page <= maxPages; page += 1) {
+    try {
+      const response = await telnyx.availablePhoneNumbers.list({
+        filter: { country_code: countryCode },
+        page: { size: pageSize, number: page }
+      });
+      const rows = response?.data || [];
+      const matched = rows.find(
+        (item) => normalizeDigits(item?.phone_number) === requestedDigits
+      );
+      if (matched) return matched;
+      if (!rows.length || rows.length < pageSize) {
+        break;
+      }
+    } catch (err) {
+      console.warn("Paged number lookup failed:", extractTelnyxErrorMessage(err));
+      break;
+    }
+  }
+
+  return null;
 }
 
 function buildWhitelistedDestinations(countryInfo) {
@@ -238,6 +367,13 @@ function normalizePurchaseFailure(err) {
   const raw = extractTelnyxErrorMessage(err);
   const message = raw || "Failed to purchase number";
 
+  if (/regulatory|requirement|bundle|compliance|document/i.test(message)) {
+    return {
+      status: 409,
+      message:
+        "This number needs regulatory verification and cannot be instant-purchased. Please choose another available number."
+    };
+  }
   if (/number limit reached|active subscription required|phone number required|not eligible|not available/i.test(message)) {
     return { status: 400, message };
   }
@@ -381,6 +517,12 @@ router.get(
             return false;
           }
 
+          // Hide numbers that are commonly non-instant-buyable
+          // (regulatory/manual fulfillment required).
+          if (!isInstantPurchasableNumber(num)) {
+            return false;
+          }
+
           // No toll-free numbers (check various field names)
           const numberType = num.number_type || num.type || num.region_information?.region_type;
           if (numberType === 'toll-free' || numberType === 'toll_free' || 
@@ -388,8 +530,8 @@ router.get(
             return false;
           }
 
-          // Only local numbers (explicitly reject non-local)
-          if (numberType && numberType !== 'local' && numberType !== 'geographic') {
+          // Keep number type consistent with country capabilities.
+          if (!isAllowedNumberType(numberType, countryInfo.code)) {
             return false;
           }
 
@@ -463,6 +605,7 @@ router.get(
           phone_number: num.phone_number,
           monthly_cost: Number(num.monthly_cost || num.monthly_rate || num.cost?.monthly || 0),
           carrier_group: num.carrier?.group || num.carrier_group || 'Unknown',
+          number_type: num.number_type || num.type || num.region_information?.region_type || null,
           region_information: num.region_information || null,
           features: num.features || [],
           country: countryInfo.name,
@@ -556,42 +699,30 @@ router.post(
       let validatedMessagingRate = 0;
 
       try {
-        const numberDetails = await telnyx.availablePhoneNumbers.list({
-          filter: { 
-            country_code: detectedCountryCode,
-            phone_number: phoneNumber
-          }
+        validatedNumber = await lookupNumberCandidateForPurchase({
+          telnyx,
+          countryCode: detectedCountryCode,
+          phoneNumber,
+          maxPages: 10,
+          pageSize: 250
         });
-        let candidates = numberDetails?.data || [];
-
-        // Some Telnyx accounts do not support exact phone_number filtering reliably.
-        // Fall back to a broader country query and match locally.
-        if (!candidates.length) {
-          try {
-            const fallbackDetails = await telnyx.availablePhoneNumbers.list({
-              filter: { country_code: detectedCountryCode },
-              page: { size: 500 }
-            });
-            candidates = fallbackDetails?.data || [];
-          } catch (fallbackErr) {
-            console.warn("Fallback number availability lookup failed:", fallbackErr.message);
-          }
-        }
-
-        const requestedDigits = String(phoneNumber).replace(/\D/g, "");
-        validatedNumber = candidates.find((item) => {
-          const itemDigits = String(item?.phone_number || "").replace(/\D/g, "");
-          return itemDigits && itemDigits === requestedDigits;
-        }) || null;
 
         if (!validatedNumber) {
-          return res.status(400).json({ error: "Number not available" });
+          return res.status(409).json({
+            error: "Number is no longer available. Please refresh search and choose another number."
+          });
         }
 
         // If frontend provided selected country, enforce exact country consistency.
         if (req.body.countryCode && !matchesRequestedCountry(validatedNumber, req.body.countryCode)) {
           return res.status(400).json({
             error: "Selected number does not belong to the chosen country. Please refresh search and pick another number."
+          });
+        }
+
+        if (!isInstantPurchasableNumber(validatedNumber)) {
+          return res.status(409).json({
+            error: "This number requires manual regulatory setup and cannot be instant-purchased. Please select another number."
           });
         }
 
@@ -613,10 +744,10 @@ router.post(
           });
         }
 
-        // Only local numbers
-        if (numberType && numberType !== 'local' && numberType !== 'geographic') {
+        // Keep number type consistent with country capabilities.
+        if (!isAllowedNumberType(numberType, countryInfo.code)) {
           return res.status(403).json({ 
-            error: "Number not eligible: Only local numbers allowed" 
+            error: `Number not eligible: Unsupported number type (${numberType}) for instant purchase` 
           });
         }
 
@@ -738,7 +869,14 @@ router.post(
       console.log(`   Monthly Cost: $${Number(validatedMonthlyCost || 0).toFixed(2)}`);
       console.log(`   Messaging Rate: $${Number(validatedMessagingRate || 0).toFixed(4)}`);
 
-      const order = await createNumberOrderWithFallback(telnyx, phoneNumber);
+      const order = await createNumberOrderWithFallback(telnyx, phoneNumber, {
+        connectionId: process.env.TELNYX_CONNECTION_ID || null,
+        messagingProfileId: user.messagingProfileId || null,
+        requirementGroupId:
+          validatedNumber?.requirement_group_id ||
+          validatedNumber?.requirements_group_id ||
+          null
+      });
 
       // Get number cost details and region information from Telnyx
       let finalMonthlyCost = validatedMonthlyCost;

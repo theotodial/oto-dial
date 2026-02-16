@@ -27,8 +27,14 @@ export async function purchaseNumber(phoneNumber, countryCode) {
     payload.countryCode = countryCode;
   }
   const response = await API.post('/api/numbers/purchase', payload);
-  if (response.error) {
-    throw new Error(response.error);
+  if (response.error || response?.data?.success === false) {
+    const message =
+      response.error ||
+      response?.data?.error ||
+      response?.data?.details ||
+      response?.data?.message ||
+      'Failed to purchase number';
+    throw new Error(message);
   }
   return response.data;
 }
