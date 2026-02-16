@@ -174,9 +174,10 @@ function hasRegulatoryRequirementSignals(numberData = {}) {
 function isInstantPurchasableNumber(numberData = {}) {
   // Require predictable inventory behavior so users don't click numbers
   // that are likely to fail immediately.
-  if (numberData.best_effort === true) return false;
-  if (numberData.quickship === false) return false;
-  if (numberData.reservable === false) return false;
+  // Some countries return only best_effort/non-reservable inventory even when
+  // those numbers are still purchasable. Keep this check permissive and defer
+  // strict gating to purchase-time validations.
+  if (numberData.quickship === false && numberData.reservable === false) return false;
   return true;
 }
 
@@ -682,6 +683,98 @@ async function selectPurchaseReadyNumbers({
   return selected;
 }
 
+function sanitizeSearchCandidateForPurchase(number, countryCode) {
+  const normalizedPhone = normalizePhoneNumberForOrder(number?.phone_number);
+  if (!normalizedPhone) return null;
+
+  return {
+    ...number,
+    phone_number: normalizedPhone,
+    monthly_cost: extractMonthlyCost(number),
+    messaging_rate: extractMessagingRate(number),
+    number_type: extractNumberType(number),
+    region_information: normalizeRegionInformation(number?.region_information),
+    features: extractFeatureNames(number),
+    countryCode: countryCode
+  };
+}
+
+async function findAlternativePurchaseNumber({
+  telnyx,
+  countryCode,
+  excludePhoneNumber,
+  limit = 1
+}) {
+  const normalizedCountry = String(countryCode || "").toUpperCase();
+  const { monthlyLimit, messagingLimit } = getNumberCostLimits(normalizedCountry);
+  const excludeDigits = normalizeDigits(excludePhoneNumber);
+
+  const searchFilters = [
+    { country_code: normalizedCountry, features: ["voice", "sms"], quickship: true, reservable: true },
+    { country_code: normalizedCountry, features: ["voice"], quickship: true, reservable: true },
+    { country_code: normalizedCountry, features: ["voice", "sms"] },
+    { country_code: normalizedCountry, features: ["voice"] },
+    { country_code: normalizedCountry }
+  ];
+
+  let rawCandidates = [];
+  for (const filter of searchFilters) {
+    const rows = await listAvailableNumbersSafe(telnyx, { filter, size: 250 });
+    if (rows.length) {
+      rawCandidates = dedupeNumbersByPhone([...rawCandidates, ...rows]);
+    }
+    if (rawCandidates.length >= 250) {
+      break;
+    }
+  }
+
+  if (!rawCandidates.length) return null;
+
+  const filtered = rawCandidates
+    .map((row) => sanitizeSearchCandidateForPurchase(row, normalizedCountry))
+    .filter(Boolean)
+    .filter((row) => {
+      if (normalizeDigits(row.phone_number) === excludeDigits) return false;
+      if (!matchesRequestedCountry(row, normalizedCountry)) return false;
+      if (!isInstantPurchasableNumber(row)) return false;
+      if (!isAllowedNumberType(row.number_type, normalizedCountry)) return false;
+
+      const cleanNumber = normalizeDigits(row.phone_number);
+      if (cleanNumber.length < 7) return false;
+
+      const carrierGroup = String(
+        row.carrier?.group ||
+          row.carrier_group ||
+          row.carrier?.carrier_group ||
+          normalizeRegionInformation(row.region_information)?.carrier_group ||
+          ""
+      ).toUpperCase();
+      if (["C", "D", "E", "F", "G", "H"].includes(carrierGroup)) return false;
+
+      if (row.monthly_cost > monthlyLimit) return false;
+      if (row.messaging_rate > messagingLimit) return false;
+
+      if (row.premium === true || row.is_premium === true) return false;
+      if (row.features.some((f) => f === "premium_routing" || f === "toll_free")) return false;
+
+      return true;
+    })
+    .sort((a, b) => a.monthly_cost - b.monthly_cost)
+    .slice(0, Math.max(limit * 10, 20));
+
+  if (!filtered.length) return null;
+
+  const ready = await selectPurchaseReadyNumbers({
+    telnyx,
+    countryCode: normalizedCountry,
+    candidates: filtered,
+    limit: Math.max(limit * 3, 3),
+    allowRequirementGroupCreate: true
+  });
+
+  return ready[0] || filtered[0] || null;
+}
+
 function summarizeOrderFailure(orderData) {
   const status = String(orderData?.status || "").toLowerCase();
   const requirementsMet = orderData?.requirements_met;
@@ -1097,13 +1190,20 @@ router.get(
         // Sort by monthly cost (cheapest first)
         .sort((a, b) => a.monthly_cost - b.monthly_cost);
 
-      const filteredNumbers = await selectPurchaseReadyNumbers({
+      let filteredNumbers = await selectPurchaseReadyNumbers({
         telnyx,
         countryCode: countryInfo.code,
         candidates: candidateNumbers,
         limit: 50,
         allowRequirementGroupCreate: true
       });
+
+      // Fail-open fallback for live traffic: never hide all inventory because
+      // provider precheck endpoints are temporarily unavailable.
+      const usedFallbackInventory = !filteredNumbers.length && candidateNumbers.length > 0;
+      if (usedFallbackInventory) {
+        filteredNumbers = candidateNumbers.slice(0, 50);
+      }
 
       console.log(
         `📞 Number search ${countryInfo.code}: candidates=${candidateNumbers.length}, purchaseReady=${filteredNumbers.length}`
@@ -1113,6 +1213,7 @@ router.get(
         success: true,
         numbers: filteredNumbers,
         count: filteredNumbers.length,
+        precheckFallback: usedFallbackInventory,
         country: countryInfo.name,
         countryCode: countryInfo.code
       });
@@ -1142,7 +1243,7 @@ router.post(
       if (!requestedPhoneNumber) {
         return res.status(400).json({ error: "Phone number required" });
       }
-      const phoneNumber = normalizePhoneNumberForOrder(requestedPhoneNumber);
+      let phoneNumber = normalizePhoneNumberForOrder(requestedPhoneNumber);
 
       const telnyx = getTelnyxClient();
       if (!telnyx) {
@@ -1344,9 +1445,46 @@ router.post(
         allowRequirementGroupCreate: true
       });
       if (!purchaseReady) {
+        const alternative = await findAlternativePurchaseNumber({
+          telnyx,
+          countryCode: detectedCountryCode,
+          excludePhoneNumber: phoneNumber,
+          limit: 1
+        });
+        if (!alternative) {
+          return res.status(409).json({
+            error:
+              "This number is currently not purchase-ready in provider inventory. Please refresh and choose another number."
+          });
+        }
+
+        phoneNumber = normalizePhoneNumberForOrder(alternative.phone_number);
+        validatedNumber = alternative;
+        detectedNumberType = extractNumberType(alternative);
+        selectedRequirementGroupId =
+          alternative.requirement_group_id ||
+          alternative.requirements_group_id ||
+          (await getApprovedRequirementGroupId({
+            telnyx,
+            countryCode: detectedCountryCode,
+            numberType: detectedNumberType,
+            allowCreate: true
+          }));
+      }
+
+      // Recompute pricing snapshot if selected number was replaced.
+      validatedCarrierGroup =
+        validatedNumber?.carrier?.group ||
+        validatedNumber?.carrier_group ||
+        validatedNumber?.carrier?.carrier_group ||
+        normalizeRegionInformation(validatedNumber?.region_information)?.carrier_group ||
+        validatedCarrierGroup;
+      validatedMonthlyCost = extractMonthlyCost(validatedNumber);
+      validatedMessagingRate = extractMessagingRate(validatedNumber);
+      if (validatedMonthlyCost > monthlyLimit || validatedMessagingRate > messagingLimit) {
         return res.status(409).json({
           error:
-            "This number is currently not purchase-ready in provider inventory. Please refresh and choose another number."
+            "Selected number changed in provider inventory and is no longer eligible. Please refresh and choose again."
         });
       }
 
