@@ -15,6 +15,35 @@ const MAX_MONTHLY_NUMBER_COST_NON_US = Number(
 const MAX_MESSAGING_RATE_NON_US = Number(
   process.env.TELNYX_MAX_MESSAGING_RATE_NON_US || 1.0
 );
+const REGULATORY_CACHE_TTL_MS = Number(process.env.TELNYX_REGULATORY_CACHE_TTL_MS || 600000);
+const REQUIREMENT_GROUP_CACHE_TTL_MS = Number(process.env.TELNYX_REQUIREMENT_GROUP_CACHE_TTL_MS || 600000);
+const PURCHASEABLE_CHECK_MAX_CANDIDATES = Number(
+  process.env.TELNYX_PURCHASEABLE_CHECK_MAX_CANDIDATES || 120
+);
+const PURCHASEABLE_CHECK_BATCH_SIZE = Number(
+  process.env.TELNYX_PURCHASEABLE_CHECK_BATCH_SIZE || 8
+);
+
+const regulatoryProbeCache = new Map();
+const requirementGroupCache = new Map();
+const purchasableNumberCache = new Map();
+
+function getCacheValue(store, key) {
+  const hit = store.get(key);
+  if (!hit) return undefined;
+  if (Date.now() > hit.expiresAt) {
+    store.delete(key);
+    return undefined;
+  }
+  return hit.value;
+}
+
+function setCacheValue(store, key, value, ttlMs) {
+  store.set(key, {
+    value,
+    expiresAt: Date.now() + Math.max(1000, Number(ttlMs || 1000))
+  });
+}
 
 function getNumberCostLimits(countryCode = "US") {
   const normalized = String(countryCode || "US").toUpperCase();
@@ -200,6 +229,70 @@ function normalizePhoneNumberType(numberType, countryCode = "US") {
   return "local";
 }
 
+function normalizeRegionInformation(value) {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    return value[0] || null;
+  }
+  if (typeof value === "object") {
+    return value;
+  }
+  return null;
+}
+
+function extractFeatureNames(numberData = {}) {
+  const rawFeatures = numberData.features || numberData.capabilities || [];
+  if (!Array.isArray(rawFeatures)) return [];
+  return rawFeatures
+    .map((item) => {
+      if (typeof item === "string") return item.toLowerCase();
+      if (item && typeof item === "object") {
+        const name = item.name || item.feature || item.type;
+        return String(name || "").toLowerCase();
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+function extractNumberType(numberData = {}) {
+  return (
+    numberData.number_type ||
+    numberData.type ||
+    numberData.phone_number_type ||
+    null
+  );
+}
+
+function extractMonthlyCost(numberData = {}) {
+  const costInfoMonthly =
+    numberData.cost_information?.monthly_cost ||
+    numberData.costInformation?.monthly_cost ||
+    numberData.cost_information?.monthly ||
+    null;
+  const val = Number(
+    costInfoMonthly ??
+      numberData.monthly_cost ??
+      numberData.monthly_rate ??
+      numberData.cost?.monthly ??
+      normalizeRegionInformation(numberData.region_information)?.monthly_cost ??
+      numberData.pricing?.monthly ??
+      0
+  );
+  return Number.isFinite(val) ? val : 0;
+}
+
+function extractMessagingRate(numberData = {}) {
+  const val = Number(
+    numberData.messaging_rate ??
+      numberData.cost?.messaging ??
+      numberData.pricing?.messaging ??
+      normalizeRegionInformation(numberData.region_information)?.messaging_rate ??
+      0
+  );
+  return Number.isFinite(val) ? val : 0;
+}
+
 function extractTelnyxErrorMessage(err) {
   if (!err) return "Unknown Telnyx error";
   return (
@@ -317,9 +410,16 @@ async function lookupNumberCandidateForPurchase({
 async function getApprovedRequirementGroupId({
   telnyx,
   countryCode,
-  numberType
+  numberType,
+  allowCreate = true
 }) {
   const normalizedType = normalizePhoneNumberType(numberType, countryCode);
+  const cacheKey = `${String(countryCode || "").toUpperCase()}|${normalizedType}`;
+  const cached = getCacheValue(requirementGroupCache, cacheKey);
+  if (typeof cached !== "undefined") {
+    return cached;
+  }
+
   const candidateTypes = Array.from(
     new Set([normalizedType, "local", "mobile", "national", "shared_cost"].filter(Boolean))
   );
@@ -338,7 +438,9 @@ async function getApprovedRequirementGroupId({
         ? groupsResponse
         : groupsResponse?.data || [];
       if (Array.isArray(groups) && groups.length > 0) {
-        return groups[0]?.id || null;
+        const id = groups[0]?.id || null;
+        setCacheValue(requirementGroupCache, cacheKey, id, REQUIREMENT_GROUP_CACHE_TTL_MS);
+        return id;
       }
     } catch (err) {
       console.warn(
@@ -360,7 +462,9 @@ async function getApprovedRequirementGroupId({
       ? fallbackResponse
       : fallbackResponse?.data || [];
     if (Array.isArray(fallback) && fallback.length > 0) {
-      return fallback[0]?.id || null;
+      const id = fallback[0]?.id || null;
+      setCacheValue(requirementGroupCache, cacheKey, id, REQUIREMENT_GROUP_CACHE_TTL_MS);
+      return id;
     }
   } catch (err) {
     console.warn(
@@ -369,53 +473,213 @@ async function getApprovedRequirementGroupId({
     );
   }
 
-  // Auto-create requirement group when possible (works in countries
-  // where no extra docs are needed and group can be approved instantly).
-  for (const type of candidateTypes) {
-    try {
-      const created = await telnyx.requirementGroups.create({
-        action: "ordering",
-        country_code: countryCode,
-        phone_number_type: type,
-        customer_reference: `auto-${countryCode}-${type}-${Date.now()}`
-      });
-      const createdGroup = created?.data || created;
-      if (createdGroup?.id && createdGroup?.status === "approved") {
-        return createdGroup.id;
+  if (allowCreate) {
+    // Auto-create requirement group when possible (works in countries
+    // where no extra docs are needed and group can be approved instantly).
+    for (const type of candidateTypes) {
+      try {
+        const created = await telnyx.requirementGroups.create({
+          action: "ordering",
+          country_code: countryCode,
+          phone_number_type: type,
+          customer_reference: `auto-${countryCode}-${type}-${Date.now()}`
+        });
+        const createdGroup = created?.data || created;
+        if (createdGroup?.id && createdGroup?.status === "approved") {
+          setCacheValue(
+            requirementGroupCache,
+            cacheKey,
+            createdGroup.id,
+            REQUIREMENT_GROUP_CACHE_TTL_MS
+          );
+          return createdGroup.id;
+        }
+      } catch (err) {
+        console.warn(
+          `Requirement group auto-create failed for ${countryCode}/${type}:`,
+          extractTelnyxErrorMessage(err)
+        );
       }
-    } catch (err) {
-      console.warn(
-        `Requirement group auto-create failed for ${countryCode}/${type}:`,
-        extractTelnyxErrorMessage(err)
-      );
     }
   }
 
+  setCacheValue(requirementGroupCache, cacheKey, null, 120000);
   return null;
 }
 
 async function getRegulatoryRequirementsForNumber({ telnyx, phoneNumber }) {
+  const normalizedPhone = normalizePhoneNumberForOrder(phoneNumber);
+  if (!normalizedPhone) {
+    return { requirements: [], hasRequirements: false, record: null, lookupUnavailable: false };
+  }
+
+  const cached = getCacheValue(regulatoryProbeCache, normalizedPhone);
+  if (typeof cached !== "undefined") {
+    return cached;
+  }
+
   try {
     const response = await telnyx.phoneNumbersRegulatoryRequirements.retrieve({
-      filter: { phone_number: phoneNumber }
+      filter: { phone_number: normalizedPhone }
     });
     const rows = response?.data || [];
-    const normalizedInput = normalizeDigits(phoneNumber);
+    const normalizedInput = normalizeDigits(normalizedPhone);
     const selectedRow =
       rows.find((row) => normalizeDigits(row?.phone_number) === normalizedInput) ||
       rows[0] ||
       null;
     const requirements = selectedRow?.regulatory_requirements || [];
-    return {
+    const payload = {
       requirements,
       hasRequirements: requirements.length > 0,
-      record: selectedRow
+      record: selectedRow,
+      lookupUnavailable: false
     };
+    setCacheValue(regulatoryProbeCache, normalizedPhone, payload, REGULATORY_CACHE_TTL_MS);
+    return payload;
   } catch (err) {
     // Not all accounts/regions expose this endpoint consistently.
     console.warn("Regulatory requirement lookup failed:", extractTelnyxErrorMessage(err));
-    return { requirements: [], hasRequirements: false, record: null };
+    const payload = {
+      requirements: [],
+      hasRequirements: false,
+      record: null,
+      lookupUnavailable: true
+    };
+    setCacheValue(regulatoryProbeCache, normalizedPhone, payload, 120000);
+    return payload;
   }
+}
+
+async function isNumberPurchaseReady({
+  telnyx,
+  countryCode,
+  number,
+  allowRequirementGroupCreate = false
+}) {
+  const normalizedCountry = String(countryCode || "").toUpperCase();
+  const phone = normalizePhoneNumberForOrder(number?.phone_number);
+  if (!phone) return false;
+
+  const cacheKey = `${normalizedCountry}|${phone}|${allowRequirementGroupCreate ? "create" : "nocreate"}`;
+  const cached = getCacheValue(purchasableNumberCache, cacheKey);
+  if (typeof cached !== "undefined") {
+    return cached;
+  }
+
+  // Soft inventory checks first.
+  if (!isInstantPurchasableNumber(number)) {
+    setCacheValue(purchasableNumberCache, cacheKey, false, 120000);
+    return false;
+  }
+
+  const numberType = extractNumberType(number);
+
+  if (!isAllowedNumberType(numberType, normalizedCountry)) {
+    setCacheValue(purchasableNumberCache, cacheKey, false, 120000);
+    return false;
+  }
+
+  const regulatoryProbe = await getRegulatoryRequirementsForNumber({
+    telnyx,
+    phoneNumber: phone
+  });
+
+  const requirementSignal = hasRegulatoryRequirementSignals(number);
+  const requiresRegulatoryBundle = requirementSignal || regulatoryProbe.hasRequirements;
+
+  // If regulatory endpoint is unavailable, fallback to requirement-group availability
+  // for non-US/CA markets to avoid showing non-buyable numbers.
+  if (regulatoryProbe.lookupUnavailable && !requiresRegulatoryBundle) {
+    if (!["US", "CA"].includes(normalizedCountry)) {
+      const fallbackGroupId = await getApprovedRequirementGroupId({
+        telnyx,
+        countryCode: normalizedCountry,
+        numberType,
+        allowCreate: allowRequirementGroupCreate
+      });
+      const ok = Boolean(fallbackGroupId);
+      setCacheValue(purchasableNumberCache, cacheKey, ok, 120000);
+      return ok;
+    }
+
+    setCacheValue(purchasableNumberCache, cacheKey, true, 120000);
+    return true;
+  }
+
+  if (!requiresRegulatoryBundle) {
+    setCacheValue(purchasableNumberCache, cacheKey, true, REGULATORY_CACHE_TTL_MS);
+    return true;
+  }
+
+  const requirementGroupId =
+    number?.requirement_group_id ||
+    number?.requirements_group_id ||
+    (await getApprovedRequirementGroupId({
+      telnyx,
+      countryCode: normalizedCountry,
+      numberType,
+      allowCreate: allowRequirementGroupCreate
+    }));
+
+  const ok = Boolean(requirementGroupId);
+  setCacheValue(purchasableNumberCache, cacheKey, ok, ok ? REGULATORY_CACHE_TTL_MS : 120000);
+  return ok;
+}
+
+async function selectPurchaseReadyNumbers({
+  telnyx,
+  countryCode,
+  candidates,
+  limit = 50
+}) {
+  const selected = [];
+  const safeCandidates = Array.isArray(candidates) ? candidates : [];
+  if (!safeCandidates.length) {
+    return selected;
+  }
+
+  const batchSize = Math.max(1, PURCHASEABLE_CHECK_BATCH_SIZE);
+  const maxCandidates = Math.max(limit, PURCHASEABLE_CHECK_MAX_CANDIDATES);
+
+  for (let index = 0; index < safeCandidates.length && index < maxCandidates; index += batchSize) {
+    if (selected.length >= limit) {
+      break;
+    }
+
+    const batch = safeCandidates.slice(index, index + batchSize);
+    const checks = await Promise.all(
+      batch.map(async (candidate) => {
+        try {
+          const ready = await isNumberPurchaseReady({
+            telnyx,
+            countryCode,
+            number: candidate,
+            allowRequirementGroupCreate: false
+          });
+          return { candidate, ready };
+        } catch (err) {
+          console.warn(
+            "Purchase-ready precheck failed:",
+            candidate?.phone_number,
+            extractTelnyxErrorMessage(err)
+          );
+          return { candidate, ready: false };
+        }
+      })
+    );
+
+    for (const entry of checks) {
+      if (entry.ready) {
+        selected.push(entry.candidate);
+      }
+      if (selected.length >= limit) {
+        break;
+      }
+    }
+  }
+
+  return selected;
 }
 
 function summarizeOrderFailure(orderData) {
@@ -735,7 +999,7 @@ router.get(
 
       // RELAXED FILTERING - Allow more numbers but still prioritize cheapest
       // This is the cost control layer but less restrictive
-      const filteredNumbers = allResults
+      const candidateNumbers = allResults
         .filter(num => {
           // Must have phone_number
           if (!num.phone_number) {
@@ -754,7 +1018,7 @@ router.get(
           }
 
           // No toll-free numbers (check various field names)
-          const numberType = num.number_type || num.type || num.region_information?.region_type;
+          const numberType = extractNumberType(num);
           if (numberType === 'toll-free' || numberType === 'toll_free' || 
               num.toll_free === true || num.is_toll_free === true) {
             return false;
@@ -786,39 +1050,23 @@ router.get(
           }
 
           // RELAXED: Only block explicit premium features
-          const features = num.features || num.capabilities || [];
-          if (Array.isArray(features)) {
-            // Only block if explicitly premium routing or toll-free
-            if (features.some(f => f === 'premium_routing' || f === 'toll_free')) {
-              return false;
-            }
+          const features = extractFeatureNames(num);
+          if (features.some((feature) => feature === "premium_routing" || feature === "toll_free")) {
+            return false;
           }
           if (num.premium === true || num.is_premium === true) {
             return false;
           }
 
           // Allow up to configured monthly cap.
-          const monthlyCost = Number(
-            num.monthly_cost ||
-              num.monthly_rate ||
-              num.cost?.monthly ||
-              num.region_information?.monthly_cost ||
-              num.pricing?.monthly ||
-              0
-          );
+          const monthlyCost = extractMonthlyCost(num);
           if (monthlyCost > monthlyLimit) {
             console.log(`🚫 COST CONTROL: Blocked expensive number ${num.phone_number}: $${monthlyCost.toFixed(2)}/month (limit: $${monthlyLimit.toFixed(2)})`);
             return false;
           }
 
           // Allow messaging rates up to configured cap.
-          const messagingRate = Number(
-            num.messaging_rate ||
-              num.cost?.messaging ||
-              num.pricing?.messaging ||
-              num.region_information?.messaging_rate ||
-              0
-          );
+          const messagingRate = extractMessagingRate(num);
           if (messagingRate > messagingLimit) {
             console.log(`🚫 COST CONTROL: Blocked number with high messaging rate ${num.phone_number}: $${messagingRate.toFixed(4)}/msg (limit: $${messagingLimit.toFixed(4)})`);
             return false;
@@ -832,18 +1080,29 @@ router.get(
           return true;
         })
         .map(num => ({
-          phone_number: num.phone_number,
-          monthly_cost: Number(num.monthly_cost || num.monthly_rate || num.cost?.monthly || 0),
+          phone_number: normalizePhoneNumberForOrder(num.phone_number),
+          monthly_cost: extractMonthlyCost(num),
+          messaging_rate: extractMessagingRate(num),
           carrier_group: num.carrier?.group || num.carrier_group || 'Unknown',
-          number_type: num.number_type || num.type || num.region_information?.region_type || null,
-          region_information: num.region_information || null,
-          features: num.features || [],
+          number_type: extractNumberType(num),
+          region_information: normalizeRegionInformation(num.region_information),
+          features: extractFeatureNames(num),
+          quickship: typeof num.quickship === "boolean" ? num.quickship : null,
+          reservable: typeof num.reservable === "boolean" ? num.reservable : null,
+          best_effort: typeof num.best_effort === "boolean" ? num.best_effort : null,
+          requirement_group_id: num.requirement_group_id || num.requirements_group_id || null,
           country: countryInfo.name,
           countryCode: countryInfo.code
         }))
         // Sort by monthly cost (cheapest first)
-        .sort((a, b) => a.monthly_cost - b.monthly_cost)
-        .slice(0, 50); // Show up to 50 numbers (increased from 20)
+        .sort((a, b) => a.monthly_cost - b.monthly_cost);
+
+      const filteredNumbers = await selectPurchaseReadyNumbers({
+        telnyx,
+        countryCode: countryInfo.code,
+        candidates: candidateNumbers,
+        limit: 50
+      });
 
       res.json({ 
         success: true,
@@ -966,10 +1225,7 @@ router.post(
         }
 
         // No toll-free numbers
-        const numberType =
-          validatedNumber.number_type ||
-          validatedNumber.type ||
-          validatedNumber.region_information?.region_type;
+        const numberType = extractNumberType(validatedNumber);
         detectedNumberType = numberType;
         if (numberType === 'toll-free' || numberType === 'toll_free' || 
             validatedNumber.toll_free === true || validatedNumber.is_toll_free === true) {
@@ -998,7 +1254,7 @@ router.post(
           validatedNumber.carrier?.group ||
           validatedNumber.carrier_group ||
           validatedNumber.carrier?.carrier_group ||
-          validatedNumber.region_information?.carrier_group ||
+          normalizeRegionInformation(validatedNumber.region_information)?.carrier_group ||
           null;
         if (validatedCarrierGroup) {
           const groupUpper = String(validatedCarrierGroup).toUpperCase();
@@ -1010,16 +1266,11 @@ router.post(
         }
 
         // No explicit premium features
-        const features = validatedNumber.features || validatedNumber.capabilities || [];
-        if (Array.isArray(features)) {
-          if (features.some(f => 
-            f === 'premium_routing' || 
-            f === 'toll_free'
-          )) {
-            return res.status(403).json({ 
-              error: "Number not eligible: Premium features not allowed" 
-            });
-          }
+        const features = extractFeatureNames(validatedNumber);
+        if (features.some((feature) => feature === "premium_routing" || feature === "toll_free")) {
+          return res.status(403).json({
+            error: "Number not eligible: Premium features not allowed"
+          });
         }
         if (validatedNumber.premium === true || validatedNumber.is_premium === true) {
           return res.status(403).json({ 
@@ -1028,14 +1279,7 @@ router.post(
         }
 
         // Check monthly cost - CRITICAL
-        validatedMonthlyCost = Number(
-          validatedNumber.monthly_cost ||
-            validatedNumber.monthly_rate ||
-            validatedNumber.cost?.monthly ||
-            validatedNumber.region_information?.monthly_cost ||
-            validatedNumber.pricing?.monthly ||
-            0
-        );
+        validatedMonthlyCost = extractMonthlyCost(validatedNumber);
         if (validatedMonthlyCost > monthlyLimit) {
           return res.status(403).json({ 
             error: `Number not eligible: Monthly cost ($${validatedMonthlyCost.toFixed(2)}) exceeds $${monthlyLimit.toFixed(2)} limit` 
@@ -1043,13 +1287,7 @@ router.post(
         }
 
         // Check messaging rate - CRITICAL
-        validatedMessagingRate = Number(
-          validatedNumber.messaging_rate ||
-            validatedNumber.cost?.messaging ||
-            validatedNumber.pricing?.messaging ||
-            validatedNumber.region_information?.messaging_rate ||
-            0
-        );
+        validatedMessagingRate = extractMessagingRate(validatedNumber);
         if (validatedMessagingRate > messagingLimit) {
           return res.status(403).json({ 
             error: `Number not eligible: Messaging rate ($${validatedMessagingRate.toFixed(4)}) exceeds $${messagingLimit.toFixed(4)} limit` 
@@ -1074,13 +1312,16 @@ router.post(
         phoneNumber
       });
       const requiresRegulatoryBundle =
-        regulatoryProbe.hasRequirements || hasRegulatoryRequirementSignals(validatedNumber);
+        regulatoryProbe.hasRequirements ||
+        hasRegulatoryRequirementSignals(validatedNumber) ||
+        (regulatoryProbe.lookupUnavailable && !["US", "CA"].includes(String(detectedCountryCode || "").toUpperCase()));
 
       if (requiresRegulatoryBundle && !selectedRequirementGroupId) {
         selectedRequirementGroupId = await getApprovedRequirementGroupId({
           telnyx,
           countryCode: detectedCountryCode,
-          numberType: detectedNumberType
+          numberType: detectedNumberType,
+          allowCreate: true
         });
       }
 
