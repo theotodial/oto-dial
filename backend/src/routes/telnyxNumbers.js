@@ -128,29 +128,25 @@ function dedupeNumbersByPhone(rawNumbers = []) {
 }
 
 async function listAvailableNumbersSafe(telnyx, { filter, size = 200 }) {
-  const normalizedFilter = {
-    ...(filter || {}),
-    limit: Math.max(1, Number(size || 200))
-  };
+  const safeSize = Math.min(Math.max(1, Number(size || 200)), 200);
+  const attempts = [
+    { filter: filter || {} },
+    { filter: { ...(filter || {}), limit: safeSize } },
+    { filter: filter || {}, page: { size: safeSize } }
+  ];
 
-  try {
-    const response = await telnyx.availablePhoneNumbers.list({
-      filter: normalizedFilter
-    });
-    return response?.data || [];
-  } catch (err) {
-    // Backward-compatible fallback for API variants accepting page params.
+  let lastError = null;
+  for (const payload of attempts) {
     try {
-      const response = await telnyx.availablePhoneNumbers.list({
-        filter: filter || {},
-        page: { size: Math.max(1, Number(size || 200)) }
-      });
+      const response = await telnyx.availablePhoneNumbers.list(payload);
       return response?.data || [];
-    } catch (fallbackErr) {
-      console.warn("Available number lookup failed:", extractTelnyxErrorMessage(fallbackErr));
-      return [];
+    } catch (err) {
+      lastError = err;
     }
   }
+
+  console.warn("Available number lookup failed:", extractTelnyxErrorMessage(lastError));
+  return [];
 }
 
 function buildPhoneFilterVariants(requestedDigits = "") {
@@ -1034,40 +1030,6 @@ router.get(
       const { monthlyLimit, messagingLimit } = getNumberCostLimits(countryInfo?.code || "US");
       const enforceCostCaps = isUS || ENFORCE_NON_US_COST_CAPS;
 
-      // Multi-pass strategy with broad country/type coverage.
-      const phoneTypeVariants = isUS
-        ? [undefined, "local"]
-        : [undefined, "local", "mobile", "national", "toll_free"];
-      const featureVariants = [
-        ["voice", "sms"],
-        ["voice"],
-        undefined
-      ];
-      const shippingVariants = [
-        { quickship: true, reservable: true },
-        { quickship: true },
-        {}
-      ];
-
-      const baseAttemptFilters = [];
-      for (const ship of shippingVariants) {
-        for (const phoneType of phoneTypeVariants) {
-          for (const features of featureVariants) {
-            const filter = {
-              country_code: normalizedCountryCode,
-              ...ship
-            };
-            if (phoneType) {
-              filter.phone_number_type = phoneType;
-            }
-            if (features) {
-              filter.features = features;
-            }
-            baseAttemptFilters.push(filter);
-          }
-        }
-      }
-
       const pushResults = async (attemptFilter, pageSize = 200) => {
         const rows = await listAvailableNumbersSafe(telnyx, {
           filter: attemptFilter,
@@ -1079,8 +1041,13 @@ router.get(
       let allResults = [];
 
       if (hasUSAreaCode) {
-        for (const attempt of baseAttemptFilters) {
-          const rows = await pushResults({ ...attempt, npa: areaCode }, 250);
+        const usAreaCodeFilters = [
+          { country_code: "US", npa: areaCode, features: ["voice", "sms"], quickship: true },
+          { country_code: "US", npa: areaCode, features: ["voice"] },
+          { country_code: "US", npa: areaCode }
+        ];
+        for (const attempt of usAreaCodeFilters) {
+          const rows = await pushResults(attempt, 200);
           if (rows.length) {
             allResults = dedupeNumbersByPhone([...allResults, ...rows]);
           }
@@ -1088,34 +1055,29 @@ router.get(
       } else if (isUS) {
         // US fallback: popular area-codes first, then broad country search.
         const popularAreaCodes = ["212", "310", "415", "646", "213", "323", "424", "818", "347", "929"];
+        const usAreaCodeFilters = (npa) => ([
+          { country_code: "US", npa, features: ["voice", "sms"], quickship: true },
+          { country_code: "US", npa, features: ["voice"] },
+          { country_code: "US", npa }
+        ]);
         for (const npa of popularAreaCodes.slice(0, 6)) {
-          for (const attempt of baseAttemptFilters) {
-            const rows = await pushResults({ ...attempt, npa }, 40);
+          for (const attempt of usAreaCodeFilters(npa)) {
+            const rows = await pushResults(attempt, 80);
             if (rows.length) {
               allResults = dedupeNumbersByPhone([...allResults, ...rows]);
             }
           }
-          if (allResults.length >= 120) {
+          if (allResults.length >= 180) {
             break;
           }
         }
 
         if (!allResults.length) {
-          for (const attempt of baseAttemptFilters) {
-            const rows = await pushResults(attempt, 250);
-            if (rows.length) {
-              allResults = dedupeNumbersByPhone([...allResults, ...rows]);
-            }
-          }
+          allResults = await listCountryWideCandidates(telnyx, "US");
         }
       } else {
         // Non-US: always query the selected country directly (no US area-code assumptions).
-        for (const attempt of baseAttemptFilters) {
-          const rows = await pushResults(attempt, 300);
-          if (rows.length) {
-            allResults = dedupeNumbersByPhone([...allResults, ...rows]);
-          }
-        }
+        allResults = await listCountryWideCandidates(telnyx, normalizedCountryCode);
       }
 
       if (!allResults || allResults.length === 0) {
@@ -1238,30 +1200,17 @@ router.get(
         // Sort by monthly cost (cheapest first)
         .sort((a, b) => a.monthly_cost - b.monthly_cost);
 
-      let filteredNumbers = await selectPurchaseReadyNumbers({
-        telnyx,
-        countryCode: countryInfo.code,
-        candidates: candidateNumbers,
-        limit: 50,
-        allowRequirementGroupCreate: true
-      });
-
-      // Fail-open fallback for live traffic: never hide all inventory because
-      // provider precheck endpoints are temporarily unavailable.
-      const usedFallbackInventory = !filteredNumbers.length && candidateNumbers.length > 0;
-      if (usedFallbackInventory) {
-        filteredNumbers = candidateNumbers.slice(0, 50);
-      }
+      const filteredNumbers = candidateNumbers.slice(0, 50);
 
       console.log(
-        `📞 Number search ${countryInfo.code}: candidates=${candidateNumbers.length}, purchaseReady=${filteredNumbers.length}`
+        `📞 Number search ${countryInfo.code}: candidates=${candidateNumbers.length}, returned=${filteredNumbers.length}`
       );
 
       res.json({ 
         success: true,
         numbers: filteredNumbers,
         count: filteredNumbers.length,
-        precheckFallback: usedFallbackInventory,
+        precheckFallback: false,
         country: countryInfo.name,
         countryCode: countryInfo.code
       });
