@@ -236,11 +236,12 @@ function BlogPost() {
 
           {/* Featured Image */}
           {blog.featuredImage && (
-            <div className="mb-8">
+            <div className="mb-8 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 p-3">
               <img
                 src={blog.featuredImage}
                 alt={blog.title}
-                className="w-full rounded-xl"
+                className="w-full max-h-[520px] object-contain rounded-lg"
+                loading="lazy"
               />
             </div>
           )}
@@ -250,12 +251,7 @@ function BlogPost() {
 
           {/* Content */}
           <div
-            className="blog-content mb-12"
-            style={{
-              fontSize: '1.125rem',
-              lineHeight: '1.75rem',
-              color: 'rgb(55 65 81)'
-            }}
+            className="blog-content mb-12 text-lg leading-8"
             dangerouslySetInnerHTML={{ __html: blog.content }}
           />
 
@@ -295,11 +291,16 @@ function BlogPost() {
                     className="block bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 hover:shadow-lg transition-shadow overflow-hidden"
                   >
                     {related.featuredImage && (
-                      <img
-                        src={related.featuredImage}
-                        alt={related.title}
-                        className="w-full h-32 object-cover"
-                      />
+                      <div className="w-full bg-gray-50 dark:bg-slate-900/50 border-b border-gray-100 dark:border-slate-700/60">
+                        <div className="h-40 flex items-center justify-center p-3">
+                          <img
+                            src={related.featuredImage}
+                            alt={related.title}
+                            className="w-full h-full object-contain rounded-lg"
+                            loading="lazy"
+                          />
+                        </div>
+                      </div>
                     )}
                     <div className="p-4">
                       <h3 className="font-bold text-gray-900 dark:text-white mb-2 line-clamp-2">

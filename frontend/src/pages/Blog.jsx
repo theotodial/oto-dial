@@ -225,11 +225,16 @@ function Blog() {
                         className="block bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg transition-shadow overflow-hidden"
                       >
                         {blog.featuredImage && (
-                          <img
-                            src={blog.featuredImage}
-                            alt={blog.title}
-                            className="w-full h-48 object-cover"
-                          />
+                          <div className="w-full bg-gray-50 dark:bg-slate-900/50 border-b border-gray-100 dark:border-slate-700/60">
+                            <div className="h-56 flex items-center justify-center p-3">
+                              <img
+                                src={blog.featuredImage}
+                                alt={blog.title}
+                                className="w-full h-full object-contain rounded-lg"
+                                loading="lazy"
+                              />
+                            </div>
+                          </div>
                         )}
                         <div className="p-6">
                           {blog.category && (
