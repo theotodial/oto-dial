@@ -114,10 +114,22 @@ router.get("/affiliates/:id/users", requireAdmin, async (req, res) => {
     }
 
     const referrals = await AffiliateReferral.find({ affiliateId: affiliate._id })
-      .populate("userId", "email name createdAt activeSubscriptionId")
+      .populate({
+        path: "userId",
+        select: "email name createdAt activeSubscriptionId referredByAffiliate",
+        match: {
+          referredByAffiliate: affiliate._id
+        }
+      })
       .sort({ createdAt: -1 });
 
-    const userIds = referrals.map((item) => item.userId?._id).filter(Boolean);
+    const filteredReferrals = referrals.filter(
+      (item) =>
+        Boolean(item.userId) &&
+        String(item.userId.referredByAffiliate || "") === String(affiliate._id)
+    );
+
+    const userIds = filteredReferrals.map((item) => item.userId?._id).filter(Boolean);
     const subscriptions = await Subscription.find({
       userId: { $in: userIds },
       status: { $in: ["active", "suspended", "pending_activation", "cancelled"] }
@@ -133,7 +145,7 @@ router.get("/affiliates/:id/users", requireAdmin, async (req, res) => {
 
     return res.json({
       success: true,
-      users: referrals.map((referral) => {
+      users: filteredReferrals.map((referral) => {
         const user = referral.userId;
         const subscription = user
           ? latestByUser.get(user._id.toString()) || null
@@ -262,6 +274,13 @@ router.post("/affiliates/:id/users/:userId/assign-unlimited", requireAdmin, asyn
       return res.status(404).json({
         success: false,
         error: "User not found"
+      });
+    }
+
+    if (String(user.referredByAffiliate || "") !== String(affiliate._id)) {
+      return res.status(400).json({
+        success: false,
+        error: "User is not linked to this affiliate"
       });
     }
 

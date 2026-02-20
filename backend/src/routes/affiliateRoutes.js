@@ -53,6 +53,19 @@ async function assertReferredUser(affiliateId, userId) {
     affiliateId,
     userId
   });
+  if (!referral) {
+    return null;
+  }
+
+  const user = await User.findOne({
+    _id: userId,
+    referredByAffiliate: affiliateId
+  }).select("_id");
+
+  if (!user) {
+    return null;
+  }
+
   return referral;
 }
 
@@ -66,15 +79,27 @@ router.get("/me", async (req, res) => {
 router.get("/users", async (req, res) => {
   try {
     const referrals = await AffiliateReferral.find({ affiliateId: req.affiliateId })
-      .populate("userId", "email name createdAt activeSubscriptionId")
+      .populate({
+        path: "userId",
+        select: "email name createdAt activeSubscriptionId referredByAffiliate",
+        match: {
+          referredByAffiliate: req.affiliateId
+        }
+      })
       .sort({ createdAt: -1 });
 
-    const userIds = referrals
+    const filteredReferrals = referrals.filter(
+      (entry) =>
+        Boolean(entry.userId) &&
+        String(entry.userId.referredByAffiliate || "") === String(req.affiliateId)
+    );
+
+    const userIds = filteredReferrals
       .map((entry) => entry.userId?._id)
       .filter(Boolean);
     const latestSubscriptions = await getLatestSubscriptionsForUsers(userIds);
 
-    const users = referrals.map((referral) => {
+    const users = filteredReferrals.map((referral) => {
       const user = referral.userId;
       const subscription = user
         ? latestSubscriptions.get(user._id.toString()) || null
