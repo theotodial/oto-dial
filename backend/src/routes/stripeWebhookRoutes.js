@@ -8,6 +8,8 @@ import {
   isEventProcessed,
   markEventProcessed
 } from "../services/stripeSubscriptionService.js";
+import { createAdminNotification } from "../services/adminNotificationService.js";
+import { markAffiliateReferralPaid } from "../services/affiliateService.js";
 
 const router = express.Router();
 
@@ -121,6 +123,46 @@ router.post("/", async (req, res) => {
 
     // Mark event as successfully processed
     await markEventProcessed(eventId, eventType, result.success, result.error || null);
+
+    if (
+      result.success &&
+      (eventType === "invoice.payment_succeeded" || eventType === "invoice.paid")
+    ) {
+      const invoiceObject = event?.data?.object || {};
+      const userId =
+        result?.userId ||
+        invoiceObject?.metadata?.userId ||
+        invoiceObject?.lines?.data?.[0]?.metadata?.userId ||
+        null;
+      const subscriptionId = result?.subscriptionId || null;
+
+      if (userId) {
+        await markAffiliateReferralPaid({ userId, subscriptionId }).catch((err) => {
+          console.warn(
+            `⚠️ Failed to mark affiliate referral paid for user ${userId}:`,
+            err.message
+          );
+        });
+      }
+
+      await createAdminNotification({
+        type: "sale",
+        title: "Stripe payment received",
+        message: `Invoice ${invoiceObject?.id || "unknown"} was paid`,
+        sourceModel: "StripeInvoice",
+        sourceId: invoiceObject?.id || eventId,
+        dedupeKey: `stripe_sale:${invoiceObject?.id || eventId}`,
+        data: {
+          amountPaid: Number(invoiceObject?.amount_paid || 0) / 100,
+          currency: invoiceObject?.currency || "usd",
+          userId: userId ? String(userId) : null,
+          stripeCustomerId: invoiceObject?.customer || null,
+          stripeSubscriptionId: invoiceObject?.subscription || null
+        }
+      }).catch((err) => {
+        console.warn("⚠️ Failed to create sale notification:", err.message);
+      });
+    }
 
     if (result.success) {
       console.log(`✅ Event ${eventId} processed successfully`);

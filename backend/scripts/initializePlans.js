@@ -7,6 +7,11 @@ import {
   STRIPE_ADDON_PRICE_IDS
 } from "../src/config/stripeCatalog.js";
 import {
+  AFFILIATE_UNLIMITED_LIMITS,
+  AFFILIATE_UNLIMITED_PLAN_NAME,
+  AFFILIATE_UNLIMITED_PLAN_TYPE
+} from "../src/constants/affiliatePlan.js";
+import {
   UNLIMITED_INTERNAL_LIMITS,
   UNLIMITED_PLAN_NAME,
   UNLIMITED_PLAN_TYPE
@@ -79,6 +84,27 @@ async function initializePlans() {
         dailySmsLimit: UNLIMITED_INTERNAL_LIMITS.dailySmsLimit,
         dailyMinutesLimit: UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit,
         dedicatedNumbers: UNLIMITED_INTERNAL_LIMITS.dedicatedNumbers,
+        displayUnlimited: true,
+        active: true
+      },
+      {
+        type: AFFILIATE_UNLIMITED_PLAN_TYPE,
+        name: AFFILIATE_UNLIMITED_PLAN_NAME,
+        planName: AFFILIATE_UNLIMITED_PLAN_NAME,
+        price: 119.99,
+        currency: "USD",
+        stripeProductId: "prod_Tj3I37A5KEUqJG",
+        stripePriceId: STRIPE_PLAN_PRICE_IDS[AFFILIATE_UNLIMITED_PLAN_TYPE],
+        limits: {
+          minutesTotal: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
+          smsTotal: AFFILIATE_UNLIMITED_LIMITS.monthlySmsLimit,
+          numbersTotal: AFFILIATE_UNLIMITED_LIMITS.dedicatedNumbers
+        },
+        monthlySmsLimit: AFFILIATE_UNLIMITED_LIMITS.monthlySmsLimit,
+        monthlyMinutesLimit: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
+        dailySmsLimit: AFFILIATE_UNLIMITED_LIMITS.dailySmsLimit,
+        dailyMinutesLimit: AFFILIATE_UNLIMITED_LIMITS.dailyMinutesLimit,
+        dedicatedNumbers: AFFILIATE_UNLIMITED_LIMITS.dedicatedNumbers,
         displayUnlimited: true,
         active: true
       }

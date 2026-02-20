@@ -6,6 +6,12 @@ import {
   getCanonicalAddonPriceId
 } from "../config/stripeCatalog.js";
 import {
+  AFFILIATE_UNLIMITED_LIMITS,
+  AFFILIATE_UNLIMITED_PLAN_NAME,
+  AFFILIATE_UNLIMITED_PLAN_TYPE,
+  AFFILIATE_UNLIMITED_STRIPE_PRICE_ID
+} from "../constants/affiliatePlan.js";
+import {
   UNLIMITED_INTERNAL_LIMITS,
   UNLIMITED_PLAN_NAME,
   UNLIMITED_PLAN_TYPE
@@ -55,12 +61,47 @@ export async function ensureStripeCatalogConsistency() {
     console.log("✅ Seeded missing Unlimited plan");
   }
 
+  const existingAffiliateUnlimited = await Plan.findOne({
+    $or: [
+      { type: AFFILIATE_UNLIMITED_PLAN_TYPE },
+      { stripePriceId: AFFILIATE_UNLIMITED_STRIPE_PRICE_ID },
+      { name: new RegExp(`^${AFFILIATE_UNLIMITED_PLAN_NAME}$`, "i") }
+    ]
+  });
+
+  if (!existingAffiliateUnlimited) {
+    await Plan.create({
+      type: AFFILIATE_UNLIMITED_PLAN_TYPE,
+      name: AFFILIATE_UNLIMITED_PLAN_NAME,
+      planName: AFFILIATE_UNLIMITED_PLAN_NAME,
+      price: 119.99,
+      currency: "USD",
+      stripeProductId: "prod_Tj3I37A5KEUqJG",
+      stripePriceId: AFFILIATE_UNLIMITED_STRIPE_PRICE_ID,
+      limits: {
+        minutesTotal: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
+        smsTotal: AFFILIATE_UNLIMITED_LIMITS.monthlySmsLimit,
+        numbersTotal: AFFILIATE_UNLIMITED_LIMITS.dedicatedNumbers
+      },
+      monthlySmsLimit: AFFILIATE_UNLIMITED_LIMITS.monthlySmsLimit,
+      monthlyMinutesLimit: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
+      dailySmsLimit: AFFILIATE_UNLIMITED_LIMITS.dailySmsLimit,
+      dailyMinutesLimit: AFFILIATE_UNLIMITED_LIMITS.dailyMinutesLimit,
+      dedicatedNumbers: AFFILIATE_UNLIMITED_LIMITS.dedicatedNumbers,
+      displayUnlimited: true,
+      active: true
+    });
+    updates.plansUpdated += 1;
+    console.log("✅ Seeded missing Affiliate Unlimited plan");
+  }
+
   const plans = await Plan.find({ active: true });
   for (const plan of plans) {
     const looksUnlimited =
-      plan.type === UNLIMITED_PLAN_TYPE ||
+      plan.type !== AFFILIATE_UNLIMITED_PLAN_TYPE &&
+      (plan.type === UNLIMITED_PLAN_TYPE ||
       /unlimited/i.test(String(plan.name || "")) ||
-      /unlimited/i.test(String(plan.planName || ""));
+      /unlimited/i.test(String(plan.planName || "")));
 
     if (looksUnlimited && !plan.displayUnlimited) {
       plan.type = UNLIMITED_PLAN_TYPE;

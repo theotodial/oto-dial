@@ -3,6 +3,7 @@ import Blog from "../models/Blog.js";
 import User from "../models/User.js";
 import authenticateUser from "../middleware/authenticateUser.js";
 import requireAdmin from "../middleware/requireAdmin.js";
+import { createAdminNotification } from "../services/adminNotificationService.js";
 
 const router = express.Router();
 
@@ -250,6 +251,19 @@ router.post("/admin", authenticateUser, requireAdmin, async (req, res) => {
 
     await blog.save();
 
+    await createAdminNotification({
+      type: "blog",
+      title: "Blog created",
+      message: `New blog "${blog.title}" was created`,
+      sourceModel: "Blog",
+      sourceId: blog._id,
+      data: {
+        blogId: blog._id.toString(),
+        title: blog.title,
+        status: blog.status
+      }
+    });
+
     console.log("Blog created successfully:", blog._id);
     res.status(201).json({ success: true, blog });
   } catch (error) {
@@ -329,6 +343,21 @@ router.put("/admin/:id", authenticateUser, requireAdmin, async (req, res) => {
     }
 
     await blog.save();
+
+    if (status !== undefined) {
+      await createAdminNotification({
+        type: "blog",
+        title: "Blog updated",
+        message: `Blog "${blog.title}" status changed to ${blog.status}`,
+        sourceModel: "Blog",
+        sourceId: blog._id,
+        data: {
+          blogId: blog._id.toString(),
+          title: blog.title,
+          status: blog.status
+        }
+      });
+    }
 
     console.log("Blog updated successfully:", blog._id);
     res.json({ success: true, blog });

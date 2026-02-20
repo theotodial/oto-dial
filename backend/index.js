@@ -25,6 +25,8 @@ validateEnv();
 // ROUTES
 // ========================
 import authRoutes from "./src/routes/auth.js";
+import affiliateAuthRoutes from "./src/routes/affiliateAuth.js";
+import affiliateRoutes from "./src/routes/affiliateRoutes.js";
 import callRoutes from "./src/routes/callRoutes.js";
 import dialerRoutes from "./src/routes/dialerRoutes.js";
 import numberRoutes from "./src/routes/numberRoutes.js";
@@ -110,6 +112,7 @@ app.use("/webhooks/telnyx", telnyxWebhookRoutes);
 // PUBLIC
 // ========================
 app.use("/api/auth", authRoutes);
+app.use("/api/affiliate/auth", affiliateAuthRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/admin/auth", adminAuthRoutes); // Admin auth (no auth middleware needed for login)
 
@@ -132,6 +135,7 @@ app.use("/api/usage", authenticateUser, loadSubscription, usageStatisticsRoutes)
 app.use("/api/support", supportRoutes); // Support routes (authenticateUser is in the route file)
 app.use("/api/blog", blogRoutes); // Blog routes (public and admin routes inside)
 app.use("/api/analytics", analyticsRoutes); // Analytics routes (public and admin routes inside)
+app.use("/api/affiliate", affiliateRoutes);
 // Admin routes: Only require authentication, NOT subscription (admins don't need subscriptions)
 app.use("/api/admin", authenticateUser, adminRoutes);
 

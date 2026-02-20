@@ -117,10 +117,15 @@ function Signup() {
   const [showCountryDropdown, setShowCountryDropdown] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [affiliateCode, setAffiliateCode] = useState('');
 
-  const buildGoogleOAuthUrl = () => {
+  const buildGoogleOAuthUrl = (refCode = '') => {
     const apiBase = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
-    return apiBase ? `${apiBase}/api/auth/google` : '/api/auth/google';
+    const baseUrl = apiBase ? `${apiBase}/api/auth/google` : '/api/auth/google';
+    if (!refCode) {
+      return baseUrl;
+    }
+    return `${baseUrl}?affiliateCode=${encodeURIComponent(refCode)}`;
   };
 
   useEffect(() => {
@@ -130,8 +135,12 @@ function Signup() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const oauthError = params.get('oauth_error');
+    const refParam = (params.get('ref') || '').trim().toUpperCase();
     if (oauthError) {
       setError(oauthError);
+    }
+    if (refParam) {
+      setAffiliateCode(refParam);
     }
   }, [location.search]);
 
@@ -166,7 +175,8 @@ function Signup() {
         firstName: formData.firstName,
         lastName: formData.lastName,
         phone: formData.countryCode + formData.phone,
-        name: `${formData.firstName} ${formData.lastName}`.trim()
+        name: `${formData.firstName} ${formData.lastName}`.trim(),
+        affiliateCode: affiliateCode || undefined
       });
       if (!result.success) throw new Error(result.error);
 
@@ -184,7 +194,7 @@ function Signup() {
   };
 
   const handleGoogleSignup = () => {
-    window.location.href = buildGoogleOAuthUrl();
+    window.location.href = buildGoogleOAuthUrl(affiliateCode);
   };
 
   return (
@@ -195,6 +205,11 @@ function Signup() {
         {error && (
           <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-lg text-sm">
             {error}
+          </div>
+        )}
+        {affiliateCode && (
+          <div className="mb-4 p-3 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 rounded-lg text-sm">
+            Affiliate referral detected: <span className="font-semibold">{affiliateCode}</span>
           </div>
         )}
 

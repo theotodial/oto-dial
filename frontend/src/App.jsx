@@ -7,6 +7,7 @@ import Navbar from './components/Navbar';
 import DashboardLayout from './components/DashboardLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
+import AffiliateProtectedRoute from './components/AffiliateProtectedRoute';
 import IncomingCallNotification from './components/IncomingCallNotification';
 import GlobalCallOverlay from './components/GlobalCallOverlay';
 import AnalyticsTracker from './components/AnalyticsTracker';
@@ -39,6 +40,11 @@ import Support from './pages/Support';
 import Contact from './pages/Contact';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
+import AffiliateLanding from './pages/AffiliateLanding';
+import AffiliateSignup from './pages/AffiliateSignup';
+import AffiliateLogin from './pages/AffiliateLogin';
+import AffiliateOAuthSuccess from './pages/AffiliateOAuthSuccess';
+import AffiliateDashboard from './pages/AffiliateDashboard';
 import AdminLogin from './pages/admin/AdminLogin';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminDashboardEnhanced from './pages/admin/AdminDashboardEnhanced';
@@ -53,6 +59,8 @@ import AdminTeam from './pages/admin/AdminTeam';
 import AdminBlog from './pages/admin/AdminBlog';
 import AdminAnalytics from './pages/admin/AdminAnalytics';
 import AdminAnalyticsDetail from './pages/admin/AdminAnalyticsDetail';
+import AdminAffiliates from './pages/admin/AdminAffiliates';
+import AdminNotifications from './pages/admin/AdminNotifications';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
 import AdminProtectedRoute from './components/AdminProtectedRoute';
@@ -135,6 +143,43 @@ function App() {
                   <Navbar />
                   <Terms />
                 </>
+              }
+            />
+
+            <Route
+              path="/affiliate"
+              element={
+                <>
+                  <Navbar />
+                  <AffiliateLanding />
+                </>
+              }
+            />
+            <Route
+              path="/affiliate/signup"
+              element={
+                <>
+                  <Navbar />
+                  <AffiliateSignup />
+                </>
+              }
+            />
+            <Route
+              path="/affiliate/login"
+              element={
+                <>
+                  <Navbar />
+                  <AffiliateLogin />
+                </>
+              }
+            />
+            <Route path="/affiliate/oauth-success" element={<AffiliateOAuthSuccess />} />
+            <Route
+              path="/affiliate/dashboard"
+              element={
+                <AffiliateProtectedRoute>
+                  <AffiliateDashboard />
+                </AffiliateProtectedRoute>
               }
             />
             
@@ -299,6 +344,26 @@ function App() {
                   </AdminLayout>
                 </AdminProtectedRoute>
               } 
+            />
+            <Route
+              path="/adminbobby/affiliates"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <AdminAffiliates />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+            <Route
+              path="/adminbobby/notifications"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <AdminNotifications />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
             />
 
             {/* Protected Routes - Require authentication */}
