@@ -87,6 +87,32 @@ export const CallProvider = ({ children }) => {
   const isInitializingRef = useRef(isInitializing);
   const notificationRef = useRef(null);
   const applyAudioRoutingRef = useRef(null);
+  const callListenerRegistryRef = useRef(new WeakSet());
+  const handledIncomingCallIdsRef = useRef(new Set());
+
+  const getCallDirection = useCallback((call = {}) => {
+    const rawDirection =
+      call.direction ||
+      call.options?.direction ||
+      call.options?.callDirection ||
+      call.callDirection ||
+      null;
+    return String(rawDirection || "").toLowerCase();
+  }, []);
+
+  const getCallUniqueId = useCallback((call = {}) => {
+    return (
+      call.id ||
+      call.callId ||
+      call.callID ||
+      call.call_control_id ||
+      call.callControlId ||
+      call.options?.callID ||
+      call.options?.callId ||
+      call.options?.call_control_id ||
+      null
+    );
+  }, []);
   
   // Keep refs in sync with state
   useEffect(() => {
@@ -233,6 +259,7 @@ export const CallProvider = ({ children }) => {
         setError(null);
         setIncomingCall(null);
         setIsMinimized(false);
+        handledIncomingCallIdsRef.current.clear();
       } catch (stateErr) {
         console.error('Error resetting call state (handled):', stateErr);
         // Try to at least set to idle
@@ -251,6 +278,7 @@ export const CallProvider = ({ children }) => {
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
         }
+        handledIncomingCallIdsRef.current.clear();
       } catch (e) {
         console.error('Critical: Failed to reset call state:', e);
       }
@@ -291,8 +319,10 @@ export const CallProvider = ({ children }) => {
       console.warn('Error attaching audio stream (non-critical):', audioErr);
     }
     
-    // Check if this is an incoming call that we haven't handled yet (use ref)
-    if (call.state === 'ringing' && call.direction === 'incoming' && callStateRef.current !== CALL_STATES.INCOMING) {
+    const callDirection = getCallDirection(call);
+
+    // Only route to incoming handler for true incoming calls.
+    if (call.state === 'ringing' && callDirection === 'incoming' && callStateRef.current !== CALL_STATES.INCOMING) {
       try {
         console.log('📱 Detected incoming call in state change handler');
         handleIncomingCallEventRef.current(call);
@@ -429,111 +459,104 @@ export const CallProvider = ({ children }) => {
         }
       }
     }
-  }, [startDurationTimer, handleCallEnd]); // Removed applyAudioRouting - use ref instead
+  }, [startDurationTimer, handleCallEnd, getCallDirection]); // Removed applyAudioRouting - use ref instead
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
-    // Prevent duplicate handling (use ref)
-    if (callStateRef.current === CALL_STATES.INCOMING && currentCallRef.current === call) {
-      console.log('📱 Incoming call already being handled, ignoring duplicate');
+    if (!call) {
       return;
     }
-    
-    const callerNumber = call.options?.remoteCallerNumber || 
-                         call.options?.callerNumber || 
-                         call.options?.caller_id_number ||
-                         call.remoteCallerNumber ||
-                         call.callerNumber ||
-                         call.from ||
-                         'Unknown';
-    
-    console.log('📱 ========== INCOMING CALL EVENT ==========');
-    console.log('📱 Caller Number:', callerNumber);
-    console.log('📱 Call State:', call.state);
-    console.log('📱 Call Object:', call);
-    console.log('📱 Call Options:', call.options);
-    console.log('📱 =========================================');
-    
+
+    const direction = getCallDirection(call);
+    if (direction && direction !== "incoming") {
+      return;
+    }
+
+    const callUniqueId = getCallUniqueId(call);
+    if (callUniqueId && handledIncomingCallIdsRef.current.has(callUniqueId)) {
+      console.log("📱 Duplicate incoming call event ignored:", callUniqueId);
+      return;
+    }
+    if (callUniqueId) {
+      handledIncomingCallIdsRef.current.add(callUniqueId);
+      if (handledIncomingCallIdsRef.current.size > 100) {
+        const recentIds = Array.from(handledIncomingCallIdsRef.current).slice(-50);
+        handledIncomingCallIdsRef.current = new Set(recentIds);
+      }
+    }
+
+    // Prevent duplicate handling by object reference.
+    if (callStateRef.current === CALL_STATES.INCOMING && currentCallRef.current === call) {
+      console.log("📱 Incoming call already being handled, ignoring duplicate");
+      return;
+    }
+
+    const callerNumber =
+      call.options?.remoteCallerNumber ||
+      call.options?.callerNumber ||
+      call.options?.caller_id_number ||
+      call.remoteCallerNumber ||
+      call.callerNumber ||
+      call.from ||
+      "Unknown";
+
     currentCallRef.current = call;
-    
+
     setRemoteNumber(callerNumber);
     setCallState(CALL_STATES.INCOMING);
     setIncomingCall(call);
     setIsMinimized(false);
-    
-    // Start WhatsApp-style ringtone immediately
-    console.log('📱 Starting incoming call ringtone...');
+
+    // Start ringtone once for incoming flow.
     soundManager.startRingtone();
 
-    // Show browser notification (even if app is in background)
-    if ('Notification' in window) {
-      if (Notification.permission === 'granted') {
+    // Show browser notification (even if app is in background).
+    if ("Notification" in window) {
+      if (Notification.permission === "granted") {
         try {
-          // Close any existing notification
           if (notificationRef.current) {
             notificationRef.current.close();
           }
-          
-          const notification = new Notification('📞 Incoming Call', {
+
+          const notification = new Notification("📞 Incoming Call", {
             body: `Call from ${callerNumber}`,
-            icon: '/logo.svg',
-            tag: 'incoming-call',
+            icon: "/logo.svg",
+            tag: "incoming-call",
             requireInteraction: true,
-            badge: '/logo.svg',
-            vibrate: [200, 100, 200] // Vibrate pattern for mobile
+            badge: "/logo.svg",
+            vibrate: [200, 100, 200]
           });
-          
+
           notificationRef.current = notification;
-          
-          // When notification is clicked, ensure call UI is visible
+
+          // Keep call window visible; avoid hard navigations/reloads.
           notification.onclick = () => {
-            console.log('📱 Notification clicked - ensuring call UI is visible');
             window.focus();
-            
-            // Ensure call is not minimized and state is visible
             setIsMinimized(false);
-            
-            // Always restore/ensure incoming call state is set
             if (currentCallRef.current) {
-              console.log('📱 Ensuring incoming call state is visible from notification click');
               setCallState(CALL_STATES.INCOMING);
               setRemoteNumber(callerNumber);
               setIncomingCall(currentCallRef.current);
-              setIsMinimized(false); // Explicitly ensure not minimized
             }
-            
-            // Navigate to recents if not already there
-            if (window.location.pathname !== '/recents') {
-              window.location.href = '/recents';
-            } else {
-              // If already on recents, just ensure the UI updates
-              // Force a small delay to ensure state updates are processed
-              setTimeout(() => {
-                setIsMinimized(false);
-                if (currentCallRef.current) {
-                  setCallState(CALL_STATES.INCOMING);
-                  setRemoteNumber(callerNumber);
-                }
-              }, 100);
-            }
-            
             notification.close();
             notificationRef.current = null;
           };
         } catch (err) {
-          console.warn('Failed to show notification:', err);
+          console.warn("Failed to show notification:", err);
         }
-      } else if (Notification.permission === 'default') {
+      } else if (Notification.permission === "default") {
         Notification.requestPermission();
       }
     }
 
-    // Listen for call state changes on this call
-    call.on('stateChange', () => {
-      console.log('📱 Incoming call state changed:', call.state);
-      handleCallStateChangeRef.current(call);
-    });
-  }, []); // Empty deps - use ref instead
+    // Attach state listener once per call instance.
+    if (typeof call.on === "function" && !callListenerRegistryRef.current.has(call)) {
+      callListenerRegistryRef.current.add(call);
+      call.on("stateChange", () => {
+        handleCallStateChangeRef.current(call);
+      });
+    }
+  }, [getCallDirection, getCallUniqueId]); // Uses refs for mutable state
   
   // Store stable references to callbacks - initialize immediately
   const handleCallStateChangeRef = useRef(() => {
@@ -637,23 +660,6 @@ export const CallProvider = ({ children }) => {
             setIsInitializing(false);
             isInitializedRef.current = true;
             
-            // Listen for any incoming calls directly on the client
-            // Telnyx SDK may fire incoming call events on the client itself
-            if (client.on) {
-              // Some SDK versions use different event names
-              client.on('incoming', (call) => {
-                console.log('📱 Incoming call via client.incoming event:', call);
-                handleIncomingCallEventRef.current(call);
-              });
-              
-              client.on('call', (call) => {
-                console.log('📱 Call event via client.call:', call);
-                if (call.direction === 'incoming' || call.state === 'ringing') {
-                  handleIncomingCallEventRef.current(call);
-                }
-              });
-            }
-            
             resolve(true);
           });
 
@@ -715,12 +721,13 @@ export const CallProvider = ({ children }) => {
         // Pattern 3: Direct call events (some SDK versions)
         client.on('call', (call) => {
           console.log('📱 Call event received:', call);
-          if (call && (call.direction === 'incoming' || call.state === 'ringing')) {
-            console.log('📱 INCOMING CALL via call event:', call);
+          if (!call) return;
+          const callDirection = getCallDirection(call);
+          if (callDirection === 'incoming') {
             handleIncomingCallEventRef.current(call);
-          } else if (call) {
-            handleCallStateChangeRef.current(call);
+            return;
           }
+          handleCallStateChangeRef.current(call);
         });
         
         // Pattern 4: Incoming event (some SDK versions)
@@ -735,29 +742,6 @@ export const CallProvider = ({ children }) => {
           if (session && session.direction === 'incoming') {
             console.log('📱 INCOMING CALL via session event:', session);
             handleIncomingCallEventRef.current(session);
-          }
-        });
-        
-        // Pattern 6: Listen for ANY event that might be an incoming call
-        // This is a catch-all for debugging
-        const originalEmit = client.emit;
-        client.emit = function(...args) {
-          console.log('📱 Client emit:', args[0], args[1]);
-          if (args[0] && (args[0].includes('incoming') || args[0].includes('call'))) {
-            console.log('📱 Potential incoming call event:', args);
-          }
-          return originalEmit.apply(this, args);
-        };
-        
-        // Also listen for socket messages that might contain incoming call info
-        client.on('telnyx.socket.message', (message) => {
-          console.log('📱 Socket message:', message);
-          if (message && (message.type === 'incoming' || message.direction === 'incoming')) {
-            console.log('📱 INCOMING CALL via socket message:', message);
-            // Try to create a call object from the message
-            if (message.call) {
-              handleIncomingCallEventRef.current(message.call);
-            }
           }
         });
 
@@ -793,7 +777,7 @@ export const CallProvider = ({ children }) => {
     })();
 
     return initializationPromiseRef.current;
-  }, []); // Stable - use refs for callbacks and state
+  }, [getCallDirection]); // Stable - use refs for mutable callbacks/state
 
   // Save call record to database
   const saveCallRecord = useCallback(async (toNumber, fromNumber, direction = 'outbound', status = 'dialing') => {
@@ -945,11 +929,13 @@ export const CallProvider = ({ children }) => {
       // Store call record ID on the call object for later updates
       call._dbCallId = callRecordId;
 
-      // Listen for state changes on this call
-      call.on('stateChange', () => {
-        console.log('📱 Outbound call state:', call.state);
-        handleCallStateChangeRef.current(call);
-      });
+      // Listen for state changes on this call exactly once.
+      if (typeof call.on === "function" && !callListenerRegistryRef.current.has(call)) {
+        callListenerRegistryRef.current.add(call);
+        call.on('stateChange', () => {
+          handleCallStateChangeRef.current(call);
+        });
+      }
 
       console.log('📱 Call initiated successfully');
       return true;
@@ -1253,47 +1239,18 @@ export const CallProvider = ({ children }) => {
     setIsMinimized(false);
   }, []);
 
-  // Fix voice and messaging configuration for phone numbers
-  const fixPhoneConfiguration = useCallback(async () => {
-    try {
-      console.log('📱 Checking and fixing phone configuration...');
-      const response = await API.post('/api/numbers/fix-all');
-      if (response.data?.success) {
-        console.log('✅ Phone configuration fixed:', response.data);
-      }
-      
-      // Also check WebRTC status for debugging
-      try {
-        const statusResponse = await API.get('/api/webrtc/status');
-        if (statusResponse.data?.status) {
-          console.log('📱 WebRTC Status:', statusResponse.data.status);
-          console.log('📱 Instructions:', statusResponse.data.status.instructions);
-        }
-      } catch (statusErr) {
-        console.log('📱 Could not fetch WebRTC status:', statusErr.message);
-      }
-    } catch (err) {
-      // Silently fail - this is just a best-effort fix
-      console.log('📱 Phone config fix skipped:', err.message);
-    }
-  }, []);
-
   // Auto-initialize client when component mounts (for receiving calls)
   useEffect(() => {
     const autoInit = async () => {
       const token = localStorage.getItem('token');
       if (token && !isClientReady && !isInitializing && !isInitializedRef.current) {
         console.log('📱 Auto-initializing WebRTC client for incoming calls...');
-        
-        // First, try to fix phone configuration
-        await fixPhoneConfiguration();
-        
-        // Then initialize the WebRTC client
+
         setTimeout(() => {
           initializeClient().catch(e => {
             console.log('📱 Auto-init failed:', e.message);
           });
-        }, 1500);
+        }, 500);
       }
     };
     
@@ -1327,7 +1284,7 @@ export const CallProvider = ({ children }) => {
     }, 60000); // Check every 60 seconds (reduced frequency)
     
     return () => clearInterval(healthCheckInterval);
-  }, [fixPhoneConfiguration, initializeClient]); // Removed frequently changing deps
+  }, [initializeClient]); // Removed frequently changing deps
   
   // Store polled call ID for answering
   const polledCallIdRef = useRef(null);
@@ -1336,7 +1293,7 @@ export const CallProvider = ({ children }) => {
   useEffect(() => {
     // Use refs to check state without causing re-renders
     // NOTE: For Voice API, we don't need WebRTC client ready - webhooks create call records, we poll for them
-    if (callStateRef.current === CALL_STATES.INCOMING || callStateRef.current === CALL_STATES.ACTIVE) {
+    if (callStateRef.current !== CALL_STATES.IDLE) {
       return; // Don't poll if already handling a call
     }
     
@@ -1345,7 +1302,7 @@ export const CallProvider = ({ children }) => {
     const pollForIncomingCalls = async () => {
       // Check refs again inside the polling function
       // For Voice API, we poll even without WebRTC client ready
-      if (callStateRef.current === CALL_STATES.INCOMING || callStateRef.current === CALL_STATES.ACTIVE) {
+      if (callStateRef.current !== CALL_STATES.IDLE) {
         return;
       }
       
@@ -1396,11 +1353,11 @@ export const CallProvider = ({ children }) => {
       }
     };
     
-    // Poll every 5 seconds as fallback (reduced frequency to improve performance)
-    const pollInterval = setInterval(pollForIncomingCalls, 5000);
+    // Poll every 8 seconds as fallback to reduce API load.
+    const pollInterval = setInterval(pollForIncomingCalls, 8000);
     
-    // Initial poll after 2 seconds
-    setTimeout(pollForIncomingCalls, 2000);
+    // Initial poll after a short delay.
+    setTimeout(pollForIncomingCalls, 2500);
     
     return () => clearInterval(pollInterval);
   }, []); // Empty deps - use refs instead

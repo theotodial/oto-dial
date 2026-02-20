@@ -263,8 +263,13 @@ router.post("/login", async (req, res) => {
       token
     };
 
-    // Keep only last 5 sessions, remove expired ones
-    const validSessions = activeSessions.slice(-4); // Keep 4 previous + 1 new = 5 total
+    // Keep a healthy session history so users can stay logged in on multiple devices.
+    const maxTrackedSessionsRaw = Number(process.env.MAX_TRACKED_SESSIONS || 20);
+    const maxTrackedSessions =
+      Number.isFinite(maxTrackedSessionsRaw) && maxTrackedSessionsRaw > 1
+        ? Math.floor(maxTrackedSessionsRaw)
+        : 20;
+    const validSessions = activeSessions.slice(-(maxTrackedSessions - 1));
     user.sessions = [...validSessions, newSession];
     await user.save();
 

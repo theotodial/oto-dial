@@ -144,7 +144,6 @@ function Recents() {
   const isMinimized = callContext?.isMinimized || false;
   const minimizeCall = callContext?.minimizeCall || (() => {});
   const remoteNumber = callContext?.remoteNumber || '';
-  const initializeClient = callContext?.initializeClient || (async () => false);
   const answerCall = callContext?.answerCall || (() => {});
   const rejectCall = callContext?.rejectCall || (() => {});
 
@@ -264,8 +263,6 @@ function Recents() {
             remainingSMS: subRes.data?.smsRemaining || 0,
             planName: subRes.data?.planName || 'No Plan'
           });
-          // Initialize WebRTC client when subscription is active
-          initializeClient();
         }
       } catch (err) {
         console.warn('Failed to fetch dialer data:', err);
@@ -274,7 +271,7 @@ function Recents() {
       }
     };
     fetchDialerData();
-  }, [initializeClient]);
+  }, []);
 
   // Normalize phone number for comparison (used by fetchChatMessages)
   const normalizePhone = (num) => {
