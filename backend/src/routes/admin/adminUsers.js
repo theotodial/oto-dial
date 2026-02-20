@@ -7,6 +7,7 @@ import PhoneNumber from "../../models/PhoneNumber.js";
 import Call from "../../models/Call.js";
 import SMS from "../../models/SMS.js";
 import TelnyxCost from "../../models/TelnyxCost.js";
+import { getActiveAddonAmounts } from "../../services/subscriptionAddonCreditService.js";
 
 const router = express.Router();
 
@@ -188,6 +189,17 @@ router.get(
 
       const usageSummary = subscription
         ? {
+            ...(() => {
+              const addonCredits = getActiveAddonAmounts(subscription);
+              return {
+                loadedSmsTotal: addonCredits.smsTotal,
+                loadedSmsActive: addonCredits.smsActive,
+                loadedSmsExpiry: addonCredits.smsExpiry,
+                loadedMinutesTotal: addonCredits.minutesTotal,
+                loadedMinutesActive: addonCredits.minutesActive,
+                loadedMinutesExpiry: addonCredits.minutesExpiry
+              };
+            })(),
             monthlySmsUsed: Number(subscription.usage?.smsUsed || 0),
             monthlyMinutesUsed: Number(subscription.usage?.minutesUsed || 0) / 60,
             dailySmsUsed: Number(subscription.dailySmsUsed || 0),

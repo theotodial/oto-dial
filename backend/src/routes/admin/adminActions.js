@@ -11,6 +11,11 @@ import {
   applyPlanSnapshotToSubscription
 } from "../../services/subscriptionPlanSnapshotService.js";
 import { getServerDayKey } from "../../services/unlimitedUsageService.js";
+import {
+  applyLoadedCreditsToSubscription,
+  getActiveAddonAmounts,
+  parseLoadedCreditsInput
+} from "../../services/subscriptionAddonCreditService.js";
 
 const router = express.Router();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
@@ -29,6 +34,16 @@ const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SEC
 router.post("/subscription/assign", requireAdmin, async (req, res) => {
   try {
     const { userId, planId } = req.body;
+    let loadedCreditsInput;
+
+    try {
+      loadedCreditsInput = parseLoadedCreditsInput(req.body);
+    } catch (validationErr) {
+      return res.status(400).json({
+        success: false,
+        error: validationErr.message
+      });
+    }
 
     if (!userId || !planId) {
       return res.status(400).json({
@@ -163,6 +178,11 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
     });
 
     applyPlanSnapshotToSubscription(subscription, plan);
+
+    if (loadedCreditsInput.hasChanges) {
+      applyLoadedCreditsToSubscription(subscription, loadedCreditsInput);
+    }
+
     await subscription.save();
 
     // Update user's active subscription
@@ -173,7 +193,8 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
     res.json({
       success: true,
       message: "Subscription assigned successfully",
-      subscription
+      subscription,
+      loadedCredits: getActiveAddonAmounts(subscription)
     });
   } catch (err) {
     console.error("Assign subscription error:", err);
@@ -271,6 +292,16 @@ router.post("/subscription/resume", requireAdmin, async (req, res) => {
 router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
   try {
     const { userId, planId } = req.body;
+    let loadedCreditsInput;
+
+    try {
+      loadedCreditsInput = parseLoadedCreditsInput(req.body);
+    } catch (validationErr) {
+      return res.status(400).json({
+        success: false,
+        error: validationErr.message
+      });
+    }
 
     if (!userId || !planId) {
       return res.status(400).json({
@@ -352,12 +383,18 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
     subscription.planId = planId;
     subscription.stripePriceId = effectivePlanPriceId;
     applyPlanSnapshotToSubscription(subscription, plan);
+
+    if (loadedCreditsInput.hasChanges) {
+      applyLoadedCreditsToSubscription(subscription, loadedCreditsInput);
+    }
+
     await subscription.save();
 
     res.json({
       success: true,
       message: "Subscription plan changed successfully",
-      subscription
+      subscription,
+      loadedCredits: getActiveAddonAmounts(subscription)
     });
   } catch (err) {
     console.error("Change plan error:", err);
@@ -365,6 +402,71 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
       success: false,
       error: "Failed to change subscription plan",
       details: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/admin/actions/subscription/load-credits
+ * Add custom SMS/minutes credits with optional expiry dates.
+ */
+router.post("/subscription/load-credits", requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    let loadedCreditsInput;
+
+    try {
+      loadedCreditsInput = parseLoadedCreditsInput(req.body);
+    } catch (validationErr) {
+      return res.status(400).json({
+        success: false,
+        error: validationErr.message
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "userId is required"
+      });
+    }
+
+    if (!loadedCreditsInput.hasChanges) {
+      return res.status(400).json({
+        success: false,
+        error: "Provide loadedSms/loadedMinutes and/or expiry date values"
+      });
+    }
+
+    const subscription = await Subscription.findOne({
+      userId,
+      status: "active"
+    });
+
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        error: "No active subscription found"
+      });
+    }
+
+    const loadedCredits = applyLoadedCreditsToSubscription(
+      subscription,
+      loadedCreditsInput
+    );
+    await subscription.save();
+
+    res.json({
+      success: true,
+      message: "Credits loaded successfully",
+      subscription,
+      loadedCredits
+    });
+  } catch (err) {
+    console.error("Load credits error:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message || "Failed to load credits"
     });
   }
 });

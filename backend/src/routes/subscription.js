@@ -10,6 +10,7 @@ import {
   applyPlanSnapshotToSubscription
 } from "../services/subscriptionPlanSnapshotService.js";
 import { isUnlimitedSubscription } from "../services/unlimitedUsageService.js";
+import { getActiveAddonAmounts } from "../services/subscriptionAddonCreditService.js";
 
 const router = express.Router();
 
@@ -76,11 +77,8 @@ router.get("/", authMiddleware, async (req, res) => {
 
     // Apply add-ons only if not expired
     const now = new Date();
-    const addonMinutesActive =
-      subscription.addonsMinutesExpiry &&
-      subscription.addonsMinutesExpiry > now
-        ? subscription.addons?.minutes || 0
-        : 0;
+    const activeAddons = getActiveAddonAmounts(subscription, now);
+    const addonMinutesActive = activeAddons.minutesActive;
 
     const minutesTotal =
       (subscription.limits?.minutesTotal || 0) + addonMinutesActive;
@@ -90,11 +88,7 @@ router.get("/", authMiddleware, async (req, res) => {
     // Convert remaining seconds to minutes for display (with decimals)
     const minutesRemaining = secondsRemaining / 60;
 
-    const addonSmsActive =
-      subscription.addonsSmsExpiry &&
-      subscription.addonsSmsExpiry > now
-        ? subscription.addons?.sms || 0
-        : 0;
+    const addonSmsActive = activeAddons.smsActive;
 
     const smsRemaining = Math.max(
       0,

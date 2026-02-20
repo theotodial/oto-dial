@@ -3,6 +3,7 @@ import PhoneNumber from "../models/PhoneNumber.js";
 import Plan from "../models/Plan.js";
 import User from "../models/User.js";
 import { selfHealSubscriptionForUser } from "./stripeSubscriptionService.js";
+import { getActiveAddonAmounts } from "./subscriptionAddonCreditService.js";
 
 // Default limits if subscription doesn't have them set
 const DEFAULT_LIMITS = {
@@ -82,8 +83,9 @@ export async function loadUserSubscription(userId) {
 
   const smsTotal = subscription.limits?.smsTotal || DEFAULT_LIMITS.smsTotal;
   const minutesTotal = subscription.limits?.minutesTotal || DEFAULT_LIMITS.minutesTotal;
-  const smsAddons = subscription.addons?.sms || 0;
-  const minutesAddons = subscription.addons?.minutes || 0;
+  const activeAddons = getActiveAddonAmounts(subscription);
+  const smsAddons = activeAddons.smsActive;
+  const minutesAddons = activeAddons.minutesActive;
   const smsUsed = subscription.usage?.smsUsed || 0;
   
   // minutesUsed field stores SECONDS internally
