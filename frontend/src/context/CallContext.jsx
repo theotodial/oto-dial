@@ -806,14 +806,34 @@ export const CallProvider = ({ children }) => {
         status: status
       });
       
+      if (response.error) {
+        return {
+          callId: null,
+          error: response.error,
+          status: response.status || 500
+        };
+      }
+
       if (response.data?.call?._id) {
         console.log('📱 Call record saved:', response.data.call._id);
-        return response.data.call._id;
+        return {
+          callId: response.data.call._id,
+          error: null,
+          status: 200
+        };
       }
-      return null;
+      return {
+        callId: null,
+        error: 'Failed to create call record',
+        status: 500
+      };
     } catch (err) {
       console.warn('📱 Failed to save call record:', err);
-      return null;
+      return {
+        callId: null,
+        error: err?.message || 'Failed to create call record',
+        status: 500
+      };
     }
   }, []);
 
@@ -884,7 +904,22 @@ export const CallProvider = ({ children }) => {
       console.log('📱 Placing call from:', callerId, 'to:', destinationNumber);
 
       // Save call record to database BEFORE making the call
-      const callRecordId = await saveCallRecord(destinationNumber, callerId, 'outbound', 'dialing');
+      const callRecordResult = await saveCallRecord(
+        destinationNumber,
+        callerId,
+        'outbound',
+        'dialing'
+      );
+      const callRecordId = callRecordResult.callId;
+
+      if (!callRecordId) {
+        setError(
+          callRecordResult.error ||
+            'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.'
+        );
+        setCallState(CALL_STATES.IDLE);
+        return false;
+      }
 
       // Make the call
       const call = telnyxClientRef.current.newCall({

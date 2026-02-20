@@ -4,6 +4,11 @@ import authenticateUser from "../middleware/authenticateUser.js";
 import requireActiveSubscription from "../middleware/requireActiveSubscription.js";
 import Call from "../models/Call.js";
 import { validateCallCountryLock } from "../middleware/countryLock.js";
+import {
+  checkUnlimitedUsageBeforeAction,
+  createSuspiciousActivityErrorPayload,
+  isUnlimitedSubscription
+} from "../services/unlimitedUsageService.js";
 
 const router = express.Router();
 
@@ -19,6 +24,30 @@ router.post("/", requireActiveSubscription, async (req, res) => {
     });
   }
 
+  const unlimitedGate = await checkUnlimitedUsageBeforeAction({
+    subscriptionId: req.subscription.id,
+    userId: req.userId,
+    channel: "calls_create_record"
+  });
+
+  if (!unlimitedGate.allowed) {
+    return res.status(403).json(createSuspiciousActivityErrorPayload());
+  }
+
+  const unlimitedPlan = isUnlimitedSubscription(
+    unlimitedGate.subscription || req.subscription
+  );
+
+  if (!unlimitedPlan) {
+    const minutesRemaining = req.subscription.minutesRemaining || 0;
+    if (minutesRemaining <= 0) {
+      return res.status(403).json({
+        success: false,
+        error: "No minutes remaining. Please upgrade your plan or wait for your next billing cycle."
+      });
+    }
+  }
+
   const call = await Call.create({
     user: req.userId,
     phoneNumber,
@@ -30,6 +59,30 @@ router.post("/", requireActiveSubscription, async (req, res) => {
 
 router.post("/:id/start", requireActiveSubscription, validateCallCountryLock, async (req, res) => {
   try {
+    const unlimitedGate = await checkUnlimitedUsageBeforeAction({
+      subscriptionId: req.subscription.id,
+      userId: req.userId,
+      channel: "calls_start"
+    });
+
+    if (!unlimitedGate.allowed) {
+      return res.status(403).json(createSuspiciousActivityErrorPayload());
+    }
+
+    const unlimitedPlan = isUnlimitedSubscription(
+      unlimitedGate.subscription || req.subscription
+    );
+
+    if (!unlimitedPlan) {
+      const minutesRemaining = req.subscription.minutesRemaining || 0;
+      if (minutesRemaining <= 0) {
+        return res.status(403).json({
+          success: false,
+          error: "No minutes remaining. Please upgrade your plan or wait for your next billing cycle."
+        });
+      }
+    }
+
     const call = await Call.findOne({
       _id: req.params.id,
       user: req.userId

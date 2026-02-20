@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import API from '../api';
 import { useCall } from '../context/CallContext';
 
@@ -15,6 +16,10 @@ const BackspaceIcon = () => (
 );
 
 function Dialer() {
+  const suspiciousActivityText =
+    'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
+  const isSuspiciousActivityError = (message) =>
+    String(message || '').toLowerCase().includes('suspicious activity detected');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [callLogs, setCallLogs] = useState([]);
   const [userNumbers, setUserNumbers] = useState([]);
@@ -270,7 +275,19 @@ function Dialer() {
         <div className="px-4 sm:px-6 py-1.5 flex-shrink-0">
           {(error || callError) && (
             <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg p-2">
-              <p className="text-sm text-red-700 dark:text-red-300">{error || callError}</p>
+              {isSuspiciousActivityError(error || callError) ? (
+                <div className="flex items-center justify-between gap-3 flex-wrap text-sm text-red-700 dark:text-red-300">
+                  <span>{suspiciousActivityText}</span>
+                  <Link
+                    to="/support"
+                    className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
+                  >
+                    Contact Support
+                  </Link>
+                </div>
+              ) : (
+                <p className="text-sm text-red-700 dark:text-red-300">{error || callError}</p>
+              )}
             </div>
           )}
           {success && (

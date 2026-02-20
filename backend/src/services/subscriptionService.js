@@ -110,11 +110,15 @@ export async function loadUserSubscription(userId) {
   return {
     id: subscription._id,
     active: true,
+    planType: subscription.planType || null,
+    displayUnlimited: Boolean(subscription.displayUnlimited),
     planId: subscription.planId,
     minutesRemaining,
     smsRemaining,
     limits: subscription.limits,
     usage: subscription.usage,
+    dailySmsUsed: subscription.dailySmsUsed || 0,
+    dailyMinutesUsed: subscription.dailyMinutesUsed || 0,
     numbers: numbers.map((n) => ({
       phoneNumber: n.phoneNumber,
       id: n._id,

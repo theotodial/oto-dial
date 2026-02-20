@@ -13,6 +13,10 @@ import {
   getCanonicalPlanKeyFromPriceId,
   isKnownAddonPriceId
 } from "../config/stripeCatalog.js";
+import {
+  applyPlanSnapshotToSubscription
+} from "./subscriptionPlanSnapshotService.js";
+import { getServerDayKey } from "./unlimitedUsageService.js";
 
 const MUTABLE_MONGO_STATUSES = ["active", "pending_activation", "past_due", "incomplete"];
 const REPAIRABLE_STRIPE_STATUSES = new Set(["active", "trialing", "past_due", "incomplete"]);
@@ -233,6 +237,19 @@ async function resolvePlan({
   }
 
   const canonicalPlanKey = getCanonicalPlanKeyFromPriceId(stripePriceId);
+  if (canonicalPlanKey === "unlimited") {
+    const unlimitedPlan = await Plan.findOne({
+      $or: [
+        { type: /unlimited/i },
+        { name: /unlimited/i },
+        { planName: /unlimited/i }
+      ],
+      active: true
+    });
+    if (unlimitedPlan) {
+      return unlimitedPlan;
+    }
+  }
   if (canonicalPlanKey === "super") {
     const superPlan = await Plan.findOne({ name: /super/i, active: true });
     if (superPlan) {
@@ -374,33 +391,25 @@ async function createOrUpdatePendingSubscription({
       stripeCustomerId: stripeCustomerId || user.stripeCustomerId || null,
       checkoutSessionId: checkoutSessionId || null,
       stripePriceId: stripePriceId || plan.stripePriceId || null,
-      planKey: plan.name,
       status: "pending_activation",
       periodStart,
       periodEnd: computedPeriodEnd,
-      limits: {
-        minutesTotal: plan.limits.minutesTotal,
-        smsTotal: plan.limits.smsTotal,
-        numbersTotal: plan.limits.numbersTotal
-      },
       usage: { minutesUsed: 0, smsUsed: 0 },
-      addons: { minutes: 0, sms: 0 }
+      addons: { minutes: 0, sms: 0 },
+      usageWindowDateKey: getServerDayKey()
     });
   } else {
     subscription.planId = plan._id;
-    subscription.planKey = plan.name;
     subscription.stripePriceId = stripePriceId || plan.stripePriceId || subscription.stripePriceId;
     subscription.stripeCustomerId = stripeCustomerId || user.stripeCustomerId || subscription.stripeCustomerId;
     subscription.checkoutSessionId = checkoutSessionId || subscription.checkoutSessionId;
     subscription.status = subscription.status === "active" ? "active" : "pending_activation";
     subscription.periodStart = periodStart || subscription.periodStart;
     subscription.periodEnd = computedPeriodEnd || subscription.periodEnd;
-    subscription.limits = {
-      minutesTotal: plan.limits.minutesTotal,
-      smsTotal: plan.limits.smsTotal,
-      numbersTotal: plan.limits.numbersTotal
-    };
+    subscription.usageWindowDateKey = subscription.usageWindowDateKey || getServerDayKey();
   }
+
+  applyPlanSnapshotToSubscription(subscription, plan);
 
   await subscription.save();
   return subscription;
@@ -617,34 +626,26 @@ async function syncSubscriptionFromStripeObject(stripeSubscription, stripe, sour
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: customerId,
       stripePriceId: stripePriceId || plan.stripePriceId || null,
-      planKey: plan.name,
       status,
       periodStart,
       periodEnd,
-      limits: {
-        minutesTotal: plan.limits.minutesTotal,
-        smsTotal: plan.limits.smsTotal,
-        numbersTotal: plan.limits.numbersTotal
-      },
       usage: { minutesUsed: 0, smsUsed: 0 },
-      addons: { minutes: 0, sms: 0 }
+      addons: { minutes: 0, sms: 0 },
+      usageWindowDateKey: getServerDayKey()
     });
   } else {
     subscription.userId = user._id;
     subscription.planId = plan._id;
-    subscription.planKey = plan.name;
     subscription.status = status;
     subscription.periodStart = periodStart;
     subscription.periodEnd = periodEnd;
     subscription.stripeSubscriptionId = subscriptionId;
     subscription.stripeCustomerId = customerId;
     subscription.stripePriceId = stripePriceId || plan.stripePriceId || subscription.stripePriceId;
-    subscription.limits = {
-      minutesTotal: plan.limits.minutesTotal,
-      smsTotal: plan.limits.smsTotal,
-      numbersTotal: plan.limits.numbersTotal
-    };
+    subscription.usageWindowDateKey = subscription.usageWindowDateKey || getServerDayKey();
   }
+
+  applyPlanSnapshotToSubscription(subscription, plan);
 
   await subscription.save();
 
