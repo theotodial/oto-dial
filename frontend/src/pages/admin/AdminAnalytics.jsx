@@ -113,9 +113,7 @@ function AdminAnalytics() {
         });
       }
     } finally {
-      if (shouldBlockRender) {
-        setLoading(false);
-      }
+      setLoading(false);
     }
   }, [dateRange.endDate, dateRange.startDate, navigate, realtimeWindow]);
 

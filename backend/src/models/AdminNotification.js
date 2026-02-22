@@ -30,7 +30,8 @@ const adminNotificationSchema = new mongoose.Schema(
     },
     dedupeKey: {
       type: String,
-      default: null,
+      default: () =>
+        `auto-${new mongoose.Types.ObjectId().toString()}-${Date.now().toString(36)}`,
       unique: true,
       sparse: true
     },

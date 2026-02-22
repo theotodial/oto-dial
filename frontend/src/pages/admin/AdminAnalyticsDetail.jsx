@@ -28,7 +28,7 @@ function AdminAnalyticsDetail() {
   const { category } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!Boolean(location.state?.data));
   const [data, setData] = useState(location.state?.data || null);
   const [meta, setMeta] = useState(location.state?.meta || null);
   const hasLoadedOnceRef = useRef(Boolean(location.state?.data));
@@ -100,9 +100,7 @@ function AdminAnalyticsDetail() {
         });
       }
     } finally {
-      if (shouldBlockRender) {
-        setLoading(false);
-      }
+      setLoading(false);
     }
   }, [dateRange.endDate, dateRange.startDate, navigate, realtimeWindow]);
 
