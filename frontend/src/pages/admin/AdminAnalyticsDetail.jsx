@@ -107,12 +107,7 @@ function AdminAnalyticsDetail() {
   }, [dateRange.endDate, dateRange.startDate, navigate, realtimeWindow]);
 
   useEffect(() => {
-    fetchAnalytics();
-    const refreshTimer = setInterval(() => {
-      fetchAnalytics({ background: true });
-    }, 30000);
-
-    return () => clearInterval(refreshTimer);
+    fetchAnalytics({ background: hasLoadedOnceRef.current });
   }, [fetchAnalytics]);
 
   const formatTime = (seconds) => {
