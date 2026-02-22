@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import API from '../../api';
 import {
@@ -31,6 +31,7 @@ function AdminAnalyticsDetail() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(location.state?.data || null);
   const [meta, setMeta] = useState(location.state?.meta || null);
+  const hasLoadedOnceRef = useRef(Boolean(location.state?.data));
   const [realtimeWindow, setRealtimeWindow] = useState(location.state?.realtimeWindow || '15m');
   const [dateRange, setDateRange] = useState(
     location.state?.dateRange || {
@@ -39,9 +40,12 @@ function AdminAnalyticsDetail() {
     }
   );
 
-  const fetchAnalytics = useCallback(async () => {
+  const fetchAnalytics = useCallback(async ({ background = false } = {}) => {
+    const shouldBlockRender = !background && !hasLoadedOnceRef.current;
     try {
-      setLoading(true);
+      if (shouldBlockRender) {
+        setLoading(true);
+      }
       const params = new URLSearchParams();
       if (dateRange.startDate) params.append('startDate', dateRange.startDate);
       if (dateRange.endDate) params.append('endDate', dateRange.endDate);
@@ -59,41 +63,53 @@ function AdminAnalyticsDetail() {
           navigate('/adminbobby');
           return;
         }
-        setData(null);
-        setMeta({
-          source: 'unavailable',
-          googleAnalytics: {
-            warnings: [response.error]
-          }
-        });
+        hasLoadedOnceRef.current = true;
+        if (!background) {
+          setData(null);
+          setMeta({
+            source: 'unavailable',
+            googleAnalytics: {
+              warnings: [response.error]
+            }
+          });
+        }
         return;
       }
 
       if (response.data?.success) {
+        hasLoadedOnceRef.current = true;
         setData(response.data.data);
         setMeta(response.data.meta || null);
       } else {
-        setData(null);
-        setMeta(null);
+        hasLoadedOnceRef.current = true;
+        if (!background) {
+          setData(null);
+          setMeta(null);
+        }
       }
     } catch (error) {
       console.error('Error fetching analytics:', error);
-      setData(null);
-      setMeta({
-        source: 'unavailable',
-        googleAnalytics: {
-          warnings: [error.message]
-        }
-      });
+      hasLoadedOnceRef.current = true;
+      if (!background) {
+        setData(null);
+        setMeta({
+          source: 'unavailable',
+          googleAnalytics: {
+            warnings: [error.message]
+          }
+        });
+      }
     } finally {
-      setLoading(false);
+      if (shouldBlockRender) {
+        setLoading(false);
+      }
     }
   }, [dateRange.endDate, dateRange.startDate, navigate, realtimeWindow]);
 
   useEffect(() => {
     fetchAnalytics();
     const refreshTimer = setInterval(() => {
-      fetchAnalytics();
+      fetchAnalytics({ background: true });
     }, 30000);
 
     return () => clearInterval(refreshTimer);

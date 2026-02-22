@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../../api';
 import {
@@ -40,15 +40,19 @@ function AdminAnalytics() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [meta, setMeta] = useState(null);
+  const hasLoadedOnceRef = useRef(false);
   const [realtimeWindow, setRealtimeWindow] = useState('15m');
   const [dateRange, setDateRange] = useState({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
   });
 
-  const fetchAnalytics = useCallback(async () => {
+  const fetchAnalytics = useCallback(async ({ background = false } = {}) => {
+    const shouldBlockRender = !background && !hasLoadedOnceRef.current;
     try {
-      setLoading(true);
+      if (shouldBlockRender) {
+        setLoading(true);
+      }
       const params = new URLSearchParams();
       if (dateRange.startDate) params.append('startDate', dateRange.startDate);
       if (dateRange.endDate) params.append('endDate', dateRange.endDate);
@@ -68,45 +72,57 @@ function AdminAnalytics() {
           navigate('/adminbobby');
           return;
         }
-        // Set empty data structure so cards still show
-        setData(null);
-        setMeta({
-          source: 'unavailable',
-          googleAnalytics: {
-            warnings: [response.error]
-          }
-        });
+        hasLoadedOnceRef.current = true;
+        if (!background) {
+          // Set empty data structure so cards still show
+          setData(null);
+          setMeta({
+            source: 'unavailable',
+            googleAnalytics: {
+              warnings: [response.error]
+            }
+          });
+        }
         return;
       }
 
       if (response.data?.success) {
         console.log('Analytics data received:', response.data.data);
+        hasLoadedOnceRef.current = true;
         setData(response.data.data);
         setMeta(response.data.meta || null);
       } else {
         console.warn('Unexpected response format:', response.data);
-        // Set null so we can still show cards with defaults
-        setData(null);
-        setMeta(null);
+        hasLoadedOnceRef.current = true;
+        if (!background) {
+          // Set null so we can still show cards with defaults
+          setData(null);
+          setMeta(null);
+        }
       }
     } catch (error) {
       console.error('Error fetching analytics:', error);
-      setData(null);
-      setMeta({
-        source: 'unavailable',
-        googleAnalytics: {
-          warnings: [error.message]
-        }
-      });
+      hasLoadedOnceRef.current = true;
+      if (!background) {
+        setData(null);
+        setMeta({
+          source: 'unavailable',
+          googleAnalytics: {
+            warnings: [error.message]
+          }
+        });
+      }
     } finally {
-      setLoading(false);
+      if (shouldBlockRender) {
+        setLoading(false);
+      }
     }
   }, [dateRange.endDate, dateRange.startDate, navigate, realtimeWindow]);
 
   useEffect(() => {
     fetchAnalytics();
     const refreshTimer = setInterval(() => {
-      fetchAnalytics();
+      fetchAnalytics({ background: true });
     }, 30000);
 
     return () => clearInterval(refreshTimer);
