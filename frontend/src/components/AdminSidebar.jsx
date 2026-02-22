@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
+import {
+  clearStoredAdminProfile,
+  hasAdminRole,
+  readStoredAdminProfile
+} from '../utils/adminAccess';
 
 // Chevron icons for expandable sections
 const ChevronDownIcon = () => (
@@ -16,18 +21,18 @@ const ChevronUpIcon = () => (
 );
 
 const navItems = [
-  { path: '/adminbobby/dashboard', label: 'Dashboard' },
-  { path: '/adminbobby/users', label: 'Users' },
-  { path: '/adminbobby/support', label: 'Support' },
-  { path: '/adminbobby/team', label: 'Team' },
-  { path: '/adminbobby/blog', label: 'Blog' },
-  { path: '/adminbobby/analytics', label: 'Analytics' },
+  { path: '/adminbobby/dashboard', label: 'Dashboard', role: 'dashboard' },
+  { path: '/adminbobby/users', label: 'Users', role: 'users' },
+  { path: '/adminbobby/support', label: 'Support', role: 'support' },
+  { path: '/adminbobby/team', label: 'Team', role: 'team' },
+  { path: '/adminbobby/blog', label: 'Blog', role: 'blog' },
+  { path: '/adminbobby/analytics', label: 'Analytics', role: 'analytics' },
 ];
 
 const communicationsItems = [
-  { path: '/adminbobby/calls', label: 'Calls' },
-  { path: '/adminbobby/sms', label: 'SMS' },
-  { path: '/adminbobby/numbers', label: 'Numbers' },
+  { path: '/adminbobby/calls', label: 'Calls', role: 'calls' },
+  { path: '/adminbobby/sms', label: 'SMS', role: 'sms' },
+  { path: '/adminbobby/numbers', label: 'Numbers', role: 'numbers' },
 ];
 
 function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
@@ -35,14 +40,20 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
   const navigate = useNavigate();
   const { isDarkMode, toggleTheme } = useTheme();
   const [communicationsOpen, setCommunicationsOpen] = useState(false);
+  const adminProfile = readStoredAdminProfile();
+  const visibleNavItems = navItems.filter((item) => hasAdminRole(adminProfile, item.role));
+  const visibleCommunicationsItems = communicationsItems.filter((item) =>
+    hasAdminRole(adminProfile, item.role)
+  );
 
   const handleLogout = () => {
     localStorage.removeItem('adminToken');
+    clearStoredAdminProfile();
     navigate('/adminbobby');
   };
 
   // Check if any communications item is active
-  const isCommunicationsActive = communicationsItems.some(item => 
+  const isCommunicationsActive = visibleCommunicationsItems.some(item => 
     location.pathname === item.path || location.pathname.startsWith(item.path + '/')
   );
 
@@ -73,7 +84,7 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
         <nav className="flex-1 overflow-y-auto py-4">
           {/* Main Navigation Items */}
           <div className="px-2 space-y-1">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
               return (
                 <Link
@@ -96,55 +107,65 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
           </div>
 
           {/* Communications Section */}
-          <div className="mt-6 px-2">
-            <button
-              onClick={() => setCommunicationsOpen(!communicationsOpen)}
-              className={`
-                w-full flex items-center justify-between px-3 py-2.5 rounded-lg
-                transition-all duration-200 text-sm font-semibold
-                ${isCommunicationsActive 
-                  ? 'text-indigo-600 dark:text-indigo-400' 
-                  : 'text-gray-700 dark:text-gray-300'
-                }
-                hover:bg-gray-50 dark:hover:bg-slate-800
-              `}
-            >
-              <span>COMMUNICATIONS</span>
-              {communicationsOpen ? (
-                <ChevronUpIcon className="w-4 h-4" />
-              ) : (
-                <ChevronDownIcon className="w-4 h-4" />
-              )}
-            </button>
+          {visibleCommunicationsItems.length > 0 && (
+            <div className="mt-6 px-2">
+              <button
+                onClick={() => setCommunicationsOpen(!communicationsOpen)}
+                className={`
+                  w-full flex items-center justify-between px-3 py-2.5 rounded-lg
+                  transition-all duration-200 text-sm font-semibold
+                  ${isCommunicationsActive 
+                    ? 'text-indigo-600 dark:text-indigo-400' 
+                    : 'text-gray-700 dark:text-gray-300'
+                  }
+                  hover:bg-gray-50 dark:hover:bg-slate-800
+                `}
+              >
+                <span>COMMUNICATIONS</span>
+                {communicationsOpen ? (
+                  <ChevronUpIcon className="w-4 h-4" />
+                ) : (
+                  <ChevronDownIcon className="w-4 h-4" />
+                )}
+              </button>
 
-            {/* Communications Sub-items */}
-            {communicationsOpen && (
-              <div className="mt-1 ml-8 space-y-1">
-                {communicationsItems.map((item) => {
-                  const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
-                  return (
-                    <Link
-                      key={item.path}
-                      to={item.path}
-                      onClick={() => {
-                        setMobileMenuOpen(false);
-                      }}
-                      className={`
-                        flex items-center px-3 py-2 rounded-lg
-                        transition-all duration-200 text-sm
-                        ${isActive 
-                          ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-medium' 
-                          : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800'
-                        }
-                      `}
-                    >
-                      <span>{item.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+              {/* Communications Sub-items */}
+              {communicationsOpen && (
+                <div className="mt-1 ml-8 space-y-1">
+                  {visibleCommunicationsItems.map((item) => {
+                    const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+                    return (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        onClick={() => {
+                          setMobileMenuOpen(false);
+                        }}
+                        className={`
+                          flex items-center px-3 py-2 rounded-lg
+                          transition-all duration-200 text-sm
+                          ${isActive 
+                            ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-medium' 
+                            : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800'
+                          }
+                        `}
+                      >
+                        <span>{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {visibleNavItems.length === 0 && visibleCommunicationsItems.length === 0 && (
+            <div className="px-4 mt-6">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                No admin sections are assigned to this account.
+              </p>
+            </div>
+          )}
         </nav>
 
         {/* Bottom section - Theme Toggle & Logout */}

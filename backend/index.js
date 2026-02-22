@@ -14,6 +14,7 @@ import { ensureStripeCatalogConsistency } from "./src/services/stripeCatalogBoot
 import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
 
 import authenticateUser from "./src/middleware/authenticateUser.js";
+import requireAdmin from "./src/middleware/requireAdmin.js";
 import loadSubscription from "./src/middleware/loadSubscription.js";
 
 // ========================
@@ -133,7 +134,7 @@ app.use("/api/support", supportRoutes); // Support routes (authenticateUser is i
 app.use("/api/blog", blogRoutes); // Blog routes (public and admin routes inside)
 app.use("/api/analytics", analyticsRoutes); // Analytics routes (public and admin routes inside)
 // Admin routes: Only require authentication, NOT subscription (admins don't need subscriptions)
-app.use("/api/admin", authenticateUser, adminRoutes);
+app.use("/api/admin", authenticateUser, requireAdmin, adminRoutes);
 
 // ========================
 // HEALTH

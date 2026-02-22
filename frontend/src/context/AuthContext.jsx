@@ -23,6 +23,7 @@ export function AuthProvider({ children }) {
     if (!newToken) return;
     // Clear admin token when user logs in to prevent conflicts
     localStorage.removeItem("adminToken");
+    localStorage.removeItem("adminProfile");
     localStorage.setItem("token", newToken);
     setToken(newToken);
     setUser(userData);
@@ -39,6 +40,7 @@ export function AuthProvider({ children }) {
     if (response.data?.token) {
       // Clear admin token when user logs in to prevent conflicts
       localStorage.removeItem("adminToken");
+      localStorage.removeItem("adminProfile");
       localStorage.setItem("token", response.data.token);
       setToken(response.data.token);
       const userData = response.data?.user || { email };
@@ -70,6 +72,7 @@ export function AuthProvider({ children }) {
     if (response.data?.token) {
       // Clear admin token when user signs up to prevent conflicts
       localStorage.removeItem("adminToken");
+      localStorage.removeItem("adminProfile");
       localStorage.setItem("token", response.data.token);
       setToken(response.data.token);
       const userData = response.data?.user || { email, ...additionalData };

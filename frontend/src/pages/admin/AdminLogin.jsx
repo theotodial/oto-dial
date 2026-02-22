@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../../api';
+import {
+  getFirstAccessibleAdminPath,
+  clearStoredAdminProfile
+} from '../../utils/adminAccess';
 
 function AdminLogin() {
   const navigate = useNavigate();
@@ -38,14 +42,17 @@ function AdminLogin() {
         // Clear user token when admin logs in to prevent conflicts
         localStorage.removeItem("token");
         localStorage.setItem('adminToken', response.data.token);
+        localStorage.setItem('adminProfile', JSON.stringify(response.data.user || {}));
         console.log('Admin login successful, redirecting...');
-        navigate('/adminbobby/dashboard');
+        navigate(getFirstAccessibleAdminPath(response.data.user || {}));
       } else {
+        clearStoredAdminProfile();
         setError(response.data?.error || 'Invalid credentials');
       }
     } catch (err) {
       console.error('Admin login error:', err);
       console.error('Error response:', err.response);
+      clearStoredAdminProfile();
       
       // Better error messages
       if (err.response?.status === 401) {

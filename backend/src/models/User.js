@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { ADMIN_ACCESS_AREAS } from "../constants/adminAccess.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -42,6 +43,27 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ["user", "admin"],
       default: "user"
+    },
+
+    adminRoles: {
+      type: [
+        {
+          type: String,
+          enum: ADMIN_ACCESS_AREAS
+        }
+      ],
+      default: undefined
+    },
+
+    adminCreatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null
+    },
+
+    lastAdminLoginAt: {
+      type: Date,
+      default: null
     },
 
     status: {
