@@ -60,6 +60,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const backendUploadsDir = path.join(__dirname, "uploads");
 const cwdUploadsDir = path.resolve(process.cwd(), "uploads");
+const projectRootUploadsDir = path.resolve(__dirname, "..", "uploads");
 
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', true);
@@ -110,6 +111,15 @@ app.use("/api/uploads", express.static(backendUploadsDir));
 if (cwdUploadsDir !== backendUploadsDir) {
   app.use("/uploads", express.static(cwdUploadsDir));
   app.use("/api/uploads", express.static(cwdUploadsDir));
+}
+
+// Support legacy/root-level uploads storage used by some VPS deploy setups.
+if (
+  projectRootUploadsDir !== backendUploadsDir &&
+  projectRootUploadsDir !== cwdUploadsDir
+) {
+  app.use("/uploads", express.static(projectRootUploadsDir));
+  app.use("/api/uploads", express.static(projectRootUploadsDir));
 }
 
 // ========================
