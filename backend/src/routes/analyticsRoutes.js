@@ -520,28 +520,42 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
     };
 
     const gaTotalVisitors = gaResult?.data?.overview?.totalVisitors || 0;
+    const gaRealtimeActiveUsers = Number(gaResult?.data?.overview?.realtimeActiveUsers);
+    const hasGaRealtimeUsers = Number.isFinite(gaRealtimeActiveUsers);
     const internalTotalVisitors = internalData.overview.totalVisitors || 0;
 
     let selectedData = internalData;
     let source = "internal";
     const warnings = [];
 
-    if (gaResult?.success && gaTotalVisitors > 0) {
+    if (gaResult?.success && gaResult?.data) {
       selectedData = gaResult.data;
       source = "google_analytics";
+
+      if (gaTotalVisitors === 0 && internalTotalVisitors > 0) {
+        warnings.push(
+          "GA4 returned 0 visitors for selected range; verify GA4 filters/date range. Internal analytics has historical data."
+        );
+      }
     } else if (internalTotalVisitors > 0) {
       selectedData = internalData;
       source = "internal";
       if (gaResult && !gaResult.success) {
         warnings.push(gaResult.error || "GA4 data unavailable; using internal analytics");
-      } else if (gaResult?.success && gaTotalVisitors === 0) {
-        warnings.push("GA4 returned 0 visitors for selected range; showing internal analytics");
       }
-    } else if (gaResult?.success) {
-      selectedData = gaResult.data;
-      source = "google_analytics";
     } else if (gaResult && !gaResult.success) {
       warnings.push(gaResult.error || "GA4 data unavailable and internal analytics are empty");
+    }
+
+    // Preserve GA realtime users even when internal analytics is selected.
+    if (source === "internal" && hasGaRealtimeUsers) {
+      selectedData = {
+        ...selectedData,
+        overview: {
+          ...(selectedData?.overview || {}),
+          realtimeActiveUsers: gaRealtimeActiveUsers
+        }
+      };
     }
 
     res.json({
@@ -557,6 +571,7 @@ router.get("/admin/dashboard", authenticateUser, requireAdmin, async (req, res) 
           configured: gaConfig.configured,
           propertyId: gaConfig.propertyId || null,
           serviceAccountEmail: gaResult?.meta?.serviceAccountEmail || gaConfig.serviceAccountEmail || null,
+          realtimeActiveUsers: hasGaRealtimeUsers ? gaRealtimeActiveUsers : null,
           warnings: [
             ...(gaResult?.meta?.warnings || []),
             ...warnings

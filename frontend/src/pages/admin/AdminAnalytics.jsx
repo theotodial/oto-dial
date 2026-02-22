@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../../api';
 import {
@@ -31,11 +31,7 @@ function AdminAnalytics() {
     endDate: new Date().toISOString().split('T')[0]
   });
 
-  useEffect(() => {
-    fetchAnalytics();
-  }, [dateRange]);
-
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async () => {
     try {
       setLoading(true);
       const params = new URLSearchParams();
@@ -81,7 +77,16 @@ function AdminAnalytics() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateRange.endDate, dateRange.startDate]);
+
+  useEffect(() => {
+    fetchAnalytics();
+    const refreshTimer = setInterval(() => {
+      fetchAnalytics();
+    }, 30000);
+
+    return () => clearInterval(refreshTimer);
+  }, [fetchAnalytics]);
 
   const handleCardClick = (cardId) => {
     navigate(`/adminbobby/analytics/${cardId}`, {
@@ -114,8 +119,14 @@ function AdminAnalytics() {
     newVisitors: 0,
     signUps: 0,
     usersWithSubscription: 0,
-    avgTimeSpent: 0
+    avgTimeSpent: 0,
+    realtimeActiveUsers: 0
   };
+  const realtimeActiveUsers = Number.isFinite(overview.realtimeActiveUsers)
+    ? overview.realtimeActiveUsers
+    : Number.isFinite(meta?.googleAnalytics?.realtimeActiveUsers)
+      ? meta.googleAnalytics.realtimeActiveUsers
+      : null;
 
   const funnel = data?.funnel || {
     totalVisitors: 0,
@@ -196,9 +207,9 @@ function AdminAnalytics() {
               GA4 Property ID: {meta.googleAnalytics.propertyId}
             </p>
           )}
-          {meta.source === 'google_analytics' && Number.isFinite(data?.overview?.realtimeActiveUsers) && (
+          {Number.isFinite(realtimeActiveUsers) && (
             <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1">
-              Realtime active users: {data.overview.realtimeActiveUsers}
+              Realtime active users: {realtimeActiveUsers}
             </p>
           )}
           {Array.isArray(meta.googleAnalytics?.warnings) && meta.googleAnalytics.warnings.length > 0 && (
