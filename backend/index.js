@@ -55,8 +55,11 @@ import telnyxWebhookRoutes from "./src/routes/webhooks/telnyx.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || "25mb";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const backendUploadsDir = path.join(__dirname, "uploads");
+const cwdUploadsDir = path.resolve(process.cwd(), "uploads");
 
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', true);
@@ -98,9 +101,16 @@ app.use(
   stripeWebhookRoutes
 );
 
-app.use(express.json({ limit: '10mb' })); // Increased limit for image uploads
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
+app.use("/uploads", express.static(backendUploadsDir));
+app.use("/api/uploads", express.static(backendUploadsDir));
+
+// Support deployments where PM2 cwd differs from backend directory.
+if (cwdUploadsDir !== backendUploadsDir) {
+  app.use("/uploads", express.static(cwdUploadsDir));
+  app.use("/api/uploads", express.static(cwdUploadsDir));
+}
 
 // ========================
 // WEBHOOKS
@@ -180,6 +190,17 @@ app.get("/api/webhook-info", (req, res) => {
 
 app.get("/", (req, res) => {
   res.json({ success: true, message: "OTO DIAL API" });
+});
+
+// Friendly payload-too-large response for clients (instead of raw HTML 413 pages).
+app.use((err, req, res, next) => {
+  if (err?.type === "entity.too.large" || err?.status === 413) {
+    return res.status(413).json({
+      success: false,
+      error: "Request payload too large. Please upload smaller images or use image URLs."
+    });
+  }
+  return next(err);
 });
 
 // ========================

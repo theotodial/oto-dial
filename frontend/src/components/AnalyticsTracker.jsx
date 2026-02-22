@@ -9,7 +9,7 @@ function AnalyticsTracker() {
 
   useEffect(() => {
     // Track page view on route change
-    const page = location.pathname;
+    const page = `${location.pathname}${location.search || ''}`;
     const pageTitle = document.title || page;
 
     // Get user ID from user object or decode from token
@@ -27,7 +27,7 @@ function AnalyticsTracker() {
     return () => {
       stopTimeTracking();
     };
-  }, [location.pathname, user]);
+  }, [location.pathname, location.search, user]);
 
   return null; // This component doesn't render anything
 }

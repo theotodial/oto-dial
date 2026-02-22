@@ -1,6 +1,8 @@
 export const ADMIN_ACCESS_AREAS = [
   "dashboard",
   "users",
+  "affiliates",
+  "notifications",
   "calls",
   "sms",
   "numbers",
@@ -13,6 +15,8 @@ export const ADMIN_ACCESS_AREAS = [
 export const ADMIN_ACCESS_LABELS = {
   dashboard: "Dashboard",
   users: "Users",
+  affiliates: "Affiliates",
+  notifications: "Notifications",
   calls: "Calls",
   sms: "SMS",
   numbers: "Numbers",
@@ -25,6 +29,8 @@ export const ADMIN_ACCESS_LABELS = {
 const DEFAULT_PATH_BY_ROLE = {
   dashboard: "/adminbobby/dashboard",
   users: "/adminbobby/users",
+  affiliates: "/adminbobby/affiliates",
+  notifications: "/adminbobby/notifications",
   calls: "/adminbobby/calls",
   sms: "/adminbobby/sms",
   numbers: "/adminbobby/numbers",
@@ -85,6 +91,8 @@ export const getRequiredRoleForAdminPath = (pathname = "") => {
 
   if (pathname.startsWith("/adminbobby/dashboard")) return "dashboard";
   if (pathname.startsWith("/adminbobby/users")) return "users";
+  if (pathname.startsWith("/adminbobby/affiliates")) return "affiliates";
+  if (pathname.startsWith("/adminbobby/notifications")) return "notifications";
   if (pathname.startsWith("/adminbobby/calls")) return "calls";
   if (pathname.startsWith("/adminbobby/sms")) return "sms";
   if (pathname.startsWith("/adminbobby/numbers")) return "numbers";
@@ -108,6 +116,8 @@ export const getFirstAccessibleAdminPath = (adminProfile) => {
     "support",
     "analytics",
     "users",
+    "affiliates",
+    "notifications",
     "calls",
     "sms",
     "numbers",

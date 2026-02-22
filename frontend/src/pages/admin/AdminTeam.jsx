@@ -6,6 +6,8 @@ import { clearStoredAdminProfile } from '../../utils/adminAccess';
 const ROLE_OPTIONS = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'users', label: 'Users' },
+  { key: 'affiliates', label: 'Affiliates' },
+  { key: 'notifications', label: 'Notifications' },
   { key: 'calls', label: 'Calls' },
   { key: 'sms', label: 'SMS' },
   { key: 'numbers', label: 'Numbers' },

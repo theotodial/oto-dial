@@ -35,6 +35,22 @@ export const trackPageView = async (page, pageTitle, userId = null) => {
     const sessionId = getSessionId();
     const referrer = document.referrer || '';
     const userAgent = navigator.userAgent;
+    const landingUrl = typeof window !== 'undefined' ? window.location.href : '';
+    const searchParams = typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search || '')
+      : new URLSearchParams();
+    const utmSource = searchParams.get('utm_source') || null;
+    const utmMedium = searchParams.get('utm_medium') || null;
+    const utmCampaign = searchParams.get('utm_campaign') || null;
+    const utmTerm = searchParams.get('utm_term') || null;
+    const utmContent = searchParams.get('utm_content') || null;
+    const sourceHint = searchParams.get('source') || searchParams.get('src') || null;
+    const gclid = searchParams.get('gclid') || null;
+    const fbclid = searchParams.get('fbclid') || null;
+    const ttclid = searchParams.get('ttclid') || null;
+    const msclkid = searchParams.get('msclkid') || null;
+    const twclid = searchParams.get('twclid') || null;
+    const scid = searchParams.get('scid') || null;
     
     // Get GA client ID
     const gaClientId = await getGAClientId();
@@ -56,7 +72,20 @@ export const trackPageView = async (page, pageTitle, userId = null) => {
       userAgent,
       userId,
       gaClientId,
-      gaSessionId: sessionId
+      gaSessionId: sessionId,
+      landingUrl,
+      sourceHint,
+      utmSource,
+      utmMedium,
+      utmCampaign,
+      utmTerm,
+      utmContent,
+      gclid,
+      fbclid,
+      ttclid,
+      msclkid,
+      twclid,
+      scid
     });
   } catch (error) {
     console.error('Error tracking page view:', error);

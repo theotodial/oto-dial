@@ -3,6 +3,8 @@ export const PRIMARY_ADMIN_EMAIL = "theotodial@gmail.com";
 export const ADMIN_ACCESS_AREAS = [
   "dashboard",
   "users",
+  "affiliates",
+  "notifications",
   "calls",
   "sms",
   "numbers",
@@ -15,6 +17,8 @@ export const ADMIN_ACCESS_AREAS = [
 export const ADMIN_ACCESS_LABELS = {
   dashboard: "Dashboard",
   users: "Users",
+  affiliates: "Affiliates",
+  notifications: "Notifications",
   calls: "Calls",
   sms: "SMS",
   numbers: "Numbers",
@@ -70,6 +74,8 @@ export const getRequiredAdminRolesForPath = (path = "") => {
   if (normalizedPath.startsWith("/api/admin/analytics")) return ["analytics"];
   if (normalizedPath.startsWith("/api/admin/users")) return ["users"];
   if (normalizedPath.startsWith("/api/admin/actions")) return ["users"];
+  if (normalizedPath.startsWith("/api/admin/affiliates")) return ["affiliates"];
+  if (normalizedPath.startsWith("/api/admin/notifications")) return ["notifications"];
   if (normalizedPath.startsWith("/api/admin/calls")) return ["calls"];
   if (normalizedPath.startsWith("/api/admin/sms")) return ["sms"];
   if (normalizedPath.startsWith("/api/admin/numbers")) return ["numbers"];

@@ -1,22 +1,56 @@
 import { useState } from 'react';
+import API from '../../api';
 
 function MediaLibrary({ isOpen, onClose, onSelect, mode = 'featured' }) {
   const [imageUrl, setImageUrl] = useState('');
   const [uploadedImages, setUploadedImages] = useState([]);
+  const [uploading, setUploading] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleUpload = (e) => {
+  const handleUpload = async (e) => {
     const file = e.target.files[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const url = event.target.result;
-        setUploadedImages(prev => [...prev, url]);
-        onSelect(url);
+      if (!file.type.startsWith('image/')) {
+        alert('Only image files are allowed.');
+        return;
+      }
+
+      const maxBytes = 8 * 1024 * 1024; // 8MB
+      if (file.size > maxBytes) {
+        alert('Image is too large. Maximum allowed size is 8MB.');
+        return;
+      }
+
+      setUploading(true);
+      try {
+        const imageData = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (event) => resolve(event.target.result);
+          reader.onerror = () => reject(new Error('Failed to read image file'));
+          reader.readAsDataURL(file);
+        });
+
+        const response = await API.post('/api/blog/admin/upload-image', {
+          imageData,
+          fileName: file.name
+        });
+
+        if (response.error || !response.data?.success || !response.data?.imageUrl) {
+          const errorMsg = response.error || response.data?.error || 'Failed to upload image';
+          alert(`Image upload failed: ${errorMsg}`);
+          return;
+        }
+
+        const uploadedUrl = response.data.imageUrl;
+        setUploadedImages(prev => [uploadedUrl, ...prev]);
+        onSelect(uploadedUrl);
         onClose();
-      };
-      reader.readAsDataURL(file);
+      } catch (error) {
+        alert(error?.message || 'Failed to upload image');
+      } finally {
+        setUploading(false);
+      }
     }
   };
 
@@ -53,14 +87,15 @@ function MediaLibrary({ isOpen, onClose, onSelect, mode = 'featured' }) {
                 type="file"
                 accept="image/*"
                 onChange={handleUpload}
+                disabled={uploading}
                 className="hidden"
                 id="image-upload"
               />
               <label
                 htmlFor="image-upload"
-                className="cursor-pointer inline-block px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                className={`inline-block px-4 py-2 rounded-lg text-white ${uploading ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 cursor-pointer'}`}
               >
-                Choose File
+                {uploading ? 'Uploading...' : 'Choose File'}
               </label>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                 Or paste image URL below

@@ -6,40 +6,40 @@
 // Supported countries with ISO2 codes and Telnyx country codes
 export const SUPPORTED_COUNTRIES = [
   // North America
-  { code: "US", name: "United States", iso2: "US", telnyxCode: "US" },
-  { code: "CA", name: "Canada", iso2: "CA", telnyxCode: "CA" },
-  { code: "MX", name: "Mexico", iso2: "MX", telnyxCode: "MX" },
+  { code: "US", name: "United States", iso2: "US", telnyxCode: "US", numberProvisioningEnabled: true },
+  { code: "CA", name: "Canada", iso2: "CA", telnyxCode: "CA", numberProvisioningEnabled: false },
+  { code: "MX", name: "Mexico", iso2: "MX", telnyxCode: "MX", numberProvisioningEnabled: false },
   
   // Europe
-  { code: "GB", name: "United Kingdom", iso2: "GB", telnyxCode: "GB" },
-  { code: "NO", name: "Norway", iso2: "NO", telnyxCode: "NO" },
-  { code: "FR", name: "France", iso2: "FR", telnyxCode: "FR" },
-  { code: "IT", name: "Italy", iso2: "IT", telnyxCode: "IT" },
-  { code: "DE", name: "Germany", iso2: "DE", telnyxCode: "DE" },
-  { code: "ES", name: "Spain", iso2: "ES", telnyxCode: "ES" },
-  { code: "CH", name: "Switzerland", iso2: "CH", telnyxCode: "CH" },
-  { code: "NL", name: "Netherlands", iso2: "NL", telnyxCode: "NL" },
-  { code: "LU", name: "Luxembourg", iso2: "LU", telnyxCode: "LU" },
-  { code: "IE", name: "Ireland", iso2: "IE", telnyxCode: "IE" },
-  { code: "TR", name: "Türkiye", iso2: "TR", telnyxCode: "TR" },
+  { code: "GB", name: "United Kingdom", iso2: "GB", telnyxCode: "GB", numberProvisioningEnabled: false },
+  { code: "NO", name: "Norway", iso2: "NO", telnyxCode: "NO", numberProvisioningEnabled: true },
+  { code: "FR", name: "France", iso2: "FR", telnyxCode: "FR", numberProvisioningEnabled: false },
+  { code: "IT", name: "Italy", iso2: "IT", telnyxCode: "IT", numberProvisioningEnabled: false },
+  { code: "DE", name: "Germany", iso2: "DE", telnyxCode: "DE", numberProvisioningEnabled: false },
+  { code: "ES", name: "Spain", iso2: "ES", telnyxCode: "ES", numberProvisioningEnabled: false },
+  { code: "CH", name: "Switzerland", iso2: "CH", telnyxCode: "CH", numberProvisioningEnabled: false },
+  { code: "NL", name: "Netherlands", iso2: "NL", telnyxCode: "NL", numberProvisioningEnabled: false },
+  { code: "LU", name: "Luxembourg", iso2: "LU", telnyxCode: "LU", numberProvisioningEnabled: false },
+  { code: "IE", name: "Ireland", iso2: "IE", telnyxCode: "IE", numberProvisioningEnabled: false },
+  { code: "TR", name: "Türkiye", iso2: "TR", telnyxCode: "TR", numberProvisioningEnabled: false },
   
   // Middle East
-  { code: "AE", name: "United Arab Emirates", iso2: "AE", telnyxCode: "AE" },
-  { code: "SA", name: "Saudi Arabia", iso2: "SA", telnyxCode: "SA" },
-  { code: "QA", name: "Qatar", iso2: "QA", telnyxCode: "QA" },
+  { code: "AE", name: "United Arab Emirates", iso2: "AE", telnyxCode: "AE", numberProvisioningEnabled: false },
+  { code: "SA", name: "Saudi Arabia", iso2: "SA", telnyxCode: "SA", numberProvisioningEnabled: false },
+  { code: "QA", name: "Qatar", iso2: "QA", telnyxCode: "QA", numberProvisioningEnabled: false },
   
   // Asia
-  { code: "JP", name: "Japan", iso2: "JP", telnyxCode: "JP" },
-  { code: "KR", name: "South Korea", iso2: "KR", telnyxCode: "KR" },
-  { code: "SG", name: "Singapore", iso2: "SG", telnyxCode: "SG" },
-  { code: "CN", name: "China", iso2: "CN", telnyxCode: "CN" },
+  { code: "JP", name: "Japan", iso2: "JP", telnyxCode: "JP", numberProvisioningEnabled: false },
+  { code: "KR", name: "South Korea", iso2: "KR", telnyxCode: "KR", numberProvisioningEnabled: false },
+  { code: "SG", name: "Singapore", iso2: "SG", telnyxCode: "SG", numberProvisioningEnabled: false },
+  { code: "CN", name: "China", iso2: "CN", telnyxCode: "CN", numberProvisioningEnabled: false },
   
   // Oceania
-  { code: "AU", name: "Australia", iso2: "AU", telnyxCode: "AU" },
-  { code: "NZ", name: "New Zealand", iso2: "NZ", telnyxCode: "NZ" },
+  { code: "AU", name: "Australia", iso2: "AU", telnyxCode: "AU", numberProvisioningEnabled: false },
+  { code: "NZ", name: "New Zealand", iso2: "NZ", telnyxCode: "NZ", numberProvisioningEnabled: false },
   
   // Africa
-  { code: "ZA", name: "South Africa", iso2: "ZA", telnyxCode: "ZA" }
+  { code: "ZA", name: "South Africa", iso2: "ZA", telnyxCode: "ZA", numberProvisioningEnabled: false }
 ];
 
 // Country code to country mapping
@@ -96,6 +96,16 @@ export function getCountryByCode(countryCode) {
  */
 export function getSupportedCountries() {
   return SUPPORTED_COUNTRIES;
+}
+
+/**
+ * Check if number provisioning is currently enabled for a country.
+ * This can be narrower than overall "supported countries" when
+ * regulatory requirements are still being prepared.
+ */
+export function isNumberProvisioningEnabledCountry(countryCode) {
+  const country = getCountryByCode(countryCode);
+  return !!country?.numberProvisioningEnabled;
 }
 
 /**

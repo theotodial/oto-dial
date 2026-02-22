@@ -9,6 +9,11 @@ export async function getMyNumbers() {
 }
 
 export async function searchNumbers(areaCode, searchPattern, countryCode) {
+  const result = await searchNumbersDetailed(areaCode, searchPattern, countryCode);
+  return result.numbers || [];
+}
+
+export async function searchNumbersDetailed(areaCode, searchPattern, countryCode) {
   const params = new URLSearchParams();
   if (areaCode) params.append('areaCode', areaCode);
   if (searchPattern) params.append('searchPattern', searchPattern);
@@ -18,7 +23,14 @@ export async function searchNumbers(areaCode, searchPattern, countryCode) {
   if (response.error) {
     throw new Error(response.error);
   }
-  return response.data?.numbers || [];
+  return {
+    numbers: response.data?.numbers || [],
+    count: response.data?.count || 0,
+    country: response.data?.country || null,
+    countryCode: response.data?.countryCode || countryCode || null,
+    comingSoon: !!response.data?.comingSoon,
+    message: response.data?.message || ''
+  };
 }
 
 export async function purchaseNumber(phoneNumber, countryCode) {
@@ -27,8 +39,14 @@ export async function purchaseNumber(phoneNumber, countryCode) {
     payload.countryCode = countryCode;
   }
   const response = await API.post('/api/numbers/purchase', payload);
-  if (response.error) {
-    throw new Error(response.error);
+  if (response.error || response?.data?.success === false) {
+    const message =
+      response.error ||
+      response?.data?.error ||
+      response?.data?.details ||
+      response?.data?.message ||
+      'Failed to purchase number';
+    throw new Error(message);
   }
   return response.data;
 }
