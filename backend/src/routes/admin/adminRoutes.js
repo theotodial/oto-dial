@@ -20,6 +20,8 @@ import adminTeam from "./adminTeam.js";
 import adminSubscriptionRepair from "./adminSubscriptionRepair.js";
 import adminSubscriptionAudit from "./adminSubscriptionAudit.js";
 import adminActivationFailures from "./adminActivationFailures.js";
+import adminAffiliates from "./adminAffiliates.js";
+import adminNotifications from "./adminNotifications.js";
 import Plan from "../../models/Plan.js";
 
 const router = express.Router();
@@ -49,6 +51,10 @@ router.use("/support", adminSupport);
 
 // Admin team management
 router.use("/team", adminTeam);
+
+// Affiliate management and admin notifications
+router.use("/", adminAffiliates);
+router.use("/", adminNotifications);
 
 // Subscription repair and audit
 router.use("/subscriptions", adminSubscriptionRepair);

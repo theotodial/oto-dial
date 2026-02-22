@@ -144,7 +144,6 @@ function Recents() {
   const isMinimized = callContext?.isMinimized || false;
   const minimizeCall = callContext?.minimizeCall || (() => {});
   const remoteNumber = callContext?.remoteNumber || '';
-  const initializeClient = callContext?.initializeClient || (async () => false);
   const answerCall = callContext?.answerCall || (() => {});
   const rejectCall = callContext?.rejectCall || (() => {});
 
@@ -162,6 +161,11 @@ function Recents() {
   const [sendError, setSendError] = useState('');
   const [subscriptionData, setSubscriptionData] = useState({ remainingSMS: 0, planName: 'No Plan' });
   const messagesEndRef = useRef(null);
+  const suspiciousActivityText =
+    'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
+
+  const isSuspiciousActivityError = (message) =>
+    String(message || '').toLowerCase().includes('suspicious activity detected');
   
   // Dialer state - MUST be declared before any conditional returns
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -259,8 +263,6 @@ function Recents() {
             remainingSMS: subRes.data?.smsRemaining || 0,
             planName: subRes.data?.planName || 'No Plan'
           });
-          // Initialize WebRTC client when subscription is active
-          initializeClient();
         }
       } catch (err) {
         console.warn('Failed to fetch dialer data:', err);
@@ -269,7 +271,7 @@ function Recents() {
       }
     };
     fetchDialerData();
-  }, [initializeClient]);
+  }, []);
 
   // Normalize phone number for comparison (used by fetchChatMessages)
   const normalizePhone = (num) => {
@@ -1402,7 +1404,24 @@ function Recents() {
                 )}
                 <div ref={messagesEndRef} />
               </div>
-              {sendError && <div className="px-4 py-2 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-sm flex-shrink-0">{sendError}</div>}
+              {sendError && (
+                <div className="px-4 py-2 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-sm flex-shrink-0">
+                  {isSuspiciousActivityError(sendError) ? (
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <span>{suspiciousActivityText}</span>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/support')}
+                        className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
+                      >
+                        Contact Support
+                      </button>
+                    </div>
+                  ) : (
+                    sendError
+                  )}
+                </div>
+              )}
               <div className="p-3 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex-shrink-0">
                 <form onSubmit={handleSendMessage} className="flex items-center gap-2">
                   <input type="text" value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} placeholder="Type a message..." className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-full text-gray-900 dark:text-white placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" disabled={sending} />
@@ -1444,6 +1463,24 @@ function Recents() {
             </div>
           ) : (
             <>
+          {callError && (
+            <div className="px-4 py-2 bg-red-50 dark:bg-red-900/30 border-b border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
+              {isSuspiciousActivityError(callError) ? (
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span>{suspiciousActivityText}</span>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/support')}
+                    className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[11px] font-semibold"
+                  >
+                    Contact Support
+                  </button>
+                </div>
+              ) : (
+                callError
+              )}
+            </div>
+          )}
           {(!subscriptionActive || userNumbers.length === 0) && (
             <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 flex-shrink-0">
               <p className="text-xs text-amber-700 dark:text-amber-300">
@@ -1738,7 +1775,20 @@ function Recents() {
               {/* Input Area */}
               {sendError && (
                 <div className="px-4 py-2 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-sm">
-                  {sendError}
+                  {isSuspiciousActivityError(sendError) ? (
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <span>{suspiciousActivityText}</span>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/support')}
+                        className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
+                      >
+                        Contact Support
+                      </button>
+                    </div>
+                  ) : (
+                    sendError
+                  )}
                 </div>
               )}
               <div className="border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
@@ -1942,6 +1992,24 @@ function Recents() {
 
           {mobileTab === 'dialer' && (
             <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900">
+              {callError && (
+                <div className="px-4 py-2 bg-red-50 dark:bg-red-900/30 border-b border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
+                  {isSuspiciousActivityError(callError) ? (
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span>{suspiciousActivityText}</span>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/support')}
+                        className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[11px] font-semibold"
+                      >
+                        Contact Support
+                      </button>
+                    </div>
+                  ) : (
+                    callError
+                  )}
+                </div>
+              )}
               {/* Debug Info - Shows why calling might be blocked */}
               {(!subscriptionActive || userNumbers.length === 0) && (
                 <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800">

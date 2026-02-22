@@ -102,6 +102,16 @@ const callSchema = new mongoose.Schema(
       default: 0
     },
 
+    usageCountedAt: {
+      type: Date,
+      default: null
+    },
+
+    usageCountedSeconds: {
+      type: Number,
+      default: 0
+    },
+
     carrierFee: {
       type: Number,
       default: 0

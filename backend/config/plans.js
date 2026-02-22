@@ -26,3 +26,37 @@ export const SUPER_PLAN = {
     numbersTotal: 1,
   },
 };
+
+export const UNLIMITED_PLAN = {
+  name: "Unlimited",
+  priceUSD: 119.99,
+  stripePriceId: "price_1T2mI6CxZc7GK7QKObsM4ksT",
+  displayUnlimited: true,
+  limits: {
+    minutesTotal: 3600,
+    smsTotal: 400,
+    numbersTotal: 1
+  },
+  monthlySmsLimit: 400,
+  monthlyMinutesLimit: 3600,
+  dailySmsLimit: 30,
+  dailyMinutesLimit: 180,
+  dedicatedNumbers: 1
+};
+
+export const AFFILIATE_UNLIMITED_PLAN = {
+  name: "Affiliate Unlimited",
+  priceUSD: 119.99,
+  stripePriceId: "price_1T2r5pCxZc7GK7QKMa5wn6dE",
+  displayUnlimited: true,
+  limits: {
+    minutesTotal: 3600,
+    smsTotal: 400,
+    numbersTotal: 1
+  },
+  monthlySmsLimit: 400,
+  monthlyMinutesLimit: 3600,
+  dailySmsLimit: 30,
+  dailyMinutesLimit: 180,
+  dedicatedNumbers: 1
+};

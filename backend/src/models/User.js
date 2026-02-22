@@ -142,6 +142,23 @@ const userSchema = new mongoose.Schema(
       token: String
     }],
 
+    referredByAffiliate: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Affiliate",
+      default: null,
+      index: true
+    },
+
+    referredByAffiliateCode: {
+      type: String,
+      default: null
+    },
+
+    affiliateReferredAt: {
+      type: Date,
+      default: null
+    },
+
     // Profile picture
     profilePicture: {
       type: String,

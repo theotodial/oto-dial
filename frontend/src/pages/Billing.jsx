@@ -64,24 +64,42 @@ function Billing() {
       
       if (response.data?.success && response.data?.plans) {
         // Transform plans for display
-        const transformedPlans = response.data.plans.map(plan => ({
+        const normalizedPlans = response.data.plans.map((plan) => {
+          const isUnlimitedPlan =
+            Boolean(plan.displayUnlimited) ||
+            String(plan.planType || '').toLowerCase() === 'unlimited' ||
+            String(plan.name || '').toLowerCase().includes('unlimited');
+
+          return {
           _id: plan._id,
           name: plan.name,
           price: plan.price.toFixed(2),
-          description: plan.name === "Basic Plan" 
-            ? "Perfect for individuals and small teams"
-            : "For growing businesses and power users",
-          features: [
-            `${plan.limits.numbersTotal} Local Phone Number${plan.limits.numbersTotal > 1 ? 's' : ''}`,
-            `${plan.limits.minutesTotal.toLocaleString()} Voice Minutes`,
-            `${plan.limits.smsTotal} SMS`,
-            "Email Support"
-          ],
+          description: isUnlimitedPlan
+            ? "Built for high-volume teams"
+            : plan.name === "Basic Plan" 
+              ? "Perfect for individuals and small teams"
+              : "For growing businesses and power users",
+          features: isUnlimitedPlan
+            ? [
+                "1 Dedicated Number",
+                "Unlimited SMS*",
+                "Unlimited Minutes*",
+                "Email Support"
+              ]
+            : [
+                `${plan.limits.numbersTotal} Local Phone Number${plan.limits.numbersTotal > 1 ? 's' : ''}`,
+                `${plan.limits.minutesTotal.toLocaleString()} Voice Minutes`,
+                `${plan.limits.smsTotal} SMS`,
+                "Email Support"
+              ],
+          displayUnlimited: isUnlimitedPlan,
+          fairUsageNote: isUnlimitedPlan ? "*Fair usage policy applies." : null,
           popular: plan.name === "Basic Plan",
           available: true
-        }));
+          };
+        });
         
-        setPlans(transformedPlans);
+        setPlans(normalizedPlans);
       }
     } catch (err) {
       console.error('Failed to fetch plans:', err);
@@ -112,6 +130,22 @@ function Billing() {
             "200 SMS",
             "Email Support"
           ],
+          popular: false,
+          available: true
+        },
+        {
+          _id: 'unlimited',
+          name: "Unlimited",
+          price: "119.99",
+          description: "Built for high-volume teams",
+          features: [
+            "1 Dedicated Number",
+            "Unlimited SMS*",
+            "Unlimited Minutes*",
+            "Email Support"
+          ],
+          displayUnlimited: true,
+          fairUsageNote: "*Fair usage policy applies.",
           popular: false,
           available: true
         }
@@ -313,15 +347,24 @@ function Billing() {
               </span>
             </div>
             {currentSubscription && (
+              (() => {
+                const isUnlimitedCurrent =
+                  Boolean(currentSubscription.displayUnlimited) ||
+                  String(currentSubscription.planType || '').toLowerCase() === 'unlimited' ||
+                  String(currentSubscription.planName || '').toLowerCase().includes('unlimited');
+                return (
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
                 <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                   Current plan: {currentSubscription.planName}
                 </span>
                 <span className="block mt-0.5">
-                  {currentSubscription.minutesRemaining?.toFixed(1) || 0} minutes •{" "}
-                  {currentSubscription.smsRemaining || 0} SMS remaining
+                        {isUnlimitedCurrent
+                          ? "∞ minutes • ∞ SMS remaining"
+                          : `${currentSubscription.minutesRemaining?.toFixed(1) || 0} minutes • ${currentSubscription.smsRemaining || 0} SMS remaining`}
                 </span>
               </div>
+                );
+              })()
             )}
           </div>
         </div>
@@ -403,6 +446,11 @@ function Billing() {
                         </li>
                       ))}
                     </ul>
+                    {activePlan.fairUsageNote && (
+                      <p className="mt-3 text-[11px] text-slate-400">
+                        {activePlan.fairUsageNote}
+                      </p>
+                    )}
                   </div>
                   <div className="text-right sm:text-center sm:pr-2">
                     <div className="text-3xl font-bold text-slate-50">

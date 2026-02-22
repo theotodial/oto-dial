@@ -5,6 +5,12 @@ import AddonPlan from "../models/AddonPlan.js";
 import StripeInvoice from "../models/StripeInvoice.js";
 import authMiddleware from "../middleware/authenticateUser.js";
 import { selfHealSubscriptionForUser } from "../services/stripeSubscriptionService.js";
+import {
+  buildPublicPlanPayload,
+  applyPlanSnapshotToSubscription
+} from "../services/subscriptionPlanSnapshotService.js";
+import { isUnlimitedSubscription } from "../services/unlimitedUsageService.js";
+import { getActiveAddonAmounts } from "../services/subscriptionAddonCreditService.js";
 
 const router = express.Router();
 
@@ -17,15 +23,7 @@ router.get("/plans", async (req, res) => {
     const plans = await Plan.find({ active: true }).sort({ price: 1 }).select('-__v');
     res.json({
       success: true,
-      plans: plans.map(plan => ({
-        _id: plan._id,
-        name: plan.name,
-        price: plan.price,
-        currency: plan.currency,
-        limits: plan.limits,
-        stripeProductId: plan.stripeProductId,
-        stripePriceId: plan.stripePriceId
-      }))
+      plans: plans.map((plan) => buildPublicPlanPayload(plan))
     });
   } catch (err) {
     console.error("Fetch plans error:", err);
@@ -79,11 +77,8 @@ router.get("/", authMiddleware, async (req, res) => {
 
     // Apply add-ons only if not expired
     const now = new Date();
-    const addonMinutesActive =
-      subscription.addonsMinutesExpiry &&
-      subscription.addonsMinutesExpiry > now
-        ? subscription.addons?.minutes || 0
-        : 0;
+    const activeAddons = getActiveAddonAmounts(subscription, now);
+    const addonMinutesActive = activeAddons.minutesActive;
 
     const minutesTotal =
       (subscription.limits?.minutesTotal || 0) + addonMinutesActive;
@@ -93,11 +88,7 @@ router.get("/", authMiddleware, async (req, res) => {
     // Convert remaining seconds to minutes for display (with decimals)
     const minutesRemaining = secondsRemaining / 60;
 
-    const addonSmsActive =
-      subscription.addonsSmsExpiry &&
-      subscription.addonsSmsExpiry > now
-        ? subscription.addons?.sms || 0
-        : 0;
+    const addonSmsActive = activeAddons.smsActive;
 
     const smsRemaining = Math.max(
       0,
@@ -106,17 +97,39 @@ router.get("/", authMiddleware, async (req, res) => {
         (subscription.usage?.smsUsed || 0)
     );
 
+    const unlimited =
+      isUnlimitedSubscription(subscription) ||
+      Boolean(subscription.planId?.displayUnlimited) ||
+      /unlimited/i.test(String(subscription.planId?.name || ""));
+
+    const safeSubscription = unlimited
+      ? {
+          _id: subscription._id,
+          planId: subscription.planId?._id || subscription.planId,
+          planName: subscription.planId?.name || subscription.planName || "Unlimited",
+          planType: "unlimited",
+          displayUnlimited: true,
+          status: subscription.status || "active",
+          periodEnd: subscription.periodEnd,
+          periodStart: subscription.periodStart
+        }
+      : subscription;
+
     res.json({
-      planName: subscription.planId?.name || "Active Plan",
-      minutesRemaining,
-      smsRemaining,
+      planName: subscription.planId?.name || subscription.planName || "Active Plan",
+      planType: subscription.planType || (unlimited ? "unlimited" : null),
+      displayUnlimited: unlimited,
+      minutesRemaining: unlimited ? "∞" : minutesRemaining,
+      smsRemaining: unlimited ? "∞" : smsRemaining,
       status: subscription.status || "active",
       periodEnd: subscription.periodEnd,
       periodStart: subscription.periodStart,
-      limits: subscription.limits,
-      totalMinutes: subscription.limits?.minutesTotal || 0,
-      totalSMS: subscription.limits?.smsTotal || 0,
-      subscription,
+      limits: unlimited
+        ? { numbersTotal: subscription.limits?.numbersTotal || 1 }
+        : subscription.limits,
+      totalMinutes: unlimited ? null : (subscription.limits?.minutesTotal || 0),
+      totalSMS: unlimited ? null : (subscription.limits?.smsTotal || 0),
+      subscription: safeSubscription
     });
   } catch (err) {
     console.error(err);
@@ -218,15 +231,11 @@ router.post("/buy", authMiddleware, async (req, res) => {
       userId,
       planId: plan._id,
       status: "active",
+      planKey: plan.name,
+      planName: plan.planName || plan.name,
 
       periodStart: now,
       periodEnd,
-
-      limits: {
-        minutesTotal: plan.limits?.minutesTotal || DEFAULT_LIMITS.minutesTotal,
-        smsTotal: plan.limits?.smsTotal || DEFAULT_LIMITS.smsTotal,
-        numbersTotal: plan.limits?.numbersTotal || DEFAULT_LIMITS.numbersTotal,
-      },
 
       usage: {
         minutesUsed: 0,
@@ -236,8 +245,11 @@ router.post("/buy", authMiddleware, async (req, res) => {
       addons: {
         minutes: 0,
         sms: 0,
-      },
+      }
     });
+
+    applyPlanSnapshotToSubscription(subscription, plan);
+    await subscription.save();
 
     res.status(201).json({
       message: "Subscription activated",
@@ -282,19 +294,24 @@ router.post("/fix", authMiddleware, async (req, res) => {
 
     // Get limits from plan or use defaults
     let limits = DEFAULT_LIMITS;
+    let planDoc = null;
     if (subscription.planId) {
-      const plan = await Plan.findById(subscription.planId).lean();
-      if (plan?.limits) {
-        limits = plan.limits;
+      planDoc = await Plan.findById(subscription.planId);
+      if (planDoc?.limits) {
+        limits = planDoc.limits;
       }
     }
 
     // Update subscription with proper limits
-    subscription.limits = {
-      minutesTotal: limits.minutesTotal || DEFAULT_LIMITS.minutesTotal,
-      smsTotal: limits.smsTotal || DEFAULT_LIMITS.smsTotal,
-      numbersTotal: limits.numbersTotal || DEFAULT_LIMITS.numbersTotal
-    };
+    if (planDoc) {
+      applyPlanSnapshotToSubscription(subscription, planDoc);
+    } else {
+      subscription.limits = {
+        minutesTotal: limits.minutesTotal || DEFAULT_LIMITS.minutesTotal,
+        smsTotal: limits.smsTotal || DEFAULT_LIMITS.smsTotal,
+        numbersTotal: limits.numbersTotal || DEFAULT_LIMITS.numbersTotal
+      };
+    }
 
     await subscription.save();
 
@@ -358,7 +375,9 @@ router.post("/reset-usage", authMiddleware, async (req, res) => {
       {
         $set: {
           "usage.smsUsed": 0,
-          "usage.minutesUsed": 0
+          "usage.minutesUsed": 0,
+          dailySmsUsed: 0,
+          dailyMinutesUsed: 0
         }
       },
       { new: true }

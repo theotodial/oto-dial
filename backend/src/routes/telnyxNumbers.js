@@ -25,7 +25,8 @@ router.get(
       }
 
       // HARD STOP — LIMIT CHECK
-      if (req.subscription.numbers.length >= 1) {
+      const maxNumbers = req.subscription.limits?.numbersTotal || 1;
+      if (req.subscription.numbers.length >= maxNumbers) {
         return res.status(400).json({ error: "Number limit reached" });
       }
 
@@ -235,7 +236,8 @@ router.post(
       }
 
       // HARD STOP — LIMIT CHECK
-      if (req.subscription.numbers.length >= 1) {
+      const maxNumbers = req.subscription.limits?.numbersTotal || 1;
+      if (req.subscription.numbers.length >= maxNumbers) {
         return res.status(400).json({ error: "Number limit reached" });
       }
 
@@ -579,7 +581,8 @@ router.post(
       }
 
       // HARD STOP — LIMIT CHECK
-      if (req.subscription.numbers.length >= 1) {
+      const maxNumbers = req.subscription.limits?.numbersTotal || 1;
+      if (req.subscription.numbers.length >= maxNumbers) {
         return res.status(400).json({ error: "Number limit reached" });
       }
 

@@ -7,6 +7,11 @@ import User from "../models/User.js";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { selfHealSubscriptionForUser } from "../services/stripeSubscriptionService.js";
+import {
+  attachAffiliateReferralToUser,
+  buildOAuthState,
+  parseOAuthState
+} from "../services/affiliateService.js";
 
 const router = express.Router();
 
@@ -119,10 +124,19 @@ router.get("/google", (req, res, next) => {
     );
   }
 
+  const affiliateCode = String(req.query.affiliateCode || "")
+    .trim()
+    .toUpperCase();
+  const statePayload = affiliateCode ? { affiliateCode } : {};
+  const oauthState = Object.keys(statePayload).length
+    ? buildOAuthState(statePayload)
+    : null;
+
   passport.authenticate("google", {
     scope: ["email", "profile"],
     session: false,
-    prompt: "select_account"
+    prompt: "select_account",
+    ...(oauthState ? { state: oauthState } : {})
   })(req, res, next);
 });
 
@@ -142,6 +156,20 @@ router.get("/google/callback", (req, res, next) => {
           "Google authentication failed. Please try again."
         )
       );
+    }
+
+    const oauthState = parseOAuthState(req.query.state);
+    if (oauthState?.affiliateCode) {
+      attachAffiliateReferralToUser({
+        user,
+        affiliateCode: oauthState.affiliateCode,
+        source: "google_oauth"
+      }).catch((refErr) => {
+        console.warn(
+          `⚠️ Failed to link affiliate referral for Google signup user ${user._id}:`,
+          refErr.message
+        );
+      });
     }
 
     const token = jwt.sign(
@@ -164,7 +192,7 @@ router.get("/google/callback", (req, res, next) => {
  */
 router.post("/register", async (req, res) => {
   try {
-    const { email, password, firstName, lastName, name, phone } = req.body;
+    const { email, password, firstName, lastName, name, phone, affiliateCode } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password required" });
@@ -186,6 +214,21 @@ router.post("/register", async (req, res) => {
       name: name || `${firstName || ""} ${lastName || ""}`.trim(),
       phone: phone || ""
     });
+
+    if (affiliateCode) {
+      try {
+        await attachAffiliateReferralToUser({
+          user,
+          affiliateCode,
+          source: "register"
+        });
+      } catch (refErr) {
+        console.warn(
+          `⚠️ Failed to attach affiliate referral during registration for ${user.email}:`,
+          refErr.message
+        );
+      }
+    }
 
     const token = jwt.sign(
       { userId: user._id },
@@ -263,8 +306,13 @@ router.post("/login", async (req, res) => {
       token
     };
 
-    // Keep only last 5 sessions, remove expired ones
-    const validSessions = activeSessions.slice(-4); // Keep 4 previous + 1 new = 5 total
+    // Keep a healthy session history so users can stay logged in on multiple devices.
+    const maxTrackedSessionsRaw = Number(process.env.MAX_TRACKED_SESSIONS || 20);
+    const maxTrackedSessions =
+      Number.isFinite(maxTrackedSessionsRaw) && maxTrackedSessionsRaw > 1
+        ? Math.floor(maxTrackedSessionsRaw)
+        : 20;
+    const validSessions = activeSessions.slice(-(maxTrackedSessions - 1));
     user.sessions = [...validSessions, newSession];
     await user.save();
 

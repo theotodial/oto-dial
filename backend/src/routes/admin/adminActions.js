@@ -7,6 +7,15 @@ import Plan from "../../models/Plan.js";
 import getTelnyxClient from "../../services/telnyxService.js";
 import Stripe from "stripe";
 import { getCanonicalPlanPriceId } from "../../config/stripeCatalog.js";
+import {
+  applyPlanSnapshotToSubscription
+} from "../../services/subscriptionPlanSnapshotService.js";
+import { getServerDayKey } from "../../services/unlimitedUsageService.js";
+import {
+  applyLoadedCreditsToSubscription,
+  getActiveAddonAmounts,
+  parseLoadedCreditsInput
+} from "../../services/subscriptionAddonCreditService.js";
 
 const router = express.Router();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
@@ -25,6 +34,16 @@ const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SEC
 router.post("/subscription/assign", requireAdmin, async (req, res) => {
   try {
     const { userId, planId } = req.body;
+    let loadedCreditsInput;
+
+    try {
+      loadedCreditsInput = parseLoadedCreditsInput(req.body);
+    } catch (validationErr) {
+      return res.status(400).json({
+        success: false,
+        error: validationErr.message
+      });
+    }
 
     if (!userId || !planId) {
       return res.status(400).json({
@@ -141,10 +160,11 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
       planId,
       stripeSubscriptionId: stripeSubscriptionId,
       stripePriceId: effectivePlanPriceId,
+      planKey: plan.name,
+      planName: plan.planName || plan.name,
       status: "active",
       periodStart: now,
       periodEnd,
-      limits: plan.limits, // From MongoDB plan - SINGLE SOURCE OF TRUTH
       usage: {
         minutesUsed: 0,
         smsUsed: 0
@@ -153,8 +173,17 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
         minutes: 0,
         sms: 0
       },
-      ratePerMinute: 0.0065 // Default rate
+      ratePerMinute: 0.0065, // Default rate
+      usageWindowDateKey: getServerDayKey()
     });
+
+    applyPlanSnapshotToSubscription(subscription, plan);
+
+    if (loadedCreditsInput.hasChanges) {
+      applyLoadedCreditsToSubscription(subscription, loadedCreditsInput);
+    }
+
+    await subscription.save();
 
     // Update user's active subscription
     user.activeSubscriptionId = subscription._id;
@@ -164,7 +193,8 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
     res.json({
       success: true,
       message: "Subscription assigned successfully",
-      subscription
+      subscription,
+      loadedCredits: getActiveAddonAmounts(subscription)
     });
   } catch (err) {
     console.error("Assign subscription error:", err);
@@ -262,6 +292,16 @@ router.post("/subscription/resume", requireAdmin, async (req, res) => {
 router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
   try {
     const { userId, planId } = req.body;
+    let loadedCreditsInput;
+
+    try {
+      loadedCreditsInput = parseLoadedCreditsInput(req.body);
+    } catch (validationErr) {
+      return res.status(400).json({
+        success: false,
+        error: validationErr.message
+      });
+    }
 
     if (!userId || !planId) {
       return res.status(400).json({
@@ -341,14 +381,20 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
 
     // Update subscription plan in MongoDB - SINGLE SOURCE OF TRUTH
     subscription.planId = planId;
-    subscription.limits = plan.limits; // Update limits from MongoDB plan
     subscription.stripePriceId = effectivePlanPriceId;
+    applyPlanSnapshotToSubscription(subscription, plan);
+
+    if (loadedCreditsInput.hasChanges) {
+      applyLoadedCreditsToSubscription(subscription, loadedCreditsInput);
+    }
+
     await subscription.save();
 
     res.json({
       success: true,
       message: "Subscription plan changed successfully",
-      subscription
+      subscription,
+      loadedCredits: getActiveAddonAmounts(subscription)
     });
   } catch (err) {
     console.error("Change plan error:", err);
@@ -356,6 +402,165 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
       success: false,
       error: "Failed to change subscription plan",
       details: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/admin/actions/subscription/load-credits
+ * Add custom SMS/minutes credits with optional expiry dates.
+ */
+router.post("/subscription/load-credits", requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    let loadedCreditsInput;
+
+    try {
+      loadedCreditsInput = parseLoadedCreditsInput(req.body);
+    } catch (validationErr) {
+      return res.status(400).json({
+        success: false,
+        error: validationErr.message
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "userId is required"
+      });
+    }
+
+    if (!loadedCreditsInput.hasChanges) {
+      return res.status(400).json({
+        success: false,
+        error: "Provide loadedSms/loadedMinutes and/or expiry date values"
+      });
+    }
+
+    const subscription = await Subscription.findOne({
+      userId,
+      status: "active"
+    });
+
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        error: "No active subscription found"
+      });
+    }
+
+    const loadedCredits = applyLoadedCreditsToSubscription(
+      subscription,
+      loadedCreditsInput
+    );
+    await subscription.save();
+
+    res.json({
+      success: true,
+      message: "Credits loaded successfully",
+      subscription,
+      loadedCredits
+    });
+  } catch (err) {
+    console.error("Load credits error:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message || "Failed to load credits"
+    });
+  }
+});
+
+/**
+ * POST /api/admin/actions/subscription/override-usage
+ * Admin override for usage counters and hard limits
+ */
+router.post("/subscription/override-usage", requireAdmin, async (req, res) => {
+  try {
+    const {
+      userId,
+      monthlySmsLimit,
+      monthlyMinutesLimit,
+      dailySmsLimit,
+      dailyMinutesLimit,
+      monthlySmsUsed,
+      monthlyMinutesUsed,
+      dailySmsUsed,
+      dailyMinutesUsed
+    } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: "userId is required"
+      });
+    }
+
+    const subscription = await Subscription.findOne({
+      userId,
+      status: "active"
+    });
+
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        error: "No active subscription found"
+      });
+    }
+
+    const setUpdate = {};
+
+    const setNumberIfProvided = (field, value, { minimum = 0, toSeconds = false } = {}) => {
+      if (value === undefined || value === null || value === "") {
+        return;
+      }
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < minimum) {
+        throw new Error(`Invalid value for ${field}`);
+      }
+      setUpdate[field] = toSeconds ? Math.round(parsed * 60) : Math.round(parsed);
+    };
+
+    setNumberIfProvided("monthlySmsLimit", monthlySmsLimit);
+    setNumberIfProvided("monthlyMinutesLimit", monthlyMinutesLimit);
+    setNumberIfProvided("dailySmsLimit", dailySmsLimit);
+    setNumberIfProvided("dailyMinutesLimit", dailyMinutesLimit);
+    setNumberIfProvided("usage.smsUsed", monthlySmsUsed);
+    setNumberIfProvided("usage.minutesUsed", monthlyMinutesUsed, { toSeconds: true });
+    setNumberIfProvided("dailySmsUsed", dailySmsUsed);
+    setNumberIfProvided("dailyMinutesUsed", dailyMinutesUsed, { toSeconds: true });
+
+    if (Object.keys(setUpdate).length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "At least one override value is required"
+      });
+    }
+
+    if (
+      setUpdate.dailySmsUsed !== undefined ||
+      setUpdate.dailyMinutesUsed !== undefined
+    ) {
+      setUpdate.usageWindowDateKey = getServerDayKey();
+    }
+
+    await Subscription.updateOne(
+      { _id: subscription._id },
+      { $set: setUpdate }
+    );
+
+    const updated = await Subscription.findById(subscription._id);
+
+    res.json({
+      success: true,
+      message: "Subscription usage overrides applied",
+      subscription: updated
+    });
+  } catch (err) {
+    console.error("Override usage error:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message || "Failed to apply usage overrides"
     });
   }
 });
@@ -387,11 +592,14 @@ router.post("/subscription/set-trial", requireAdmin, async (req, res) => {
     let trialPlan = await Plan.findOne({ name: "Trial" });
     if (!trialPlan) {
       trialPlan = await Plan.create({
+        type: "trial",
         name: "Trial",
+        planName: "Trial",
         price: 0,
         limits: {
           minutesTotal: 100,
-          smsTotal: 50
+          smsTotal: 50,
+          numbersTotal: 1
         }
       });
     }
@@ -410,12 +618,25 @@ router.post("/subscription/set-trial", requireAdmin, async (req, res) => {
     const subscription = await Subscription.create({
       userId,
       planId: trialPlan._id,
+      planKey: trialPlan.name,
+      planName: trialPlan.planName || trialPlan.name,
       status: "active",
       periodStart: now,
       periodEnd,
-      limits: trialPlan.limits,
-      ratePerMinute: 0.0065
+      usage: {
+        minutesUsed: 0,
+        smsUsed: 0
+      },
+      addons: {
+        minutes: 0,
+        sms: 0
+      },
+      ratePerMinute: 0.0065,
+      usageWindowDateKey: getServerDayKey()
     });
+
+    applyPlanSnapshotToSubscription(subscription, trialPlan);
+    await subscription.save();
 
     res.json({
       success: true,
