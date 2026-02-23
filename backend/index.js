@@ -63,9 +63,11 @@ const backendUploadsDir = path.join(__dirname, "uploads");
 const cwdUploadsDir = path.resolve(process.cwd(), "uploads");
 const projectRootUploadsDir = path.resolve(__dirname, "..", "uploads");
 const legacyUploadsDir = path.resolve(process.env.HOME || "/home/ubuntu", "uploads");
+const rootUploadsDir = path.resolve("/root/uploads");
 const commonUploadsDirs = [
   path.resolve("/var/www/oto-dial/uploads"),
-  path.resolve("/var/www/oto-dial/backend/uploads")
+  path.resolve("/var/www/oto-dial/backend/uploads"),
+  path.resolve("/var/www/uploads")
 ];
 const uploadSearchRoots = Array.from(
   new Set(
@@ -74,6 +76,7 @@ const uploadSearchRoots = Array.from(
       cwdUploadsDir,
       projectRootUploadsDir,
       legacyUploadsDir,
+      rootUploadsDir,
       ...commonUploadsDirs,
       process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : null
     ].filter(Boolean)
@@ -83,7 +86,9 @@ const uploadSearchRoots = Array.from(
 function sanitizeUploadRequestPath(rawPath = "") {
   const decoded = decodeURIComponent(String(rawPath || "")).replace(/\\/g, "/");
   const normalized = path.posix.normalize(`/${decoded}`).replace(/^\/+/, "");
-  if (!normalized || normalized.includes("..")) {
+  const segments = normalized.split("/").filter(Boolean);
+  const hasTraversal = segments.some((segment) => segment === "..");
+  if (!normalized || hasTraversal) {
     return null;
   }
   return normalized;
@@ -105,7 +110,10 @@ function findExistingUploadFile(relativePath) {
   const candidateRelativePaths = Array.from(
     new Set([
       safeRelativePath,
-      safeRelativePath.startsWith("blog/") ? baseName : `blog/${baseName}`
+      safeRelativePath.startsWith("blog/") ? baseName : `blog/${baseName}`,
+      baseName,
+      `uploads/${safeRelativePath}`,
+      `uploads/blog/${baseName}`
     ])
   );
 
