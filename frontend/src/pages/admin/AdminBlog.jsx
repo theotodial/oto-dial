@@ -56,8 +56,24 @@ function AdminBlog() {
     if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
     const value = rawUrl.trim();
     if (!value) return value;
-    if (value.startsWith('/api/uploads/')) return value;
-    if (value.startsWith('/uploads/')) return `/api${value}`;
+    const isLocalDevHost = ['localhost', '127.0.0.1'].includes(window.location.hostname.toLowerCase());
+    const toPreferredUploadPath = (pathname = '') => {
+      if (pathname.startsWith('/api/uploads/')) {
+        return isLocalDevHost
+          ? pathname
+          : pathname.replace('/api/uploads/', '/uploads/');
+      }
+      if (pathname.startsWith('/uploads/')) {
+        return isLocalDevHost
+          ? `/api${pathname}`
+          : pathname;
+      }
+      return pathname;
+    };
+
+    if (value.startsWith('/api/uploads/') || value.startsWith('/uploads/')) {
+      return toPreferredUploadPath(value);
+    }
 
     try {
       const parsed = new URL(value);
@@ -65,10 +81,8 @@ function AdminBlog() {
       const host = parsed.hostname.toLowerCase();
       const currentHost = window.location.hostname.toLowerCase();
       if (host === 'localhost' || host === '127.0.0.1' || host === currentHost) {
-        if (parsed.pathname.startsWith('/api/uploads/')) {
-          return `${parsed.pathname}${parsed.search || ''}`;
-        }
-        return `/api${parsed.pathname}${parsed.search || ''}`;
+        const normalizedPath = toPreferredUploadPath(parsed.pathname);
+        return `${normalizedPath}${parsed.search || ''}`;
       }
     } catch {
       return value;
