@@ -25,18 +25,9 @@ function Blog() {
     if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
     const value = rawUrl.trim();
     if (!value) return value;
-    const isLocalDevHost = ['localhost', '127.0.0.1'].includes(window.location.hostname.toLowerCase());
     const toPreferredUploadPath = (pathname = '') => {
-      if (pathname.startsWith('/api/uploads/')) {
-        return isLocalDevHost
-          ? pathname
-          : pathname.replace('/api/uploads/', '/uploads/');
-      }
-      if (pathname.startsWith('/uploads/')) {
-        return isLocalDevHost
-          ? `/api${pathname}`
-          : pathname;
-      }
+      if (pathname.startsWith('/api/uploads/')) return pathname;
+      if (pathname.startsWith('/uploads/')) return `/api${pathname}`;
       return pathname;
     };
 
@@ -58,6 +49,23 @@ function Blog() {
     }
 
     return value;
+  };
+
+  const getAlternateUploadUrl = (url = '') => {
+    const value = String(url || '').trim();
+    if (!value) return '';
+    if (value.includes('/api/uploads/')) return value.replace('/api/uploads/', '/uploads/');
+    if (value.includes('/uploads/')) return value.replace('/uploads/', '/api/uploads/');
+    return '';
+  };
+
+  const handleImageError = (event) => {
+    const img = event.currentTarget;
+    if (!img || img.dataset.fallbackAttempted === 'true') return;
+    const alternate = getAlternateUploadUrl(img.currentSrc || img.src);
+    if (!alternate || alternate === img.src) return;
+    img.dataset.fallbackAttempted = 'true';
+    img.src = alternate;
   };
 
   const fetchBlogs = async () => {
@@ -244,6 +252,7 @@ function Blog() {
                             alt={blog.title}
                             className="w-full h-auto object-contain bg-gray-50 dark:bg-slate-900/50"
                             loading="lazy"
+                            onError={handleImageError}
                           />
                         )}
                         <div className="p-6">

@@ -5,6 +5,7 @@ import express from "express";
 import cors from "cors";
 import passport from "passport";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 import connectDB from "./config/db.js";
@@ -61,6 +62,67 @@ const __dirname = path.dirname(__filename);
 const backendUploadsDir = path.join(__dirname, "uploads");
 const cwdUploadsDir = path.resolve(process.cwd(), "uploads");
 const projectRootUploadsDir = path.resolve(__dirname, "..", "uploads");
+const legacyUploadsDir = path.resolve(process.env.HOME || "/home/ubuntu", "uploads");
+const commonUploadsDirs = [
+  path.resolve("/var/www/oto-dial/uploads"),
+  path.resolve("/var/www/oto-dial/backend/uploads")
+];
+const uploadSearchRoots = Array.from(
+  new Set(
+    [
+      backendUploadsDir,
+      cwdUploadsDir,
+      projectRootUploadsDir,
+      legacyUploadsDir,
+      ...commonUploadsDirs,
+      process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : null
+    ].filter(Boolean)
+  )
+);
+
+function sanitizeUploadRequestPath(rawPath = "") {
+  const decoded = decodeURIComponent(String(rawPath || "")).replace(/\\/g, "/");
+  const normalized = path.posix.normalize(`/${decoded}`).replace(/^\/+/, "");
+  if (!normalized || normalized.includes("..")) {
+    return null;
+  }
+  return normalized;
+}
+
+function isFilePath(filePath) {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function findExistingUploadFile(relativePath) {
+  const safeRelativePath = sanitizeUploadRequestPath(relativePath);
+  if (!safeRelativePath) return null;
+
+  const baseName = path.basename(safeRelativePath);
+  const candidateRelativePaths = Array.from(
+    new Set([
+      safeRelativePath,
+      safeRelativePath.startsWith("blog/") ? baseName : `blog/${baseName}`
+    ])
+  );
+
+  for (const root of uploadSearchRoots) {
+    for (const candidate of candidateRelativePaths) {
+      const absolute = path.resolve(root, candidate);
+      const normalizedRoot = path.resolve(root);
+      if (!absolute.startsWith(normalizedRoot + path.sep) && absolute !== normalizedRoot) {
+        continue;
+      }
+      if (isFilePath(absolute)) {
+        return absolute;
+      }
+    }
+  }
+  return null;
+}
 
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', true);
@@ -121,6 +183,21 @@ if (
   app.use("/uploads", express.static(projectRootUploadsDir));
   app.use("/api/uploads", express.static(projectRootUploadsDir));
 }
+
+// Fallback resolver for deployments where upload storage path moved.
+const uploadsFallbackHandler = (req, res, next) => {
+  const requestedPath = req.params?.[0] || "";
+  const filePath = findExistingUploadFile(requestedPath);
+  if (!filePath) {
+    return next();
+  }
+  return res.sendFile(filePath, (err) => {
+    if (err) return next(err);
+    return undefined;
+  });
+};
+app.get("/uploads/*", uploadsFallbackHandler);
+app.get("/api/uploads/*", uploadsFallbackHandler);
 
 // ========================
 // WEBHOOKS
