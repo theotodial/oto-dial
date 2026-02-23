@@ -67,6 +67,9 @@ const rootUploadsDir = path.resolve("/root/uploads");
 const commonUploadsDirs = [
   path.resolve("/var/www/oto-dial/uploads"),
   path.resolve("/var/www/oto-dial/backend/uploads"),
+  path.resolve("/var/www/oto-dial/frontend/uploads"),
+  path.resolve("/var/www/oto-dial/frontend/dist/uploads"),
+  path.resolve("/var/www/oto-dial/shared/uploads"),
   path.resolve("/var/www/uploads")
 ];
 const uploadSearchRoots = Array.from(
@@ -107,13 +110,20 @@ function findExistingUploadFile(relativePath) {
   if (!safeRelativePath) return null;
 
   const baseName = path.basename(safeRelativePath);
+  const normalizedBaseName = baseName.replace(/\.{2,}/g, ".");
+  const normalizedRelativePath = safeRelativePath.replace(/\.{2,}/g, ".");
   const candidateRelativePaths = Array.from(
     new Set([
       safeRelativePath,
+      normalizedRelativePath,
       safeRelativePath.startsWith("blog/") ? baseName : `blog/${baseName}`,
+      normalizedRelativePath.startsWith("blog/") ? normalizedBaseName : `blog/${normalizedBaseName}`,
       baseName,
+      normalizedBaseName,
       `uploads/${safeRelativePath}`,
-      `uploads/blog/${baseName}`
+      `uploads/${normalizedRelativePath}`,
+      `uploads/blog/${baseName}`,
+      `uploads/blog/${normalizedBaseName}`
     ])
   );
 
@@ -191,6 +201,13 @@ if (
   app.use("/uploads", express.static(projectRootUploadsDir));
   app.use("/api/uploads", express.static(projectRootUploadsDir));
 }
+
+app.get("/api/uploads", (_req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Upload root is available. Request a full file path under /api/uploads/<subdir>/<filename>."
+  });
+});
 
 // Fallback resolver for deployments where upload storage path moved.
 const uploadsFallbackHandler = (req, res, next) => {
