@@ -51,21 +51,67 @@ function Blog() {
     return value;
   };
 
-  const getAlternateUploadUrl = (url = '') => {
+  const buildUploadFallbackCandidates = (url = '') => {
     const value = String(url || '').trim();
-    if (!value) return '';
-    if (value.includes('/api/uploads/')) return value.replace('/api/uploads/', '/uploads/');
-    if (value.includes('/uploads/')) return value.replace('/uploads/', '/api/uploads/');
-    return '';
+    if (!value) return [];
+
+    const fixLegacyName = (input) =>
+      String(input || '')
+        .replace(/\.{2,}/g, '.')
+        .replace(/\.pn(\.[a-z0-9]+)(?=[?#]|$)/i, '$1');
+
+    const candidates = new Set();
+    const push = (candidate) => {
+      const normalized = String(candidate || '').trim();
+      if (normalized) candidates.add(normalized);
+    };
+
+    push(value);
+    push(value.replace('/api/uploads/', '/uploads/'));
+    push(value.replace('/uploads/', '/api/uploads/'));
+
+    const fixedValue = fixLegacyName(value);
+    push(fixedValue);
+    push(fixedValue.replace('/api/uploads/', '/uploads/'));
+    push(fixedValue.replace('/uploads/', '/api/uploads/'));
+
+    return Array.from(candidates);
   };
 
   const handleImageError = (event) => {
     const img = event.currentTarget;
-    if (!img || img.dataset.fallbackAttempted === 'true') return;
-    const alternate = getAlternateUploadUrl(img.currentSrc || img.src);
-    if (!alternate || alternate === img.src) return;
-    img.dataset.fallbackAttempted = 'true';
-    img.src = alternate;
+    if (!img) return;
+
+    let fallbackList = [];
+    try {
+      fallbackList = JSON.parse(img.dataset.fallbackList || '[]');
+    } catch {
+      fallbackList = [];
+    }
+
+    if (!Array.isArray(fallbackList) || fallbackList.length === 0) {
+      fallbackList = buildUploadFallbackCandidates(img.dataset.originalSrc || img.currentSrc || img.src);
+    }
+
+    let nextIndex = Number(img.dataset.fallbackIndex || 0);
+    while (nextIndex < fallbackList.length) {
+      const nextCandidate = fallbackList[nextIndex];
+      nextIndex += 1;
+      if (nextCandidate && nextCandidate !== img.currentSrc && nextCandidate !== img.src) {
+        img.dataset.fallbackList = JSON.stringify(fallbackList);
+        img.dataset.fallbackIndex = String(nextIndex);
+        img.src = nextCandidate;
+        return;
+      }
+    }
+
+    if (img.dataset.placeholderApplied !== 'true') {
+      img.dataset.placeholderApplied = 'true';
+      img.src = '/logo.svg';
+      return;
+    }
+
+    img.style.display = 'none';
   };
 
   const fetchBlogs = async () => {
@@ -252,6 +298,9 @@ function Blog() {
                             alt={blog.title}
                             className="w-full h-auto object-contain bg-gray-50 dark:bg-slate-900/50"
                             loading="lazy"
+                            data-original-src={blog.featuredImage}
+                            data-fallback-index="0"
+                            data-placeholder-applied="false"
                             onError={handleImageError}
                           />
                         )}
