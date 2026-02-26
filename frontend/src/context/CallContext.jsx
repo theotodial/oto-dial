@@ -89,6 +89,8 @@ export const CallProvider = ({ children }) => {
   const applyAudioRoutingRef = useRef(null);
   const callListenerRegistryRef = useRef(new WeakSet());
   const handledIncomingCallIdsRef = useRef(new Set());
+  const hasAttemptedPhoneConfigFixRef = useRef(false);
+  const manualHangupRef = useRef(false);
 
   const getCallDirection = useCallback((call = {}) => {
     const rawDirection =
@@ -112,6 +114,23 @@ export const CallProvider = ({ children }) => {
       call.options?.call_control_id ||
       null
     );
+  }, []);
+
+  const getCallHangupCause = useCallback((call = {}) => {
+    const cause =
+      call.hangupCause ||
+      call.hangup_cause ||
+      call.cause ||
+      call.options?.hangupCause ||
+      call.options?.hangup_cause ||
+      null;
+
+    if (!cause) return null;
+
+    return String(cause)
+      .replace(/_/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   }, []);
   
   // Keep refs in sync with state
@@ -202,7 +221,7 @@ export const CallProvider = ({ children }) => {
   }, []);
 
   // Handle call end
-  const handleCallEnd = useCallback(async () => {
+  const handleCallEnd = useCallback(async ({ preserveError = false } = {}) => {
     try {
       console.log('📱 Call ended, cleaning up...');
       
@@ -256,10 +275,13 @@ export const CallProvider = ({ children }) => {
         setIsMuted(false);
         setIsOnHold(false);
         setRemoteNumber('');
-        setError(null);
+        if (!preserveError) {
+          setError(null);
+        }
         setIncomingCall(null);
         setIsMinimized(false);
         handledIncomingCallIdsRef.current.clear();
+        manualHangupRef.current = false;
       } catch (stateErr) {
         console.error('Error resetting call state (handled):', stateErr);
         // Try to at least set to idle
@@ -279,6 +301,7 @@ export const CallProvider = ({ children }) => {
           durationIntervalRef.current = null;
         }
         handledIncomingCallIdsRef.current.clear();
+        manualHangupRef.current = false;
       } catch (e) {
         console.error('Critical: Failed to reset call state:', e);
       }
@@ -426,6 +449,23 @@ export const CallProvider = ({ children }) => {
       case 'done':
       case 'purge':
         try {
+          const callDirection = getCallDirection(call);
+          const disconnectedBeforeRinging =
+            !manualHangupRef.current &&
+            callDirection !== "incoming" &&
+            callStateRef.current === CALL_STATES.CONNECTING;
+
+          if (disconnectedBeforeRinging) {
+            const cause = getCallHangupCause(call);
+            setError(
+              cause
+                ? `Call failed before ringing (${cause}). Please verify your caller ID number and destination format.`
+                : "Call failed before ringing. Please verify your caller ID number and destination format."
+            );
+            handleCallEnd({ preserveError: true });
+            break;
+          }
+
           handleCallEnd();
         } catch (err) {
           console.error('Error in handleCallEnd (handled):', err);
@@ -459,7 +499,7 @@ export const CallProvider = ({ children }) => {
         }
       }
     }
-  }, [startDurationTimer, handleCallEnd, getCallDirection]); // Removed applyAudioRouting - use ref instead
+  }, [startDurationTimer, handleCallEnd, getCallDirection, getCallHangupCause]); // Removed applyAudioRouting - use ref instead
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
@@ -832,20 +872,92 @@ export const CallProvider = ({ children }) => {
     }
   }, []);
 
+  const normalizeDialableNumber = useCallback((input, { assumeUsForTenDigits = false } = {}) => {
+    const raw = String(input || "").trim();
+    if (!raw) return null;
+
+    const sanitized = raw.replace(/[^\d+]/g, "");
+    if (!sanitized) return null;
+
+    let normalized = sanitized;
+    if (normalized.startsWith("00")) {
+      normalized = `+${normalized.slice(2)}`;
+    }
+
+    if (!normalized.startsWith("+")) {
+      const digitsOnly = normalized.replace(/\D/g, "");
+      if (!digitsOnly) return null;
+      normalized =
+        assumeUsForTenDigits && digitsOnly.length === 10
+          ? `+1${digitsOnly}`
+          : `+${digitsOnly}`;
+    } else {
+      normalized = `+${normalized.slice(1).replace(/\D/g, "")}`;
+    }
+
+    return /^\+\d{8,15}$/.test(normalized) ? normalized : null;
+  }, []);
+
+  const ensureMicrophonePermission = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      return true;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      return true;
+    } catch (err) {
+      console.warn("📱 Microphone access unavailable:", err);
+      const permissionMessage =
+        err?.name === "NotAllowedError" || err?.name === "SecurityError"
+          ? "Microphone access is blocked. Please allow microphone permission and try again."
+          : "Microphone is unavailable. Please check your audio settings and try again.";
+      setError(permissionMessage);
+      return false;
+    }
+  }, []);
+
+  const fixPhoneConfiguration = useCallback(async () => {
+    if (hasAttemptedPhoneConfigFixRef.current) {
+      return;
+    }
+
+    hasAttemptedPhoneConfigFixRef.current = true;
+    try {
+      await API.post("/api/numbers/fix-all");
+      console.log("📱 Phone configuration sync completed");
+    } catch (err) {
+      // Best-effort self-heal: call setup continues even if this fails.
+      console.warn("📱 Phone configuration sync skipped:", err?.message || err);
+    }
+  }, []);
+
   // Make outbound call
   const makeCall = useCallback(async (destinationNumber, callerIdNumber) => {
     console.log('📱 makeCall called with:', { destinationNumber, callerIdNumber });
     console.log('📱 Current state:', { isClientReady, hasClient: !!telnyxClientRef.current, callState: callStateRef.current });
     
-    if (!destinationNumber) {
+    const normalizedDestination = normalizeDialableNumber(destinationNumber, { assumeUsForTenDigits: true });
+
+    if (!normalizedDestination) {
       console.log('📱 No destination number');
-      setError('Please enter a phone number');
+      setError('Please enter a valid phone number in international format (example: +14155550123).');
       return false;
     }
 
     try {
       setError(null);
-      setRemoteNumber(destinationNumber);
+
+      const hasMicrophoneAccess = await ensureMicrophonePermission();
+      if (!hasMicrophoneAccess) {
+        setCallState(CALL_STATES.IDLE);
+        return false;
+      }
+
+      await fixPhoneConfiguration();
+
+      setRemoteNumber(normalizedDestination);
       setCallState(CALL_STATES.CONNECTING);
       setIsMinimized(false);
 
@@ -885,12 +997,19 @@ export const CallProvider = ({ children }) => {
         return false;
       }
 
-      console.log('📱 Placing call from:', callerId, 'to:', destinationNumber);
+      const normalizedCallerId = normalizeDialableNumber(callerId, { assumeUsForTenDigits: true });
+      if (!normalizedCallerId) {
+        setError('Invalid caller ID format. Please use a valid purchased phone number.');
+        setCallState(CALL_STATES.IDLE);
+        return false;
+      }
+
+      console.log('📱 Placing call from:', normalizedCallerId, 'to:', normalizedDestination);
 
       // Save call record to database BEFORE making the call
       const callRecordResult = await saveCallRecord(
-        destinationNumber,
-        callerId,
+        normalizedDestination,
+        normalizedCallerId,
         'outbound',
         'dialing'
       );
@@ -907,8 +1026,8 @@ export const CallProvider = ({ children }) => {
 
       // Make the call
       const call = telnyxClientRef.current.newCall({
-        destinationNumber: destinationNumber,
-        callerNumber: callerId,
+        destinationNumber: normalizedDestination,
+        callerNumber: normalizedCallerId,
         audio: true,
         video: false
       });
@@ -945,7 +1064,15 @@ export const CallProvider = ({ children }) => {
       setCallState(CALL_STATES.IDLE);
       return false;
     }
-  }, [initializeClient, credentials, saveCallRecord, updateCallRecord]); // Removed frequently changing deps
+  }, [
+    initializeClient,
+    credentials,
+    saveCallRecord,
+    updateCallRecord,
+    normalizeDialableNumber,
+    ensureMicrophonePermission,
+    fixPhoneConfiguration
+  ]); // Removed frequently changing deps
 
   // Answer incoming call
   const answerCall = useCallback(async () => {
@@ -1049,6 +1176,7 @@ export const CallProvider = ({ children }) => {
   const rejectCall = useCallback(async () => {
     console.log('📱 Rejecting call...');
     soundManager.stopRingtone();
+    manualHangupRef.current = true;
     
     // Close notification if it exists
     if (notificationRef.current) {
@@ -1096,6 +1224,7 @@ export const CallProvider = ({ children }) => {
   // Hang up current call
   const hangUp = useCallback(() => {
     console.log('📱 Hanging up...');
+    manualHangupRef.current = true;
     
     if (currentCallRef.current) {
       try {
@@ -1246,6 +1375,8 @@ export const CallProvider = ({ children }) => {
       if (token && !isClientReady && !isInitializing && !isInitializedRef.current) {
         console.log('📱 Auto-initializing WebRTC client for incoming calls...');
 
+        await fixPhoneConfiguration();
+
         setTimeout(() => {
           initializeClient().catch(e => {
             console.log('📱 Auto-init failed:', e.message);
@@ -1284,7 +1415,7 @@ export const CallProvider = ({ children }) => {
     }, 60000); // Check every 60 seconds (reduced frequency)
     
     return () => clearInterval(healthCheckInterval);
-  }, [initializeClient]); // Removed frequently changing deps
+  }, [initializeClient, fixPhoneConfiguration]); // Removed frequently changing deps
   
   // Store polled call ID for answering
   const polledCallIdRef = useRef(null);
