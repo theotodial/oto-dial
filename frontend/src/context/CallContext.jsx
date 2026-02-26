@@ -43,6 +43,7 @@ export const useCall = () => {
       formatDuration: () => '00:00',
       minimizeCall: () => {},
       expandCall: () => {},
+      callingMode: "unknown",
       CALL_STATES,
       isInCall: false,
       isRinging: false,
@@ -391,7 +392,17 @@ export const CallProvider = ({ children }) => {
             }
           }, 50);
           
-          remoteAudioRef.current.play().catch(e => console.warn('Audio play failed:', e));
+          try {
+            remoteAudioRef.current.muted = false;
+            remoteAudioRef.current.volume = 1.0;
+          } catch {}
+          remoteAudioRef.current.play().catch((e) => {
+            console.warn('Audio play failed:', e);
+            const name = String(e?.name || "");
+            if (name === "NotAllowedError" || name === "AbortError") {
+              setError("Audio playback was blocked by the browser. Tap the call screen once to enable audio.");
+            }
+          });
         }
       }
     } catch (audioErr) {
