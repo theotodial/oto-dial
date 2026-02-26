@@ -74,6 +74,18 @@ router.post("/", async (req, res) => {
         } else {
           // Update existing record with initiation time
           callRecord.callInitiatedAt = new Date();
+          // IMPORTANT: outbound calls created before webhook start as "dialing".
+          // When Telnyx reports call.initiated, the call has entered the ringing attempt phase.
+          if (["queued", "dialing"].includes(callRecord.status)) {
+            callRecord.status = "ringing";
+          }
+          // Keep numbers/direction in sync in case initial record was minimal.
+          if (!callRecord.fromNumber) callRecord.fromNumber = fromNumber;
+          if (!callRecord.toNumber) callRecord.toNumber = toNumber;
+          if (!callRecord.direction) callRecord.direction = isIncoming ? "inbound" : "outbound";
+          if (!callRecord.phoneNumber) {
+            callRecord.phoneNumber = isIncoming ? fromNumber : toNumber;
+          }
           await callRecord.save();
         }
         
