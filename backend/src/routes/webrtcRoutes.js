@@ -31,6 +31,36 @@ function extractTelnyxError(err) {
   );
 }
 
+async function retrieveTelnyxConnection({ connectionId, headers }) {
+  const attempted = [];
+  const tryGet = async (path, type) => {
+    attempted.push(path);
+    const resp = await axios.get(`${TELNYX_API_BASE_URL}${path}`, { headers });
+    return { type, data: resp?.data?.data || null, attempted };
+  };
+
+  // WebRTC uses Credential Connections. Some deployments mistakenly set TELNYX_CONNECTION_ID
+  // to an IP connection or other voice connection type. Probe both so we can return an
+  // actionable error message instead of a generic 502.
+  try {
+    return await tryGet(`/credential_connections/${encodeURIComponent(connectionId)}`, "credential");
+  } catch (err) {
+    const status = err?.response?.status;
+    // Only fallback on "not found"/client errors; if Telnyx is down, bubble up.
+    if (status && status >= 500) {
+      err.attempted = attempted;
+      throw err;
+    }
+  }
+
+  try {
+    return await tryGet(`/ip_connections/${encodeURIComponent(connectionId)}`, "ip");
+  } catch (err) {
+    err.attempted = attempted;
+    throw err;
+  }
+}
+
 /**
  * GET /api/webrtc/token
  * Generates a JWT token for Telnyx WebRTC client authentication
@@ -191,24 +221,41 @@ router.post("/repair-outbound", async (req, res) => {
       warnings: []
     };
 
-    // 1) Retrieve credential connection.
-    let credentialConnection = null;
+    // 1) Retrieve connection (credential preferred).
+    let connection = null;
+    let connectionType = null;
+    let attemptedEndpoints = [];
     try {
-      const connResp = await axios.get(
-        `${TELNYX_API_BASE_URL}/credential_connections/${encodeURIComponent(connectionId)}`,
-        { headers }
-      );
-      credentialConnection = connResp?.data?.data || null;
+      const lookup = await retrieveTelnyxConnection({ connectionId, headers });
+      connection = lookup.data;
+      connectionType = lookup.type;
+      attemptedEndpoints = lookup.attempted || [];
     } catch (err) {
       return res.status(502).json({
         success: false,
-        error: `Unable to retrieve credential connection ${connectionId}: ${extractTelnyxError(err)}`,
+        error: `Unable to retrieve Telnyx connection ${connectionId}: ${extractTelnyxError(err)}`,
+        attemptedEndpoints: err?.attempted || attemptedEndpoints,
+        telnyxStatus: err?.response?.status || null,
         hint:
-          "Verify TELNYX_CONNECTION_ID points to a Credential Connection (WebRTC) in Telnyx Mission Control."
+          "Verify TELNYX_CONNECTION_ID is valid in Telnyx Mission Control. For WebRTC, it MUST be a Credential Connection ID."
       });
     }
 
-    result.connectionUserName = credentialConnection?.user_name || null;
+    result.connectionType = connectionType;
+    result.attemptedEndpoints = attemptedEndpoints;
+
+    if (connectionType !== "credential") {
+      return res.status(400).json({
+        success: false,
+        error:
+          `TELNYX_CONNECTION_ID (${connectionId}) is not a Credential Connection (found type: ${connectionType}). WebRTC requires a Credential Connection.`,
+        hint:
+          "Create/choose a Credential Connection in Telnyx (WebRTC) and set TELNYX_CONNECTION_ID + TELNYX_SIP_USERNAME + VITE_TELNYX_SIP_PASSWORD accordingly. If you're using Voice API only, do not force WebRTC.",
+        result
+      });
+    }
+
+    result.connectionUserName = connection?.user_name || null;
     result.envSipUsername = process.env.TELNYX_SIP_USERNAME || null;
     if (
       result.connectionUserName &&
@@ -221,7 +268,7 @@ router.post("/repair-outbound", async (req, res) => {
     }
 
     // 2) Ensure connection is active.
-    if (credentialConnection?.active === false) {
+    if (connection?.active === false) {
       try {
         await axios.patch(
           `${TELNYX_API_BASE_URL}/credential_connections/${encodeURIComponent(connectionId)}`,
@@ -235,7 +282,7 @@ router.post("/repair-outbound", async (req, res) => {
     }
 
     // 3) Ensure outbound voice profile exists.
-    let outboundVoiceProfileId = credentialConnection?.outbound_voice_profile_id || null;
+    let outboundVoiceProfileId = connection?.outbound_voice_profile_id || null;
     result.outboundVoiceProfileId = outboundVoiceProfileId;
     if (!outboundVoiceProfileId) {
       try {
