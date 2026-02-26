@@ -97,7 +97,9 @@ export const CallProvider = ({ children }) => {
     destinationNumber: null,
     callRecordId: null,
     originalCallerNumber: null,
-    lastStrategy: null
+    lastStrategy: null,
+    retryStrategies: [],
+    nextRetryIndex: 0
   });
 
   const getCallDirection = useCallback((call = {}) => {
@@ -147,7 +149,9 @@ export const CallProvider = ({ children }) => {
       destinationNumber: null,
       callRecordId: null,
       originalCallerNumber: null,
-      lastStrategy: null
+      lastStrategy: null,
+      retryStrategies: [],
+      nextRetryIndex: 0
     };
   }, []);
   
@@ -479,31 +483,39 @@ export const CallProvider = ({ children }) => {
             callStateRef.current === CALL_STATES.CONNECTING;
           const retryMeta = outboundRetryRef.current;
 
-          const shouldRetryWithDefaultCaller =
+          const nextRetryStrategy =
+            retryMeta.retryStrategies?.[retryMeta.nextRetryIndex] || null;
+          const shouldRetryWithFallback =
             disconnectedBeforeRinging &&
-            !retryMeta.attempted &&
+            !!nextRetryStrategy &&
             !!retryMeta.destinationNumber &&
             !!telnyxClientRef.current &&
             /(call rejected|rejected|forbidden|declined|not allowed|unauthorized|invalid caller|caller id|from number)/i.test(
               hangupCauseLower
             );
 
-          if (shouldRetryWithDefaultCaller) {
+          if (shouldRetryWithFallback) {
             try {
               retryMeta.attempted = true;
-              retryMeta.lastStrategy = "default_connection_caller";
+              retryMeta.lastStrategy = nextRetryStrategy.label;
+              retryMeta.nextRetryIndex += 1;
 
               console.warn(
-                "📱 Primary caller ID was rejected before ringing. Retrying once with connection default caller ID..."
+                `📱 Outbound call rejected before ringing. Retrying with fallback strategy: ${nextRetryStrategy.label}`
               );
               setError(null);
               setCallState(CALL_STATES.CONNECTING);
 
-              const retryCall = telnyxClientRef.current.newCall({
+              const retryOptions = {
                 destinationNumber: retryMeta.destinationNumber,
                 audio: true,
                 video: false
-              });
+              };
+              if (nextRetryStrategy.callerNumber) {
+                retryOptions.callerNumber = nextRetryStrategy.callerNumber;
+              }
+
+              const retryCall = telnyxClientRef.current.newCall(retryOptions);
 
               if (!retryCall) {
                 throw new Error("Retry call object was not created");
@@ -511,6 +523,7 @@ export const CallProvider = ({ children }) => {
 
               retryCall._dbCallId = retryMeta.callRecordId || call._dbCallId || null;
               retryCall._usedDefaultCallerFallback = true;
+              retryCall._fallbackStrategyLabel = nextRetryStrategy.label;
               currentCallRef.current = retryCall;
 
               if (typeof retryCall.on === "function" && !callListenerRegistryRef.current.has(retryCall)) {
@@ -520,12 +533,14 @@ export const CallProvider = ({ children }) => {
                 });
               }
 
-              console.log("📱 Retry call initiated with default connection caller ID");
+              console.log(
+                `📱 Retry call initiated with fallback strategy: ${nextRetryStrategy.label}`
+              );
               break;
             } catch (retryErr) {
               console.error("📱 Retry attempt failed:", retryErr);
               setError(
-                "Call rejected before ringing. Automatic retry with default caller ID also failed. Please verify Telnyx outbound voice profile permissions for this connection."
+                "Call rejected before ringing. Automatic fallback retries failed. Please verify Telnyx outbound voice profile permissions for this connection."
               );
               handleCallEnd({ preserveError: true, finalStatus: "failed" });
               break;
@@ -534,7 +549,7 @@ export const CallProvider = ({ children }) => {
 
           if (disconnectedBeforeRinging) {
             const isAfterFallback =
-              call._usedDefaultCallerFallback || retryMeta.lastStrategy === "default_connection_caller";
+              call._usedDefaultCallerFallback || (retryMeta.lastStrategy && retryMeta.lastStrategy !== "primary");
             setError(
               isAfterFallback
                 ? hangupCause
@@ -1120,6 +1135,19 @@ export const CallProvider = ({ children }) => {
         return false;
       }
       outboundRetryRef.current.originalCallerNumber = normalizedCallerId;
+      const fallbackStrategies = [];
+      if (normalizedCallerId.startsWith("+")) {
+        fallbackStrategies.push({
+          label: "caller_id_without_plus",
+          callerNumber: normalizedCallerId.slice(1)
+        });
+      }
+      fallbackStrategies.push({
+        label: "default_connection_caller",
+        callerNumber: null
+      });
+      outboundRetryRef.current.retryStrategies = fallbackStrategies;
+      outboundRetryRef.current.nextRetryIndex = 0;
 
       console.log('📱 Placing call from:', normalizedCallerId, 'to:', normalizedDestination);
 
