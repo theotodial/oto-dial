@@ -100,7 +100,9 @@ export const CallProvider = ({ children }) => {
     originalCallerNumber: null,
     lastStrategy: null,
     retryStrategies: [],
-    nextRetryIndex: 0
+    nextRetryIndex: 0,
+    outboundRepairAttempted: false,
+    outboundRepairAttemptedAt: 0
   });
 
   const getCallDirection = useCallback((call = {}) => {
@@ -152,7 +154,9 @@ export const CallProvider = ({ children }) => {
       originalCallerNumber: null,
       lastStrategy: null,
       retryStrategies: [],
-      nextRetryIndex: 0
+      nextRetryIndex: 0,
+      outboundRepairAttempted: false,
+      outboundRepairAttemptedAt: 0
     };
   }, []);
   
@@ -502,6 +506,7 @@ export const CallProvider = ({ children }) => {
 
           const callDirection = getCallDirection(call);
           const hangupCause = getCallHangupCause(call);
+          const hangupCauseLower = String(hangupCause || "").toLowerCase();
           const disconnectedBeforeRinging =
             !manualHangupRef.current &&
             callDirection !== "incoming" &&
@@ -523,6 +528,33 @@ export const CallProvider = ({ children }) => {
 
           if (shouldRetryWithFallback) {
             try {
+              const looksLikeProviderRejection =
+                /(call rejected|rejected|forbidden|unauthorized|not allowed|invalid caller|caller id|origination)/i.test(
+                  hangupCauseLower
+                );
+
+              // Best-effort auto-repair: if Telnyx is rejecting the call, ensure the
+              // credential connection has an outbound voice profile and permits the destination.
+              // This is safe to run once per call attempt and often fixes "CALL REJECTED".
+              if (looksLikeProviderRejection && !retryMeta.outboundRepairAttempted) {
+                retryMeta.outboundRepairAttempted = true;
+                retryMeta.outboundRepairAttemptedAt = Date.now();
+                try {
+                  console.warn("📱 Attempting Telnyx outbound repair after CALL REJECTED...");
+                  const repairResp = await API.post("/api/webrtc/repair-outbound", {
+                    destinationNumber: retryMeta.destinationNumber,
+                    callerNumber: retryMeta.originalCallerNumber
+                  });
+                  if (repairResp?.error) {
+                    console.warn("📱 Outbound repair returned error (non-blocking):", repairResp.error);
+                  } else if (repairResp?.data?.actions?.length) {
+                    console.warn("📱 Outbound repair applied:", repairResp.data.actions);
+                  }
+                } catch (repairErr) {
+                  console.warn("📱 Outbound repair failed (non-blocking):", repairErr?.message || repairErr);
+                }
+              }
+
               retryMeta.attempted = true;
               retryMeta.lastStrategy = nextRetryStrategy.label;
               retryMeta.nextRetryIndex += 1;

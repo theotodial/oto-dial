@@ -1,6 +1,8 @@
 import express from "express";
 import jwt from "jsonwebtoken";
+import axios from "axios";
 import PhoneNumber from "../models/PhoneNumber.js";
+import { detectCountryFromPhoneNumber } from "../utils/countryUtils.js";
 import {
   checkUnlimitedUsageBeforeAction,
   createSuspiciousActivityErrorPayload,
@@ -8,6 +10,26 @@ import {
 } from "../services/unlimitedUsageService.js";
 
 const router = express.Router();
+const TELNYX_API_BASE_URL = "https://api.telnyx.com/v2";
+
+function getTelnyxAuthHeaders() {
+  if (!process.env.TELNYX_API_KEY) return null;
+  return {
+    Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
+    "Content-Type": "application/json"
+  };
+}
+
+function extractTelnyxError(err) {
+  if (!err) return "Unknown Telnyx error";
+  return (
+    err?.response?.data?.errors?.[0]?.detail ||
+    err?.response?.data?.errors?.[0]?.title ||
+    err?.response?.data?.error ||
+    err?.message ||
+    "Unknown Telnyx error"
+  );
+}
 
 /**
  * GET /api/webrtc/token
@@ -121,6 +143,172 @@ router.get("/status", async (req, res) => {
   } catch (err) {
     console.error("WebRTC status error:", err);
     res.status(500).json({ error: "Failed to get WebRTC status" });
+  }
+});
+
+/**
+ * POST /api/webrtc/repair-outbound
+ * Best-effort: ensures the credential connection has a usable outbound voice profile
+ * and that the profile allows the destination country.
+ *
+ * body: { destinationNumber?: string, callerNumber?: string }
+ */
+router.post("/repair-outbound", async (req, res) => {
+  try {
+    if (!req.subscription || !req.subscription.active) {
+      return res.status(403).json({ success: false, error: "Active subscription required" });
+    }
+
+    const unlimitedGate = await checkUnlimitedUsageBeforeAction({
+      subscriptionId: req.subscription.id,
+      userId: req.userId,
+      channel: "webrtc_repair_outbound"
+    });
+
+    if (!unlimitedGate.allowed) {
+      return res.status(403).json(createSuspiciousActivityErrorPayload());
+    }
+
+    const headers = getTelnyxAuthHeaders();
+    if (!headers) {
+      return res.status(503).json({ success: false, error: "Telnyx not configured" });
+    }
+
+    const connectionId = process.env.TELNYX_CONNECTION_ID;
+    if (!connectionId) {
+      return res.status(500).json({ success: false, error: "TELNYX_CONNECTION_ID not configured" });
+    }
+
+    const destinationNumber = String(req.body?.destinationNumber || "").trim() || null;
+    const callerNumber = String(req.body?.callerNumber || "").trim() || null;
+    const destinationCountry = destinationNumber ? detectCountryFromPhoneNumber(destinationNumber) : null;
+
+    const result = {
+      success: true,
+      connectionId,
+      destinationCountry,
+      actions: [],
+      warnings: []
+    };
+
+    // 1) Retrieve credential connection.
+    let credentialConnection = null;
+    try {
+      const connResp = await axios.get(
+        `${TELNYX_API_BASE_URL}/credential_connections/${encodeURIComponent(connectionId)}`,
+        { headers }
+      );
+      credentialConnection = connResp?.data?.data || null;
+    } catch (err) {
+      return res.status(502).json({
+        success: false,
+        error: `Unable to retrieve credential connection ${connectionId}: ${extractTelnyxError(err)}`,
+        hint:
+          "Verify TELNYX_CONNECTION_ID points to a Credential Connection (WebRTC) in Telnyx Mission Control."
+      });
+    }
+
+    // 2) Ensure connection is active.
+    if (credentialConnection?.active === false) {
+      try {
+        await axios.patch(
+          `${TELNYX_API_BASE_URL}/credential_connections/${encodeURIComponent(connectionId)}`,
+          { active: true },
+          { headers }
+        );
+        result.actions.push("activated_credential_connection");
+      } catch (err) {
+        result.warnings.push(`Could not activate connection: ${extractTelnyxError(err)}`);
+      }
+    }
+
+    // 3) Ensure outbound voice profile exists.
+    let outboundVoiceProfileId = credentialConnection?.outbound_voice_profile_id || null;
+    if (!outboundVoiceProfileId) {
+      try {
+        const profileName = `auto-outbound-${String(req.userId).slice(-6)}-${Date.now()}`;
+        const createResp = await axios.post(
+          `${TELNYX_API_BASE_URL}/outbound_voice_profiles`,
+          { name: profileName, enabled: true },
+          { headers }
+        );
+        outboundVoiceProfileId = createResp?.data?.data?.id || null;
+        if (outboundVoiceProfileId) {
+          result.actions.push("created_outbound_voice_profile");
+        }
+      } catch (err) {
+        return res.status(502).json({
+          success: false,
+          error: `Unable to create outbound voice profile: ${extractTelnyxError(err)}`
+        });
+      }
+
+      if (outboundVoiceProfileId) {
+        try {
+          await axios.patch(
+            `${TELNYX_API_BASE_URL}/credential_connections/${encodeURIComponent(connectionId)}`,
+            { outbound_voice_profile_id: outboundVoiceProfileId },
+            { headers }
+          );
+          result.actions.push("attached_outbound_voice_profile_to_connection");
+        } catch (err) {
+          return res.status(502).json({
+            success: false,
+            error: `Unable to attach outbound voice profile to connection: ${extractTelnyxError(err)}`
+          });
+        }
+      }
+    }
+
+    // 4) Ensure outbound voice profile is enabled and allows destination country if we can detect it.
+    if (outboundVoiceProfileId) {
+      try {
+        const profileResp = await axios.get(
+          `${TELNYX_API_BASE_URL}/outbound_voice_profiles/${encodeURIComponent(outboundVoiceProfileId)}`,
+          { headers }
+        );
+        const profile = profileResp?.data?.data || null;
+        const whitelist = Array.isArray(profile?.whitelisted_destinations)
+          ? profile.whitelisted_destinations
+          : [];
+
+        const desiredDestinations = new Set(whitelist);
+        if (destinationCountry) desiredDestinations.add(destinationCountry);
+
+        const needsEnable = profile?.enabled === false;
+        const needsWhitelistUpdate =
+          destinationCountry && !whitelist.includes(destinationCountry);
+
+        if (needsEnable || needsWhitelistUpdate) {
+          const payload = {};
+          if (needsEnable) payload.enabled = true;
+          if (needsWhitelistUpdate) payload.whitelisted_destinations = Array.from(desiredDestinations);
+
+          await axios.patch(
+            `${TELNYX_API_BASE_URL}/outbound_voice_profiles/${encodeURIComponent(outboundVoiceProfileId)}`,
+            payload,
+            { headers }
+          );
+
+          if (needsEnable) result.actions.push("enabled_outbound_voice_profile");
+          if (needsWhitelistUpdate) result.actions.push("updated_outbound_voice_profile_whitelist");
+        }
+      } catch (err) {
+        result.warnings.push(`Could not verify/update outbound voice profile: ${extractTelnyxError(err)}`);
+      }
+    }
+
+    // 5) Caller ID policy cannot always be auto-fixed via API.
+    if (callerNumber) {
+      result.warnings.push(
+        "If CALL REJECTED persists, ensure this caller ID is a Telnyx-owned number assigned to the connection, or a Verified Number in Telnyx."
+      );
+    }
+
+    return res.json(result);
+  } catch (err) {
+    console.error("WebRTC repair-outbound error:", err);
+    return res.status(500).json({ success: false, error: "Failed to repair outbound calling" });
   }
 });
 
