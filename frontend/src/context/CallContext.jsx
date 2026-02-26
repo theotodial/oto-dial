@@ -92,6 +92,13 @@ export const CallProvider = ({ children }) => {
   const hasAttemptedPhoneConfigFixRef = useRef(false);
   const lastPhoneConfigFixAtRef = useRef(0);
   const manualHangupRef = useRef(false);
+  const outboundRetryRef = useRef({
+    attempted: false,
+    destinationNumber: null,
+    callRecordId: null,
+    originalCallerNumber: null,
+    lastStrategy: null
+  });
 
   const getCallDirection = useCallback((call = {}) => {
     const rawDirection =
@@ -132,6 +139,16 @@ export const CallProvider = ({ children }) => {
       .replace(/_/g, " ")
       .replace(/\s+/g, " ")
       .trim();
+  }, []);
+
+  const resetOutboundRetryState = useCallback(() => {
+    outboundRetryRef.current = {
+      attempted: false,
+      destinationNumber: null,
+      callRecordId: null,
+      originalCallerNumber: null,
+      lastStrategy: null
+    };
   }, []);
   
   // Keep refs in sync with state
@@ -222,7 +239,8 @@ export const CallProvider = ({ children }) => {
   }, []);
 
   // Handle call end
-  const handleCallEnd = useCallback(async ({ preserveError = false } = {}) => {
+  const handleCallEnd = useCallback(
+    async ({ preserveError = false, finalStatus = "completed" } = {}) => {
     try {
       console.log('📱 Call ended, cleaning up...');
       
@@ -238,11 +256,11 @@ export const CallProvider = ({ children }) => {
       if (currentCallRef.current?._dbCallId) {
         const duration = callDurationRef.current;
         API.patch(`/api/calls/${currentCallRef.current._dbCallId}`, {
-          status: 'completed',
+          status: finalStatus,
           durationSeconds: duration,
           callEndedAt: new Date().toISOString()
         }).then(() => {
-          console.log('📱 Call record updated with completion status');
+          console.log('📱 Call record updated with final status:', finalStatus);
         }).catch(err => {
           console.warn('📱 Failed to update call record on end (non-critical):', err);
         });
@@ -283,6 +301,7 @@ export const CallProvider = ({ children }) => {
         setIsMinimized(false);
         handledIncomingCallIdsRef.current.clear();
         manualHangupRef.current = false;
+        resetOutboundRetryState();
       } catch (stateErr) {
         console.error('Error resetting call state (handled):', stateErr);
         // Try to at least set to idle
@@ -303,11 +322,12 @@ export const CallProvider = ({ children }) => {
         }
         handledIncomingCallIdsRef.current.clear();
         manualHangupRef.current = false;
+        resetOutboundRetryState();
       } catch (e) {
         console.error('Critical: Failed to reset call state:', e);
       }
     }
-  }, []);
+  }, [resetOutboundRetryState]);
 
   // Handle call state updates from Telnyx
   const handleCallStateChange = useCallback(async (call) => {
@@ -451,19 +471,80 @@ export const CallProvider = ({ children }) => {
       case 'purge':
         try {
           const callDirection = getCallDirection(call);
+          const hangupCause = getCallHangupCause(call);
+          const hangupCauseLower = String(hangupCause || "").toLowerCase();
           const disconnectedBeforeRinging =
             !manualHangupRef.current &&
             callDirection !== "incoming" &&
             callStateRef.current === CALL_STATES.CONNECTING;
+          const retryMeta = outboundRetryRef.current;
+
+          const shouldRetryWithDefaultCaller =
+            disconnectedBeforeRinging &&
+            !retryMeta.attempted &&
+            !!retryMeta.destinationNumber &&
+            !!telnyxClientRef.current &&
+            /(call rejected|rejected|forbidden|declined|not allowed|unauthorized|invalid caller|caller id|from number)/i.test(
+              hangupCauseLower
+            );
+
+          if (shouldRetryWithDefaultCaller) {
+            try {
+              retryMeta.attempted = true;
+              retryMeta.lastStrategy = "default_connection_caller";
+
+              console.warn(
+                "📱 Primary caller ID was rejected before ringing. Retrying once with connection default caller ID..."
+              );
+              setError(null);
+              setCallState(CALL_STATES.CONNECTING);
+
+              const retryCall = telnyxClientRef.current.newCall({
+                destinationNumber: retryMeta.destinationNumber,
+                audio: true,
+                video: false
+              });
+
+              if (!retryCall) {
+                throw new Error("Retry call object was not created");
+              }
+
+              retryCall._dbCallId = retryMeta.callRecordId || call._dbCallId || null;
+              retryCall._usedDefaultCallerFallback = true;
+              currentCallRef.current = retryCall;
+
+              if (typeof retryCall.on === "function" && !callListenerRegistryRef.current.has(retryCall)) {
+                callListenerRegistryRef.current.add(retryCall);
+                retryCall.on("stateChange", () => {
+                  handleCallStateChangeRef.current(retryCall);
+                });
+              }
+
+              console.log("📱 Retry call initiated with default connection caller ID");
+              break;
+            } catch (retryErr) {
+              console.error("📱 Retry attempt failed:", retryErr);
+              setError(
+                "Call rejected before ringing. Automatic retry with default caller ID also failed. Please verify Telnyx outbound voice profile permissions for this connection."
+              );
+              handleCallEnd({ preserveError: true, finalStatus: "failed" });
+              break;
+            }
+          }
 
           if (disconnectedBeforeRinging) {
-            const cause = getCallHangupCause(call);
+            const isAfterFallback =
+              call._usedDefaultCallerFallback || retryMeta.lastStrategy === "default_connection_caller";
             setError(
-              cause
-                ? `Call failed before ringing (${cause}). Please verify your caller ID number and destination format.`
-                : "Call failed before ringing. Please verify your caller ID number and destination format."
+              isAfterFallback
+                ? hangupCause
+                  ? `Call failed before ringing (${hangupCause}) even after fallback. Verify Telnyx outbound voice profile and caller ID permissions.`
+                  : "Call failed before ringing even after fallback. Verify Telnyx outbound voice profile and caller ID permissions."
+                : hangupCause
+                  ? `Call failed before ringing (${hangupCause}). Please verify your caller ID number and destination format.`
+                  : "Call failed before ringing. Please verify your caller ID number and destination format."
             );
-            handleCallEnd({ preserveError: true });
+            handleCallEnd({ preserveError: true, finalStatus: "failed" });
             break;
           }
 
@@ -974,10 +1055,15 @@ export const CallProvider = ({ children }) => {
 
     try {
       setError(null);
+      manualHangupRef.current = false;
+      resetOutboundRetryState();
+      outboundRetryRef.current.destinationNumber = normalizedDestination;
+      outboundRetryRef.current.lastStrategy = "primary";
 
       const hasMicrophoneAccess = await ensureMicrophonePermission();
       if (!hasMicrophoneAccess) {
         setCallState(CALL_STATES.IDLE);
+        resetOutboundRetryState();
         return false;
       }
 
@@ -996,6 +1082,7 @@ export const CallProvider = ({ children }) => {
           console.error('📱 Failed to initialize client');
           setError('Failed to connect to calling service. Please try again.');
           setCallState(CALL_STATES.IDLE);
+          resetOutboundRetryState();
           return false;
         }
         // Small delay to ensure client is fully ready
@@ -1007,6 +1094,7 @@ export const CallProvider = ({ children }) => {
         console.log('📱 Client ref is null after initialization');
         setError('Calling service not available');
         setCallState(CALL_STATES.IDLE);
+        resetOutboundRetryState();
         return false;
       }
 
@@ -1020,6 +1108,7 @@ export const CallProvider = ({ children }) => {
         console.log('📱 No caller ID available');
         setError('No caller ID available. Please purchase a phone number first.');
         setCallState(CALL_STATES.IDLE);
+        resetOutboundRetryState();
         return false;
       }
 
@@ -1027,8 +1116,10 @@ export const CallProvider = ({ children }) => {
       if (!normalizedCallerId) {
         setError('Invalid caller ID format. Please use a valid purchased phone number.');
         setCallState(CALL_STATES.IDLE);
+        resetOutboundRetryState();
         return false;
       }
+      outboundRetryRef.current.originalCallerNumber = normalizedCallerId;
 
       console.log('📱 Placing call from:', normalizedCallerId, 'to:', normalizedDestination);
 
@@ -1047,8 +1138,10 @@ export const CallProvider = ({ children }) => {
             'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.'
         );
         setCallState(CALL_STATES.IDLE);
+        resetOutboundRetryState();
         return false;
       }
+      outboundRetryRef.current.callRecordId = callRecordId;
 
       // Make the call
       const call = telnyxClientRef.current.newCall({
@@ -1067,12 +1160,14 @@ export const CallProvider = ({ children }) => {
         if (callRecordId) {
           updateCallRecord(callRecordId, { status: 'failed' });
         }
+        resetOutboundRetryState();
         return false;
       }
 
       currentCallRef.current = call;
       // Store call record ID on the call object for later updates
       call._dbCallId = callRecordId;
+      call._usedDefaultCallerFallback = false;
 
       // Listen for state changes on this call exactly once.
       if (typeof call.on === "function" && !callListenerRegistryRef.current.has(call)) {
@@ -1088,6 +1183,7 @@ export const CallProvider = ({ children }) => {
       console.error('📱 Failed to make call:', err);
       setError(err.message || 'Failed to initiate call');
       setCallState(CALL_STATES.IDLE);
+      resetOutboundRetryState();
       return false;
     }
   }, [
@@ -1097,7 +1193,8 @@ export const CallProvider = ({ children }) => {
     updateCallRecord,
     normalizeDialableNumber,
     ensureMicrophonePermission,
-    fixPhoneConfiguration
+    fixPhoneConfiguration,
+    resetOutboundRetryState
   ]); // Removed frequently changing deps
 
   // Answer incoming call
@@ -1244,7 +1341,7 @@ export const CallProvider = ({ children }) => {
       console.warn('📱 Failed to update call record:', updateErr);
     }
     
-    handleCallEnd();
+    handleCallEnd({ finalStatus: "missed" });
   }, [handleCallEnd]);
 
   // Hang up current call
@@ -1259,7 +1356,10 @@ export const CallProvider = ({ children }) => {
         console.warn('Hangup error:', e);
       }
     }
-    handleCallEnd();
+    const quickEndFailed =
+      callStateRef.current === CALL_STATES.CONNECTING ||
+      callStateRef.current === CALL_STATES.RINGING;
+    handleCallEnd({ finalStatus: quickEndFailed ? "failed" : "completed" });
   }, [handleCallEnd]);
 
   // Toggle mute
