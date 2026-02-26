@@ -1085,7 +1085,7 @@ export const CallProvider = ({ children }) => {
   // Make outbound call
   const makeCall = useCallback(async (destinationNumber, callerIdNumber) => {
     console.log('📱 makeCall called with:', { destinationNumber, callerIdNumber });
-    console.log('📱 Current state:', { isClientReady, hasClient: !!telnyxClientRef.current, callState: callStateRef.current });
+    console.log('📱 Current state:', { isClientReady: isClientReadyRef.current, hasClient: !!telnyxClientRef.current, callState: callStateRef.current });
     
     const normalizedDestination = normalizeDialableNumber(destinationNumber, { assumeUsForTenDigits: true });
 
@@ -1116,7 +1116,7 @@ export const CallProvider = ({ children }) => {
       setIsMinimized(false);
 
       // Initialize client if needed
-      if (!telnyxClientRef.current || !isClientReady) {
+      if (!telnyxClientRef.current || !isClientReadyRef.current || !isInitializedRef.current) {
         console.log('📱 Client not ready, initializing...');
         const initialized = await initializeClient();
         console.log('📱 Initialization result:', initialized);
@@ -1127,14 +1127,24 @@ export const CallProvider = ({ children }) => {
           resetOutboundRetryState();
           return false;
         }
-        // Small delay to ensure client is fully ready
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Wait briefly for ready ref to flip (avoid stale state races).
+        const readyDeadline = Date.now() + 6000;
+        while (!isClientReadyRef.current && Date.now() < readyDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
       }
 
       // Double check client is available
       if (!telnyxClientRef.current) {
         console.log('📱 Client ref is null after initialization');
         setError('Calling service not available');
+        setCallState(CALL_STATES.IDLE);
+        resetOutboundRetryState();
+        return false;
+      }
+      if (!isClientReadyRef.current) {
+        console.log('📱 Client still not ready after initialization wait');
+        setError('Calling service is still connecting. Please try again in a moment.');
         setCallState(CALL_STATES.IDLE);
         resetOutboundRetryState();
         return false;
@@ -1585,7 +1595,7 @@ export const CallProvider = ({ children }) => {
   useEffect(() => {
     const autoInit = async () => {
       const token = localStorage.getItem('token');
-      if (token && !isClientReady && !isInitializing && !isInitializedRef.current) {
+      if (token && !isClientReadyRef.current && !isInitializingRef.current && !isInitializedRef.current) {
         console.log('📱 Auto-initializing WebRTC client for incoming calls...');
 
         await fixPhoneConfiguration();
