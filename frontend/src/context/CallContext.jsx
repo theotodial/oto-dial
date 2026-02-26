@@ -89,6 +89,7 @@ export const CallProvider = ({ children }) => {
   const applyAudioRoutingRef = useRef(null);
   const callListenerRegistryRef = useRef(new WeakSet());
   const handledIncomingCallIdsRef = useRef(new Set());
+  const handledTerminalCallIdsRef = useRef(new Set());
   const hasAttemptedPhoneConfigFixRef = useRef(false);
   const lastPhoneConfigFixAtRef = useRef(0);
   const manualHangupRef = useRef(false);
@@ -304,6 +305,7 @@ export const CallProvider = ({ children }) => {
         setIncomingCall(null);
         setIsMinimized(false);
         handledIncomingCallIdsRef.current.clear();
+        handledTerminalCallIdsRef.current.clear();
         manualHangupRef.current = false;
         resetOutboundRetryState();
       } catch (stateErr) {
@@ -325,6 +327,7 @@ export const CallProvider = ({ children }) => {
           durationIntervalRef.current = null;
         }
         handledIncomingCallIdsRef.current.clear();
+        handledTerminalCallIdsRef.current.clear();
         manualHangupRef.current = false;
         resetOutboundRetryState();
       } catch (e) {
@@ -395,6 +398,8 @@ export const CallProvider = ({ children }) => {
       case 'ringing':
       case 'early':
         try {
+          // Mark synchronously to avoid relying on async React state timing.
+          call._sawRinging = true;
           setCallState(CALL_STATES.RINGING);
           try {
             soundManager.startRingback();
@@ -414,6 +419,8 @@ export const CallProvider = ({ children }) => {
         break;
       case 'active':
         try {
+          // Mark synchronously to avoid relying on async React state timing.
+          call._sawActive = true;
           setCallState(CALL_STATES.ACTIVE);
           
           // Stop sounds safely
@@ -474,13 +481,32 @@ export const CallProvider = ({ children }) => {
       case 'done':
       case 'purge':
         try {
+          const terminalCallId = getCallUniqueId(call);
+          if (terminalCallId) {
+            if (handledTerminalCallIdsRef.current.has(terminalCallId)) {
+              break;
+            }
+            handledTerminalCallIdsRef.current.add(terminalCallId);
+            if (handledTerminalCallIdsRef.current.size > 200) {
+              const recent = Array.from(handledTerminalCallIdsRef.current).slice(-120);
+              handledTerminalCallIdsRef.current = new Set(recent);
+            }
+          }
+
+          // Some SDK versions emit multiple terminal state changes (hangup/done/destroy).
+          // Guard so we don't trigger multiple retries or double-cleanup.
+          if (call._handledTermination) {
+            break;
+          }
+          call._handledTermination = true;
+
           const callDirection = getCallDirection(call);
           const hangupCause = getCallHangupCause(call);
-          const hangupCauseLower = String(hangupCause || "").toLowerCase();
           const disconnectedBeforeRinging =
             !manualHangupRef.current &&
             callDirection !== "incoming" &&
-            callStateRef.current === CALL_STATES.CONNECTING;
+            !call._sawRinging &&
+            !call._sawActive;
           const retryMeta = outboundRetryRef.current;
 
           const nextRetryStrategy =
@@ -490,9 +516,10 @@ export const CallProvider = ({ children }) => {
             !!nextRetryStrategy &&
             !!retryMeta.destinationNumber &&
             !!telnyxClientRef.current &&
-            /(call rejected|rejected|forbidden|declined|not allowed|unauthorized|invalid caller|caller id|from number)/i.test(
-              hangupCauseLower
-            );
+            // Retry any pre-ringing failure: root cause can be number formatting,
+            // caller ID permissioning, or connection defaults. We'll stop once
+            // strategies are exhausted.
+            !manualHangupRef.current;
 
           if (shouldRetryWithFallback) {
             try {
@@ -507,11 +534,11 @@ export const CallProvider = ({ children }) => {
               setCallState(CALL_STATES.CONNECTING);
 
               const retryOptions = {
-                destinationNumber: retryMeta.destinationNumber,
+                destinationNumber: nextRetryStrategy.destinationNumber || retryMeta.destinationNumber,
                 audio: true,
                 video: false
               };
-              if (nextRetryStrategy.callerNumber) {
+              if (typeof nextRetryStrategy.callerNumber === "string" && nextRetryStrategy.callerNumber.trim()) {
                 retryOptions.callerNumber = nextRetryStrategy.callerNumber;
               }
 
@@ -522,7 +549,7 @@ export const CallProvider = ({ children }) => {
               }
 
               retryCall._dbCallId = retryMeta.callRecordId || call._dbCallId || null;
-              retryCall._usedDefaultCallerFallback = true;
+              retryCall._usedDefaultCallerFallback = nextRetryStrategy.callerNumber == null;
               retryCall._fallbackStrategyLabel = nextRetryStrategy.label;
               currentCallRef.current = retryCall;
 
@@ -596,7 +623,7 @@ export const CallProvider = ({ children }) => {
         }
       }
     }
-  }, [startDurationTimer, handleCallEnd, getCallDirection, getCallHangupCause]); // Removed applyAudioRouting - use ref instead
+  }, [startDurationTimer, handleCallEnd, getCallDirection, getCallHangupCause, getCallUniqueId]); // Removed applyAudioRouting - use ref instead
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
@@ -1135,17 +1162,49 @@ export const CallProvider = ({ children }) => {
         return false;
       }
       outboundRetryRef.current.originalCallerNumber = normalizedCallerId;
-      const fallbackStrategies = [];
-      if (normalizedCallerId.startsWith("+")) {
-        fallbackStrategies.push({
+
+      const stripPlus = (value) => (typeof value === "string" && value.startsWith("+") ? value.slice(1) : value);
+      const callerDigits = stripPlus(normalizedCallerId);
+      const destinationDigits = stripPlus(normalizedDestination);
+
+      // Fallback strategies for outbound calls that fail before ringing.
+      // Telnyx WebRTC environments can differ on whether they accept +E.164 or digits-only.
+      // Also, some connections restrict caller IDs; omitting callerNumber can help.
+      const fallbackStrategies = [
+        {
           label: "caller_id_without_plus",
-          callerNumber: normalizedCallerId.slice(1)
-        });
-      }
-      fallbackStrategies.push({
-        label: "default_connection_caller",
-        callerNumber: null
+          destinationNumber: normalizedDestination,
+          callerNumber: callerDigits
+        },
+        {
+          label: "destination_and_caller_without_plus",
+          destinationNumber: destinationDigits,
+          callerNumber: callerDigits
+        },
+        {
+          label: "default_connection_caller",
+          destinationNumber: normalizedDestination,
+          callerNumber: null
+        }
+      ].filter((strategy) => {
+        if (!strategy?.destinationNumber) return false;
+        // Avoid no-op duplicates.
+        if (
+          strategy.label === "caller_id_without_plus" &&
+          callerDigits === normalizedCallerId
+        ) {
+          return false;
+        }
+        if (
+          strategy.label === "destination_and_caller_without_plus" &&
+          destinationDigits === normalizedDestination &&
+          callerDigits === normalizedCallerId
+        ) {
+          return false;
+        }
+        return true;
       });
+
       outboundRetryRef.current.retryStrategies = fallbackStrategies;
       outboundRetryRef.current.nextRetryIndex = 0;
 
