@@ -102,7 +102,9 @@ export const CallProvider = ({ children }) => {
     retryStrategies: [],
     nextRetryIndex: 0,
     outboundRepairAttempted: false,
-    outboundRepairAttemptedAt: 0
+    outboundRepairAttemptedAt: 0,
+    outboundRepairSummary: null,
+    outboundRepairError: null
   });
 
   const getCallDirection = useCallback((call = {}) => {
@@ -156,7 +158,9 @@ export const CallProvider = ({ children }) => {
       retryStrategies: [],
       nextRetryIndex: 0,
       outboundRepairAttempted: false,
-      outboundRepairAttemptedAt: 0
+      outboundRepairAttemptedAt: 0,
+      outboundRepairSummary: null,
+      outboundRepairError: null
     };
   }, []);
   
@@ -547,11 +551,19 @@ export const CallProvider = ({ children }) => {
                   });
                   if (repairResp?.error) {
                     console.warn("📱 Outbound repair returned error (non-blocking):", repairResp.error);
+                    retryMeta.outboundRepairError = repairResp.error;
                   } else if (repairResp?.data?.actions?.length) {
                     console.warn("📱 Outbound repair applied:", repairResp.data.actions);
+                    retryMeta.outboundRepairSummary = `Applied: ${repairResp.data.actions.join(", ")}`;
+                    if (repairResp.data?.warnings?.length) {
+                      retryMeta.outboundRepairSummary += ` | Warnings: ${repairResp.data.warnings.join(" | ")}`;
+                    }
+                  } else if (repairResp?.data?.warnings?.length) {
+                    retryMeta.outboundRepairSummary = `Warnings: ${repairResp.data.warnings.join(" | ")}`;
                   }
                 } catch (repairErr) {
                   console.warn("📱 Outbound repair failed (non-blocking):", repairErr?.message || repairErr);
+                  retryMeta.outboundRepairError = repairErr?.message || String(repairErr);
                 }
               }
 
@@ -609,7 +621,7 @@ export const CallProvider = ({ children }) => {
           if (disconnectedBeforeRinging) {
             const isAfterFallback =
               call._usedDefaultCallerFallback || (retryMeta.lastStrategy && retryMeta.lastStrategy !== "primary");
-            setError(
+            const baseError =
               isAfterFallback
                 ? hangupCause
                   ? `Call failed before ringing (${hangupCause}) even after fallback. Verify Telnyx outbound voice profile and caller ID permissions.`
@@ -617,7 +629,13 @@ export const CallProvider = ({ children }) => {
                 : hangupCause
                   ? `Call failed before ringing (${hangupCause}). Please verify your caller ID number and destination format.`
                   : "Call failed before ringing. Please verify your caller ID number and destination format."
-            );
+            const hasRepairInfo =
+              retryMeta.outboundRepairAttempted &&
+              (retryMeta.outboundRepairSummary || retryMeta.outboundRepairError);
+            const repairSuffix = hasRepairInfo
+              ? ` Auto-repair: ${retryMeta.outboundRepairSummary || retryMeta.outboundRepairError}`
+              : "";
+            setError(`${baseError}${repairSuffix}`);
             handleCallEnd({ preserveError: true, finalStatus: "failed" });
             break;
           }

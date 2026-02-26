@@ -208,6 +208,18 @@ router.post("/repair-outbound", async (req, res) => {
       });
     }
 
+    result.connectionUserName = credentialConnection?.user_name || null;
+    result.envSipUsername = process.env.TELNYX_SIP_USERNAME || null;
+    if (
+      result.connectionUserName &&
+      result.envSipUsername &&
+      String(result.connectionUserName) !== String(result.envSipUsername)
+    ) {
+      result.warnings.push(
+        `TELNYX_SIP_USERNAME (${result.envSipUsername}) does not match the credential connection username (${result.connectionUserName}). This mismatch can cause CALL REJECTED.`
+      );
+    }
+
     // 2) Ensure connection is active.
     if (credentialConnection?.active === false) {
       try {
@@ -224,6 +236,7 @@ router.post("/repair-outbound", async (req, res) => {
 
     // 3) Ensure outbound voice profile exists.
     let outboundVoiceProfileId = credentialConnection?.outbound_voice_profile_id || null;
+    result.outboundVoiceProfileId = outboundVoiceProfileId;
     if (!outboundVoiceProfileId) {
       try {
         const profileName = `auto-outbound-${String(req.userId).slice(-6)}-${Date.now()}`;
@@ -235,6 +248,7 @@ router.post("/repair-outbound", async (req, res) => {
         outboundVoiceProfileId = createResp?.data?.data?.id || null;
         if (outboundVoiceProfileId) {
           result.actions.push("created_outbound_voice_profile");
+          result.outboundVoiceProfileId = outboundVoiceProfileId;
         }
       } catch (err) {
         return res.status(502).json({
