@@ -1,5 +1,6 @@
 import express from "express";
 import { getTelnyx } from "../../config/telnyx.js";
+import axios from "axios";
 import Call from "../models/Call.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import { validateCallCountryLock } from "../middleware/countryLock.js";
@@ -101,6 +102,60 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
   } catch (err) {
     console.error("DIALER ERROR:", err);
     res.status(500).json({ error: "Call failed" });
+  }
+});
+
+/**
+ * POST /api/dialer/hangup
+ * body: { callControlId, callId? }
+ *
+ * Best-effort hangup for Voice API initiated calls.
+ */
+router.post("/hangup", async (req, res) => {
+  try {
+    const callControlId = String(req.body?.callControlId || "").trim();
+    const callId = String(req.body?.callId || "").trim();
+
+    if (!callControlId) {
+      return res.status(400).json({ success: false, error: "callControlId required" });
+    }
+
+    if (!process.env.TELNYX_API_KEY) {
+      return res.status(503).json({ success: false, error: "Telnyx not configured" });
+    }
+
+    await axios.post(
+      `https://api.telnyx.com/v2/calls/${encodeURIComponent(callControlId)}/actions/hangup`,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    // Non-blocking best-effort local record update (webhook is source of truth).
+    if (callId) {
+      try {
+        await Call.updateOne(
+          { _id: callId, user: req.userId },
+          { $set: { status: "failed", callEndedAt: new Date() } }
+        );
+      } catch (updateErr) {
+        console.warn("Dialer hangup: could not update call record:", updateErr?.message || updateErr);
+      }
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    const detail =
+      err?.response?.data?.errors?.[0]?.detail ||
+      err?.response?.data?.error ||
+      err?.message ||
+      "Failed to hang up call";
+    console.error("DIALER HANGUP ERROR:", detail);
+    return res.status(502).json({ success: false, error: detail });
   }
 });
 

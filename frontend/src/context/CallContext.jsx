@@ -77,6 +77,7 @@ export const CallProvider = ({ children }) => {
   const telnyxClientRef = useRef(null);
   const currentCallRef = useRef(null);
   const durationIntervalRef = useRef(null);
+  const voiceApiPollIntervalRef = useRef(null);
   const callStateRef = useRef(callState);
   const remoteAudioRef = useRef(null);
   const initializationPromiseRef = useRef(null);
@@ -285,6 +286,10 @@ export const CallProvider = ({ children }) => {
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
         }
+        if (voiceApiPollIntervalRef.current) {
+          clearInterval(voiceApiPollIntervalRef.current);
+          voiceApiPollIntervalRef.current = null;
+        }
       } catch (timerErr) {
         console.warn('Error clearing timer (non-critical):', timerErr);
       }
@@ -333,6 +338,10 @@ export const CallProvider = ({ children }) => {
         if (durationIntervalRef.current) {
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
+        }
+        if (voiceApiPollIntervalRef.current) {
+          clearInterval(voiceApiPollIntervalRef.current);
+          voiceApiPollIntervalRef.current = null;
         }
         handledIncomingCallIdsRef.current.clear();
         handledTerminalCallIdsRef.current.clear();
@@ -1151,6 +1160,80 @@ export const CallProvider = ({ children }) => {
       resetOutboundRetryState();
       outboundRetryRef.current.destinationNumber = normalizedDestination;
       outboundRetryRef.current.lastStrategy = "primary";
+      setRemoteNumber(normalizedDestination);
+      setCallState(CALL_STATES.CONNECTING);
+      setIsMinimized(false);
+
+      const preferredCallingMode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
+      const sipPasswordConfigured = !!import.meta.env.VITE_TELNYX_SIP_PASSWORD;
+      const forceVoiceApi = preferredCallingMode === "voice_api";
+      const forceWebrtc = preferredCallingMode === "webrtc";
+      const shouldUseVoiceApi = forceVoiceApi || (!forceWebrtc && !sipPasswordConfigured);
+
+      if (shouldUseVoiceApi) {
+        // Voice API mode: initiate outbound PSTN call via backend (no SIP/WebRTC).
+        try {
+          const dialResp = await API.post("/api/dialer/call", { to: normalizedDestination });
+          if (dialResp?.error) {
+            throw new Error(dialResp.error);
+          }
+
+          const callControlId =
+            dialResp?.data?.callControlId || dialResp?.data?.call_control_id || null;
+          const dbCallId = dialResp?.data?.callId || dialResp?.data?.call_id || null;
+
+          currentCallRef.current = {
+            _mode: "voice_api",
+            telnyxCallControlId: callControlId,
+            _dbCallId: dbCallId,
+            state: "trying"
+          };
+          outboundRetryRef.current.callRecordId = dbCallId;
+
+          if (voiceApiPollIntervalRef.current) {
+            clearInterval(voiceApiPollIntervalRef.current);
+            voiceApiPollIntervalRef.current = null;
+          }
+
+          if (dbCallId) {
+            const pollOnce = async () => {
+              if (!currentCallRef.current || currentCallRef.current._mode !== "voice_api") {
+                return;
+              }
+              const resp = await API.get(`/api/calls/${dbCallId}`);
+              if (resp?.error) return;
+              const call = resp?.data?.call || null;
+              const status = call?.status || null;
+              if (!status) return;
+
+              if (status === "ringing") {
+                setCallState(CALL_STATES.RINGING);
+                return;
+              }
+              if (status === "in-progress" || status === "answered") {
+                if (callStateRef.current !== CALL_STATES.ACTIVE) {
+                  setCallState(CALL_STATES.ACTIVE);
+                  startDurationTimer();
+                }
+                return;
+              }
+              if (["completed", "failed", "missed"].includes(status)) {
+                handleCallEnd({ finalStatus: status });
+              }
+            };
+
+            await pollOnce();
+            voiceApiPollIntervalRef.current = setInterval(pollOnce, 1500);
+          }
+
+          return true;
+        } catch (voiceErr) {
+          setError(voiceErr?.message || "Failed to start call");
+          setCallState(CALL_STATES.IDLE);
+          resetOutboundRetryState();
+          return false;
+        }
+      }
 
       const hasMicrophoneAccess = await ensureMicrophonePermission();
       if (!hasMicrophoneAccess) {
@@ -1160,10 +1243,6 @@ export const CallProvider = ({ children }) => {
       }
 
       await fixPhoneConfiguration();
-
-      setRemoteNumber(normalizedDestination);
-      setCallState(CALL_STATES.CONNECTING);
-      setIsMinimized(false);
 
       // Initialize client if needed
       if (!telnyxClientRef.current || !isClientReadyRef.current || !isInitializedRef.current) {
@@ -1334,6 +1413,8 @@ export const CallProvider = ({ children }) => {
       return false;
     }
   }, [
+    startDurationTimer,
+    handleCallEnd,
     initializeClient,
     credentials,
     saveCallRecord,
@@ -1498,7 +1579,17 @@ export const CallProvider = ({ children }) => {
     
     if (currentCallRef.current) {
       try {
-        currentCallRef.current.hangup();
+        if (currentCallRef.current._mode === "voice_api") {
+          const callControlId = currentCallRef.current.telnyxCallControlId;
+          const callId = currentCallRef.current._dbCallId;
+          if (callControlId) {
+            API.post("/api/dialer/hangup", { callControlId, callId }).catch((e) => {
+              console.warn("Voice API hangup failed (non-critical):", e?.message || e);
+            });
+          }
+        } else {
+          currentCallRef.current.hangup();
+        }
       } catch (e) {
         console.warn('Hangup error:', e);
       }

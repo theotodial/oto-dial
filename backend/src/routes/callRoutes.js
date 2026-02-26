@@ -203,6 +203,25 @@ router.get("/", async (req, res) => {
   }
 });
 
+// Get a single call record
+router.get("/:id", async (req, res) => {
+  try {
+    const call = await Call.findOne({
+      _id: req.params.id,
+      user: req.userId
+    }).lean();
+
+    if (!call) {
+      return res.status(404).json({ success: false, error: "Call not found" });
+    }
+
+    return res.json({ success: true, call });
+  } catch (err) {
+    console.error("GET /api/calls/:id error:", err);
+    return res.status(500).json({ success: false, error: "Failed to fetch call" });
+  }
+});
+
 // Update a call record
 router.patch("/:id", async (req, res) => {
   try {
