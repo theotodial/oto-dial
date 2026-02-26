@@ -81,6 +81,20 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
       connection_id: process.env.TELNYX_CONNECTION_ID
     });
 
+    const telnyxData = telnyxCall?.data || telnyxCall || {};
+    // Telnyx SDK/response shapes vary; normalize call control id.
+    const callControlId =
+      telnyxData.call_control_id ||
+      telnyxData.callControlId ||
+      telnyxData.id ||
+      telnyxData.call_leg_id ||
+      null;
+
+    if (!callControlId) {
+      console.error("DIALER ERROR: Telnyx call control id missing", telnyxData);
+      return res.status(502).json({ error: "Telnyx did not return a call control id" });
+    }
+
     // Create call record in database
     // CRITICAL: Set callInitiatedAt to track ring time for billing
     const callRecord = await Call.create({
@@ -90,13 +104,13 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
       toNumber: to,
       direction: "outbound",
       status: "dialing",
-      telnyxCallControlId: telnyxCall.data.call_control_id,
+      telnyxCallControlId: callControlId,
       callInitiatedAt: new Date() // Track initiation time for billing ring time
     });
 
     res.json({
       success: true,
-      callControlId: telnyxCall.data.call_control_id,
+      callControlId,
       callId: callRecord._id
     });
   } catch (err) {
@@ -113,11 +127,18 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
  */
 router.post("/hangup", async (req, res) => {
   try {
-    const callControlId = String(req.body?.callControlId || "").trim();
+    let callControlId = String(req.body?.callControlId || "").trim();
     const callId = String(req.body?.callId || "").trim();
 
+    if (!callControlId && callId) {
+      const record = await Call.findOne({ _id: callId, user: req.userId }).select("telnyxCallControlId");
+      if (record?.telnyxCallControlId) {
+        callControlId = String(record.telnyxCallControlId);
+      }
+    }
+
     if (!callControlId) {
-      return res.status(400).json({ success: false, error: "callControlId required" });
+      return res.status(400).json({ success: false, error: "callControlId or callId required" });
     }
 
     if (!process.env.TELNYX_API_KEY) {

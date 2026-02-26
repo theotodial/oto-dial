@@ -1602,11 +1602,9 @@ export const CallProvider = ({ children }) => {
         if (currentCallRef.current._mode === "voice_api") {
           const callControlId = currentCallRef.current.telnyxCallControlId;
           const callId = currentCallRef.current._dbCallId;
-          if (callControlId) {
-            API.post("/api/dialer/hangup", { callControlId, callId }).catch((e) => {
-              console.warn("Voice API hangup failed (non-critical):", e?.message || e);
-            });
-          }
+          API.post("/api/dialer/hangup", { callControlId, callId }).catch((e) => {
+            console.warn("Voice API hangup failed (non-critical):", e?.message || e);
+          });
         } else {
           currentCallRef.current.hangup();
         }
