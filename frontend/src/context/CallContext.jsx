@@ -149,8 +149,10 @@ export const CallProvider = ({ children }) => {
       call.hangupCause ||
       call.hangup_cause ||
       call.cause ||
+      call.sipReason ||
       call.options?.hangupCause ||
       call.options?.hangup_cause ||
+      call.options?.sipReason ||
       null;
 
     if (!cause) return null;
@@ -652,6 +654,25 @@ export const CallProvider = ({ children }) => {
           if (disconnectedBeforeRinging) {
             const isAfterFallback =
               call._usedDefaultCallerFallback || (retryMeta.lastStrategy && retryMeta.lastStrategy !== "primary");
+            const sipReason = call?.sipReason || call?.options?.sipReason || null;
+            const sipCode = call?.sipCode || call?.options?.sipCode || null;
+            const sipHint =
+              sipReason || sipCode
+                ? ` (SIP ${sipCode || "?"}: ${String(sipReason || "").trim()})`
+                : "";
+
+            const looksLikeDisabledConnection =
+              /connection is disabled/i.test(String(sipReason || "")) ||
+              /connection is disabled/i.test(String(hangupCause || ""));
+
+            if (looksLikeDisabledConnection) {
+              setError(
+                `WebRTC call rejected: your Telnyx Credential Connection is disabled.${sipHint} Enable the connection in Telnyx Mission Control (Connections → your Credential Connection → Active/Enabled), then try again.`
+              );
+              handleCallEnd({ preserveError: true, finalStatus: "failed" });
+              break;
+            }
+
             const baseError =
               isAfterFallback
                 ? hangupCause
