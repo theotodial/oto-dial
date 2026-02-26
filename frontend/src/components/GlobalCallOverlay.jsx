@@ -33,6 +33,7 @@ export default function GlobalCallOverlay() {
     expandCall,
     minimizeCall,
     isInCall,
+    callingMode,
     CALL_STATES: states
   } = useCall();
 
@@ -88,6 +89,7 @@ export default function GlobalCallOverlay() {
   };
 
   const isActive = callState === CALL_STATES.ACTIVE;
+  const modeLabel = callingMode === "webrtc" ? "WebRTC" : "Voice API";
 
   // On Recents desktop: don't show minimized banner either (call is in dialer panel)
   if (location.pathname === '/recents' && isDesktop) {
@@ -139,7 +141,7 @@ export default function GlobalCallOverlay() {
                 {remoteNumber || 'Unknown'}
               </p>
               <p className="text-emerald-100 text-xs">
-                {getStatusText()}
+                {getStatusText()} • {modeLabel}
               </p>
             </div>
             

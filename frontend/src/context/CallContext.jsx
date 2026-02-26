@@ -69,6 +69,17 @@ export const CallProvider = ({ children }) => {
   const [isInitializing, setIsInitializing] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
 
+  // Resolve calling mode (build-time env via Vite).
+  // - voice_api: always use backend Voice API calling (no in-browser audio).
+  // - webrtc: always use WebRTC/SIP (requires SIP password + working /api/webrtc/token).
+  // - auto/default: prefer WebRTC if SIP password is configured, else Voice API.
+  const resolvedCallingMode = (() => {
+    const mode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
+    if (mode === "voice_api") return "voice_api";
+    if (mode === "webrtc") return "webrtc";
+    return import.meta.env.VITE_TELNYX_SIP_PASSWORD ? "webrtc" : "voice_api";
+  })();
+
   // Keep screen awake during active calls (mobile)
   const isActiveCall = callState === CALL_STATES.ACTIVE || callState === CALL_STATES.RINGING || callState === CALL_STATES.INCOMING;
   useWakeLock(isActiveCall);
@@ -800,10 +811,7 @@ export const CallProvider = ({ children }) => {
 
   // Initialize Telnyx WebRTC client
   const initializeClient = useCallback(async () => {
-    const preferredCallingMode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
-    const forceWebrtc = preferredCallingMode === "webrtc";
-    // Default deployment mode is Voice API. Only initialize WebRTC when explicitly forced.
-    if (!forceWebrtc) {
+    if (resolvedCallingMode !== "webrtc") {
       return false;
     }
 
@@ -1173,12 +1181,7 @@ export const CallProvider = ({ children }) => {
       setCallState(CALL_STATES.CONNECTING);
       setIsMinimized(false);
 
-      const preferredCallingMode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
-      const forceVoiceApi = preferredCallingMode === "voice_api";
-      const forceWebrtc = preferredCallingMode === "webrtc";
-      const sipPasswordConfigured = !!import.meta.env.VITE_TELNYX_SIP_PASSWORD;
-      // Default to Voice API unless explicitly forced to WebRTC AND SIP is configured.
-      const shouldUseVoiceApi = forceVoiceApi || !forceWebrtc || !sipPasswordConfigured;
+      const shouldUseVoiceApi = resolvedCallingMode !== "webrtc";
 
       if (shouldUseVoiceApi) {
         // Voice API mode: initiate outbound PSTN call via backend (no SIP/WebRTC).
@@ -1753,9 +1756,7 @@ export const CallProvider = ({ children }) => {
   useEffect(() => {
     const autoInit = async () => {
       const token = localStorage.getItem('token');
-      const preferredCallingMode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
-      const forceWebrtc = preferredCallingMode === "webrtc";
-      if (!forceWebrtc) return;
+      if (resolvedCallingMode !== "webrtc") return;
       if (token && !isClientReadyRef.current && !isInitializingRef.current && !isInitializedRef.current) {
         console.log('📱 Auto-initializing WebRTC client for incoming calls...');
 
@@ -1774,9 +1775,7 @@ export const CallProvider = ({ children }) => {
     // Also set up a periodic health check to ensure client stays connected
     const healthCheckInterval = setInterval(() => {
       const token = localStorage.getItem('token');
-      const preferredCallingMode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
-      const forceWebrtc = preferredCallingMode === "webrtc";
-      if (!forceWebrtc) return;
+      if (resolvedCallingMode !== "webrtc") return;
       // Use refs to avoid dependency on changing state
       if (token && !isClientReadyRef.current && !isInitializingRef.current && !isInitializedRef.current) {
         console.log('📱 Health check: Client not ready, reinitializing...');
@@ -1944,6 +1943,7 @@ export const CallProvider = ({ children }) => {
     remoteNumber,
     incomingCall,
     error,
+    callingMode: resolvedCallingMode,
     isClientReady,
     isInitializing,
     isMinimized,
