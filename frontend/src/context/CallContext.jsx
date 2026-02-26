@@ -800,6 +800,13 @@ export const CallProvider = ({ children }) => {
 
   // Initialize Telnyx WebRTC client
   const initializeClient = useCallback(async () => {
+    const preferredCallingMode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
+    const forceWebrtc = preferredCallingMode === "webrtc";
+    // Default deployment mode is Voice API. Only initialize WebRTC when explicitly forced.
+    if (!forceWebrtc) {
+      return false;
+    }
+
     // Prevent multiple initializations
     if (initializationPromiseRef.current) {
       console.log('📱 Already initializing, waiting...');
@@ -839,12 +846,14 @@ export const CallProvider = ({ children }) => {
 
         setCredentials(creds);
 
-        // Get SIP password from frontend env
+        // Get SIP password from frontend env (required for forced WebRTC mode)
         const sipPassword = import.meta.env.VITE_TELNYX_SIP_PASSWORD;
         if (!sipPassword) {
           console.error('Missing VITE_TELNYX_SIP_PASSWORD');
           setError('Calling password not configured');
+          setIsClientReady(false);
           setIsInitializing(false);
+          isInitializedRef.current = false;
           return false;
         }
 
@@ -1165,10 +1174,10 @@ export const CallProvider = ({ children }) => {
       setIsMinimized(false);
 
       const preferredCallingMode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
-      const sipPasswordConfigured = !!import.meta.env.VITE_TELNYX_SIP_PASSWORD;
       const forceVoiceApi = preferredCallingMode === "voice_api";
       const forceWebrtc = preferredCallingMode === "webrtc";
-      const shouldUseVoiceApi = forceVoiceApi || (!forceWebrtc && !sipPasswordConfigured);
+      // Default to Voice API unless explicitly forced to WebRTC.
+      const shouldUseVoiceApi = forceVoiceApi || !forceWebrtc;
 
       if (shouldUseVoiceApi) {
         // Voice API mode: initiate outbound PSTN call via backend (no SIP/WebRTC).
@@ -1251,7 +1260,7 @@ export const CallProvider = ({ children }) => {
         console.log('📱 Initialization result:', initialized);
         if (!initialized) {
           console.error('📱 Failed to initialize client');
-          setError('Failed to connect to calling service. Please try again.');
+          setError('WebRTC not configured. This deployment is using Voice API calling.');
           setCallState(CALL_STATES.IDLE);
           resetOutboundRetryState();
           return false;
@@ -1736,6 +1745,9 @@ export const CallProvider = ({ children }) => {
   useEffect(() => {
     const autoInit = async () => {
       const token = localStorage.getItem('token');
+      const preferredCallingMode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
+      const forceWebrtc = preferredCallingMode === "webrtc";
+      if (!forceWebrtc) return;
       if (token && !isClientReadyRef.current && !isInitializingRef.current && !isInitializedRef.current) {
         console.log('📱 Auto-initializing WebRTC client for incoming calls...');
 
@@ -1754,6 +1766,9 @@ export const CallProvider = ({ children }) => {
     // Also set up a periodic health check to ensure client stays connected
     const healthCheckInterval = setInterval(() => {
       const token = localStorage.getItem('token');
+      const preferredCallingMode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
+      const forceWebrtc = preferredCallingMode === "webrtc";
+      if (!forceWebrtc) return;
       // Use refs to avoid dependency on changing state
       if (token && !isClientReadyRef.current && !isInitializingRef.current && !isInitializedRef.current) {
         console.log('📱 Health check: Client not ready, reinitializing...');
