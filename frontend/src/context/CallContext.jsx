@@ -1176,8 +1176,9 @@ export const CallProvider = ({ children }) => {
       const preferredCallingMode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
       const forceVoiceApi = preferredCallingMode === "voice_api";
       const forceWebrtc = preferredCallingMode === "webrtc";
-      // Default to Voice API unless explicitly forced to WebRTC.
-      const shouldUseVoiceApi = forceVoiceApi || !forceWebrtc;
+      const sipPasswordConfigured = !!import.meta.env.VITE_TELNYX_SIP_PASSWORD;
+      // Default to Voice API unless explicitly forced to WebRTC AND SIP is configured.
+      const shouldUseVoiceApi = forceVoiceApi || !forceWebrtc || !sipPasswordConfigured;
 
       if (shouldUseVoiceApi) {
         // Voice API mode: initiate outbound PSTN call via backend (no SIP/WebRTC).
@@ -1217,11 +1218,18 @@ export const CallProvider = ({ children }) => {
 
               if (status === "ringing") {
                 setCallState(CALL_STATES.RINGING);
+                try {
+                  soundManager.startRingback();
+                } catch {}
                 return;
               }
               if (status === "in-progress" || status === "answered") {
                 if (callStateRef.current !== CALL_STATES.ACTIVE) {
                   setCallState(CALL_STATES.ACTIVE);
+                  try {
+                    soundManager.stopRingback();
+                    soundManager.playConnected();
+                  } catch {}
                   startDurationTimer();
                 }
                 return;
