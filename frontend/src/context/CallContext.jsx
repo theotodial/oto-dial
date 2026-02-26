@@ -90,6 +90,7 @@ export const CallProvider = ({ children }) => {
   const callListenerRegistryRef = useRef(new WeakSet());
   const handledIncomingCallIdsRef = useRef(new Set());
   const hasAttemptedPhoneConfigFixRef = useRef(false);
+  const lastPhoneConfigFixAtRef = useRef(0);
   const manualHangupRef = useRef(false);
 
   const getCallDirection = useCallback((call = {}) => {
@@ -919,17 +920,42 @@ export const CallProvider = ({ children }) => {
   }, []);
 
   const fixPhoneConfiguration = useCallback(async () => {
-    if (hasAttemptedPhoneConfigFixRef.current) {
-      return;
+    const now = Date.now();
+    const recentlyFixed =
+      hasAttemptedPhoneConfigFixRef.current &&
+      now - lastPhoneConfigFixAtRef.current < 5 * 60 * 1000;
+    if (recentlyFixed) {
+      return true;
     }
 
-    hasAttemptedPhoneConfigFixRef.current = true;
+    lastPhoneConfigFixAtRef.current = now;
+
     try {
-      await API.post("/api/numbers/fix-all");
-      console.log("📱 Phone configuration sync completed");
-    } catch (err) {
-      // Best-effort self-heal: call setup continues even if this fails.
-      console.warn("📱 Phone configuration sync skipped:", err?.message || err);
+      const voiceResponse = await API.post("/api/numbers/fix-voice");
+      if (voiceResponse?.error) {
+        throw new Error(voiceResponse.error);
+      }
+      hasAttemptedPhoneConfigFixRef.current = true;
+      console.log("📱 Voice connection sync completed");
+      return true;
+    } catch (voiceErr) {
+      // Fallback to full repair path for environments that only expose fix-all.
+      try {
+        const fullResponse = await API.post("/api/numbers/fix-all");
+        if (fullResponse?.error) {
+          throw new Error(fullResponse.error);
+        }
+        hasAttemptedPhoneConfigFixRef.current = true;
+        console.log("📱 Full Telnyx configuration sync completed");
+        return true;
+      } catch (fullErr) {
+        hasAttemptedPhoneConfigFixRef.current = false;
+        console.warn(
+          "📱 Phone configuration sync failed:",
+          fullErr?.message || voiceErr?.message || fullErr || voiceErr
+        );
+        return false;
+      }
     }
   }, []);
 

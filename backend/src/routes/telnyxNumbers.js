@@ -359,6 +359,93 @@ function extractTelnyxErrorMessage(err) {
   );
 }
 
+function buildPhoneNumberIdentifierCandidates({ phoneNumberId, phoneNumber }) {
+  const candidates = [];
+
+  const pushCandidate = (value, type) => {
+    const normalized = String(value || "").trim();
+    if (!normalized) return;
+    if (candidates.some((entry) => entry.value === normalized)) return;
+    candidates.push({ value: normalized, type });
+  };
+
+  pushCandidate(phoneNumberId, "id");
+  pushCandidate(phoneNumber, "number");
+
+  return candidates;
+}
+
+async function updateTelnyxPhoneVoiceConnection({
+  telnyx,
+  phoneNumberId,
+  phoneNumber,
+  connectionId
+}) {
+  const candidates = buildPhoneNumberIdentifierCandidates({ phoneNumberId, phoneNumber });
+  if (!candidates.length) {
+    throw new Error("No Telnyx phone number identifier available");
+  }
+
+  let lastError = null;
+  const attemptErrors = [];
+
+  for (const candidate of candidates) {
+    try {
+      const response = await telnyx.phoneNumbers.update(candidate.value, {
+        connection_id: connectionId
+      });
+      return {
+        identifierType: candidate.type,
+        identifierValue: candidate.value,
+        data: response?.data || null
+      };
+    } catch (err) {
+      lastError = err;
+      attemptErrors.push(`${candidate.type}:${extractTelnyxErrorMessage(err)}`);
+    }
+  }
+
+  const failure = new Error(
+    `Unable to set voice connection (${attemptErrors.join(" | ")})`
+  );
+  failure.cause = lastError;
+  throw failure;
+}
+
+async function retrieveTelnyxPhoneNumberDetails({
+  telnyx,
+  phoneNumberId,
+  phoneNumber
+}) {
+  const candidates = buildPhoneNumberIdentifierCandidates({ phoneNumberId, phoneNumber });
+  if (!candidates.length) {
+    throw new Error("No Telnyx phone number identifier available");
+  }
+
+  let lastError = null;
+  const attemptErrors = [];
+
+  for (const candidate of candidates) {
+    try {
+      const response = await telnyx.phoneNumbers.retrieve(candidate.value);
+      return {
+        identifierType: candidate.type,
+        identifierValue: candidate.value,
+        data: response?.data || null
+      };
+    } catch (err) {
+      lastError = err;
+      attemptErrors.push(`${candidate.type}:${extractTelnyxErrorMessage(err)}`);
+    }
+  }
+
+  const failure = new Error(
+    `Unable to retrieve Telnyx number details (${attemptErrors.join(" | ")})`
+  );
+  failure.cause = lastError;
+  throw failure;
+}
+
 function resolveOrderedNumberId(orderData, fallbackNumber) {
   const nestedNumber =
     orderData?.phone_numbers?.[0]?.id ||
@@ -368,7 +455,7 @@ function resolveOrderedNumberId(orderData, fallbackNumber) {
     orderData?.data?.phone_numbers?.[0]?.phone_number_id ||
     orderData?.data?.phone_numbers?.[0]?.phone_number;
 
-  return nestedNumber || orderData?.id || fallbackNumber;
+  return nestedNumber || fallbackNumber;
 }
 
 function buildOrderPhoneNumberPayload(phoneNumber, options = {}) {
@@ -1843,10 +1930,24 @@ router.post(
       const connectionId = process.env.TELNYX_CONNECTION_ID;
       if (connectionId) {
         try {
-          await telnyx.phoneNumbers.update(phoneNumber, {
-            connection_id: connectionId
+          const updateResult = await updateTelnyxPhoneVoiceConnection({
+            telnyx,
+            phoneNumberId: phoneNumberDoc.telnyxPhoneNumberId,
+            phoneNumber,
+            connectionId
           });
-          console.log(`✅ Voice connection ${connectionId} set for ${phoneNumber}`);
+          console.log(
+            `✅ Voice connection ${connectionId} set for ${phoneNumber} using ${updateResult.identifierType}:${updateResult.identifierValue}`
+          );
+
+          const resolvedTelnyxPhoneNumberId = updateResult?.data?.id || null;
+          if (
+            resolvedTelnyxPhoneNumberId &&
+            resolvedTelnyxPhoneNumberId !== phoneNumberDoc.telnyxPhoneNumberId
+          ) {
+            phoneNumberDoc.telnyxPhoneNumberId = resolvedTelnyxPhoneNumberId;
+            await phoneNumberDoc.save();
+          }
         } catch (voiceErr) {
           const voiceMsg = extractTelnyxErrorMessage(voiceErr);
           console.warn(`⚠️ Could not set voice connection:`, voiceMsg);
@@ -1974,13 +2075,17 @@ router.post(
       const connectionId = process.env.TELNYX_CONNECTION_ID;
       if (connectionId) {
         try {
-          // Update the phone number to use our voice connection
-          await telnyx.phoneNumbers.update(phoneNumber, {
-            connection_id: connectionId
+          const updateResult = await updateTelnyxPhoneVoiceConnection({
+            telnyx,
+            phoneNumberId: null,
+            phoneNumber,
+            connectionId
           });
-          console.log(`✅ Voice connection ${connectionId} set for ${phoneNumber}`);
+          console.log(
+            `✅ Voice connection ${connectionId} set for ${phoneNumber} using ${updateResult.identifierType}:${updateResult.identifierValue}`
+          );
         } catch (voiceErr) {
-          console.warn(`⚠️ Could not set voice connection:`, voiceErr.message);
+          console.warn(`⚠️ Could not set voice connection:`, extractTelnyxErrorMessage(voiceErr));
         }
       } else {
         console.warn(`⚠️ TELNYX_CONNECTION_ID not set - incoming calls won't work!`);
@@ -2030,14 +2135,40 @@ router.post(
       const results = [];
       for (const pn of phoneNumbers) {
         try {
-          await telnyx.phoneNumbers.update(pn.phoneNumber, {
-            connection_id: connectionId
+          const updateResult = await updateTelnyxPhoneVoiceConnection({
+            telnyx,
+            phoneNumberId: pn.telnyxPhoneNumberId,
+            phoneNumber: pn.phoneNumber,
+            connectionId
           });
-          results.push({ phoneNumber: pn.phoneNumber, status: "updated" });
-          console.log(`✅ Voice connection set for ${pn.phoneNumber}`);
+
+          const resolvedTelnyxPhoneNumberId = updateResult?.data?.id || null;
+          if (
+            resolvedTelnyxPhoneNumberId &&
+            resolvedTelnyxPhoneNumberId !== pn.telnyxPhoneNumberId
+          ) {
+            pn.telnyxPhoneNumberId = resolvedTelnyxPhoneNumberId;
+            await pn.save();
+          }
+
+          results.push({
+            phoneNumber: pn.phoneNumber,
+            telnyxPhoneNumberId: pn.telnyxPhoneNumberId || null,
+            status: "updated",
+            identifierType: updateResult.identifierType
+          });
+          console.log(
+            `✅ Voice connection set for ${pn.phoneNumber} using ${updateResult.identifierType}:${updateResult.identifierValue}`
+          );
         } catch (err) {
-          results.push({ phoneNumber: pn.phoneNumber, status: "failed", error: err.message });
-          console.error(`❌ Failed to update ${pn.phoneNumber}:`, err.message);
+          const errorMessage = extractTelnyxErrorMessage(err);
+          results.push({
+            phoneNumber: pn.phoneNumber,
+            telnyxPhoneNumberId: pn.telnyxPhoneNumberId || null,
+            status: "failed",
+            error: errorMessage
+          });
+          console.error(`❌ Failed to update ${pn.phoneNumber}:`, errorMessage);
         }
       }
 
@@ -2215,13 +2346,38 @@ router.post(
 
         for (const pn of phoneNumbers) {
           try {
-            await telnyx.phoneNumbers.update(pn.phoneNumber, {
-              connection_id: connectionId
+            const updateResult = await updateTelnyxPhoneVoiceConnection({
+              telnyx,
+              phoneNumberId: pn.telnyxPhoneNumberId,
+              phoneNumber: pn.phoneNumber,
+              connectionId
             });
-            results.numbers.push({ phoneNumber: pn.phoneNumber, voiceFixed: true });
-            console.log(`✅ Voice fixed for ${pn.phoneNumber}`);
+
+            const resolvedTelnyxPhoneNumberId = updateResult?.data?.id || null;
+            if (
+              resolvedTelnyxPhoneNumberId &&
+              resolvedTelnyxPhoneNumberId !== pn.telnyxPhoneNumberId
+            ) {
+              pn.telnyxPhoneNumberId = resolvedTelnyxPhoneNumberId;
+              await pn.save();
+            }
+
+            results.numbers.push({
+              phoneNumber: pn.phoneNumber,
+              telnyxPhoneNumberId: pn.telnyxPhoneNumberId || null,
+              voiceFixed: true,
+              identifierType: updateResult.identifierType
+            });
+            console.log(
+              `✅ Voice fixed for ${pn.phoneNumber} using ${updateResult.identifierType}:${updateResult.identifierValue}`
+            );
           } catch (err) {
-            results.numbers.push({ phoneNumber: pn.phoneNumber, voiceFixed: false, error: err.message });
+            results.numbers.push({
+              phoneNumber: pn.phoneNumber,
+              telnyxPhoneNumberId: pn.telnyxPhoneNumberId || null,
+              voiceFixed: false,
+              error: extractTelnyxErrorMessage(err)
+            });
           }
         }
         results.voice.fixed = results.numbers.some(n => n.voiceFixed);
@@ -2287,16 +2443,25 @@ router.get(
       // Check each phone number's voice configuration
       for (const pn of phoneNumbers) {
         try {
-          const numDetails = await telnyx.phoneNumbers.retrieve(pn.phoneNumber);
+          const details = await retrieveTelnyxPhoneNumberDetails({
+            telnyx,
+            phoneNumberId: pn.telnyxPhoneNumberId,
+            phoneNumber: pn.phoneNumber
+          });
+          const numDetails = details.data || {};
+
           config.numbers.push({
             phoneNumber: pn.phoneNumber,
-            connectionId: numDetails.data.connection_id || "NOT SET",
-            voiceEnabled: !!numDetails.data.connection_id
+            telnyxPhoneNumberId: pn.telnyxPhoneNumberId || null,
+            checkedBy: details.identifierType,
+            connectionId: numDetails.connection_id || "NOT SET",
+            voiceEnabled: !!numDetails.connection_id
           });
         } catch (e) {
           config.numbers.push({
             phoneNumber: pn.phoneNumber,
-            error: e.message
+            telnyxPhoneNumberId: pn.telnyxPhoneNumberId || null,
+            error: extractTelnyxErrorMessage(e)
           });
         }
       }
