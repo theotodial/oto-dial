@@ -158,7 +158,6 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
   const toggleSpeaker = callContext?.toggleSpeaker || (() => {});
   const sendDTMF = callContext?.sendDTMF || (() => {});
   const minimizeCall = callContext?.minimizeCall || (() => {});
-  const callingMode = callContext?.callingMode || "unknown";
   const callError = callContext?.error || null;
   const formatDuration = callContext?.formatDuration || ((s) => {
     const mins = Math.floor(s / 60);
@@ -171,7 +170,6 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
   const [showDialpad, setShowDialpad] = useState(false);
   const statusText = getStatusText(callState);
   const displayName = contactName || remoteNumber || 'Unknown';
-  const modeLabel = callingMode === "webrtc" ? "WebRTC" : callingMode === "voice_api" ? "Voice API" : "Unknown";
 
   const handleDialpadDigit = (digit) => {
     sendDTMF(digit);
@@ -252,16 +250,6 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
         <div className="text-emerald-400 text-3xl font-medium tracking-wider">
           {isIncoming ? 'Incoming Call' : (statusText || formatDuration(callDuration))}
         </div>
-
-        <div className="mt-2 text-xs text-white/70">
-          Mode: {modeLabel}
-        </div>
-
-        {callingMode === "voice_api" && !isIncoming && (
-          <div className="mt-3 text-xs text-amber-200/90 text-center max-w-xs">
-            Voice API calls do not provide in-browser audio. To hear/talk in the app, enable WebRTC mode and rebuild with SIP credentials.
-          </div>
-        )}
 
         {callError && (
           <div className="mt-3 text-xs text-rose-200/90 text-center max-w-xs">
