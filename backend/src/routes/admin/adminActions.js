@@ -153,6 +153,17 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
     const periodEnd = new Date(now);
     periodEnd.setMonth(periodEnd.getMonth() + 1);
 
+    const planLimits = plan?.limits || {};
+    const minutesTotal = Number(planLimits.minutesTotal || 0);
+    const smsTotal = Number(planLimits.smsTotal || 0);
+    const numbersTotal = Number(planLimits.numbersTotal || 0);
+    if (!Number.isFinite(minutesTotal) || !Number.isFinite(smsTotal) || !Number.isFinite(numbersTotal)) {
+      return res.status(400).json({
+        success: false,
+        error: "Plan limits are invalid. Please edit the plan to include minutesTotal, smsTotal, and numbersTotal."
+      });
+    }
+
     const subscription = await Subscription.create({
       userId,
       planId,
@@ -166,6 +177,11 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
       usage: {
         minutesUsed: 0,
         smsUsed: 0
+      },
+      limits: {
+        minutesTotal,
+        smsTotal,
+        numbersTotal
       },
       addons: {
         minutes: 0,
@@ -624,6 +640,11 @@ router.post("/subscription/set-trial", requireAdmin, async (req, res) => {
       usage: {
         minutesUsed: 0,
         smsUsed: 0
+      },
+      limits: {
+        minutesTotal: Number(trialPlan?.limits?.minutesTotal || 0),
+        smsTotal: Number(trialPlan?.limits?.smsTotal || 0),
+        numbersTotal: Number(trialPlan?.limits?.numbersTotal || 1)
       },
       addons: {
         minutes: 0,
