@@ -179,6 +179,89 @@ const CustomHtmlSection = memo(function CustomHtmlSection({ section }) {
   );
 });
 
+const ImageTextSection = memo(function ImageTextSection({ section }) {
+  const s = section?.settings || {};
+  const side = s.imageSide === "right" ? "right" : "left";
+  const imageUrl = s.imageUrl || "";
+  return (
+    <section className="w-full">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+        <div className={`grid grid-cols-1 lg:grid-cols-2 gap-10 items-center`}>
+          {side === "left" && (
+            <div className="rounded-2xl overflow-hidden border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/40" style={{ borderRadius: "var(--site-radius)" }}>
+              {imageUrl ? (
+                <img src={imageUrl} alt="" className="w-full h-72 object-cover" loading="lazy" />
+              ) : (
+                <div className="h-72 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+                  Image
+                </div>
+              )}
+            </div>
+          )}
+          <div>
+            {s.heading && (
+              <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
+                {s.heading}
+              </h2>
+            )}
+            {s.html && (
+              <div
+                className="mt-4 prose dark:prose-invert max-w-none"
+                dangerouslySetInnerHTML={{ __html: s.html }}
+              />
+            )}
+          </div>
+          {side === "right" && (
+            <div className="rounded-2xl overflow-hidden border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/40" style={{ borderRadius: "var(--site-radius)" }}>
+              {imageUrl ? (
+                <img src={imageUrl} alt="" className="w-full h-72 object-cover" loading="lazy" />
+              ) : (
+                <div className="h-72 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+                  Image
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+});
+
+const TestimonialsSection = memo(function TestimonialsSection({ section }) {
+  const s = section?.settings || {};
+  const title = s.title || "Testimonials";
+  const items = Array.isArray(s.items) ? s.items : [];
+  return (
+    <section className="w-full bg-gray-50 dark:bg-slate-800">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+        <h2 className="text-3xl font-bold text-gray-900 dark:text-white text-center mb-10">
+          {title}
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {items.slice(0, 12).map((it, idx) => (
+            <div
+              key={it.id || idx}
+              className="border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6"
+              style={{ borderRadius: "var(--site-radius)" }}
+            >
+              <div className="text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap">
+                “{it.quote || ""}”
+              </div>
+              <div className="mt-4 text-sm font-semibold text-gray-900 dark:text-white">
+                {it.name || "Customer"}
+              </div>
+              {it.role && (
+                <div className="text-xs text-gray-500 dark:text-gray-400">{it.role}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+});
+
 const SECTION_REGISTRY = {
   hero: HeroBannerSection,
   text: TextBlockSection,
@@ -186,7 +269,9 @@ const SECTION_REGISTRY = {
   faq: FaqSection,
   cta: CtaSection,
   spacer: SpacerSection,
-  custom_html: CustomHtmlSection
+  custom_html: CustomHtmlSection,
+  image_text: ImageTextSection,
+  testimonials: TestimonialsSection
 };
 
 function applyThemeVars(themeSettings = {}) {

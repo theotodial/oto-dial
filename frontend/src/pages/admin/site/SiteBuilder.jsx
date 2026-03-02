@@ -71,6 +71,28 @@ const SECTION_TEMPLATES = {
     type: "custom_html",
     hidden: false,
     settings: { html: "<div>Custom HTML</div>" }
+  }),
+  image_text: () => ({
+    type: "image_text",
+    hidden: false,
+    settings: {
+      imageUrl: "",
+      imageSide: "left",
+      heading: "Built for global calling",
+      html: "<p>Add your copy here.</p>"
+    }
+  }),
+  testimonials: () => ({
+    type: "testimonials",
+    hidden: false,
+    settings: {
+      title: "Loved by customers",
+      items: [
+        { id: "t1", name: "Alex", role: "Freelancer", quote: "Setup was super fast and the call quality is great." },
+        { id: "t2", name: "Sam", role: "Traveler", quote: "I got a local number abroad and stayed reachable." },
+        { id: "t3", name: "Taylor", role: "Remote worker", quote: "Perfect for international clients." }
+      ]
+    }
   })
 };
 
@@ -362,6 +384,9 @@ function SiteBuilder() {
     }
     if (mediaPickerTarget === "section.hero.bg" && selectedSection?.type === "hero") {
       updateSection(selectedSection.id, { settings: { backgroundImage: url } });
+    }
+    if (mediaPickerTarget === "section.image_text.image" && selectedSection?.type === "image_text") {
+      updateSection(selectedSection.id, { settings: { imageUrl: url } });
     }
     setMediaPickerOpen(false);
     setMediaPickerTarget(null);
@@ -675,6 +700,150 @@ function SiteBuilder() {
                           }
                           className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
                         />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedSection.type === "image_text" && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Heading
+                        </label>
+                        <input
+                          value={selectedSection.settings?.heading || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { heading: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                            Image side
+                          </label>
+                          <select
+                            value={selectedSection.settings?.imageSide || "left"}
+                            onChange={(e) =>
+                              updateSection(selectedSection.id, { settings: { imageSide: e.target.value } })
+                            }
+                            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                          >
+                            <option value="left">Left</option>
+                            <option value="right">Right</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                            Image URL
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={selectedSection.settings?.imageUrl || ""}
+                              onChange={(e) =>
+                                updateSection(selectedSection.id, { settings: { imageUrl: e.target.value } })
+                              }
+                              placeholder="https://..."
+                              className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs font-mono"
+                            />
+                            <button
+                              onClick={() => openMediaPicker("section.image_text.image")}
+                              className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold"
+                              title="Upload (uses media library)"
+                            >
+                              Upload
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">
+                          Body
+                        </label>
+                        <div className="rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+                          <RichTextEditor
+                            value={selectedSection.settings?.html || ""}
+                            onChange={(val) => updateSection(selectedSection.id, { settings: { html: val } })}
+                            placeholder="Write section content..."
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {selectedSection.type === "testimonials" && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Title
+                        </label>
+                        <input
+                          value={selectedSection.settings?.title || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { title: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        {(selectedSection.settings?.items || []).slice(0, 6).map((it, idx) => (
+                          <div
+                            key={it.id || idx}
+                            className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/40 p-2"
+                          >
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                value={it.name || ""}
+                                onChange={(e) => {
+                                  const items = [...(selectedSection.settings?.items || [])];
+                                  items[idx] = { ...(items[idx] || {}), name: e.target.value };
+                                  updateSection(selectedSection.id, { settings: { items } });
+                                }}
+                                placeholder="Name"
+                                className="px-2 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs"
+                              />
+                              <input
+                                value={it.role || ""}
+                                onChange={(e) => {
+                                  const items = [...(selectedSection.settings?.items || [])];
+                                  items[idx] = { ...(items[idx] || {}), role: e.target.value };
+                                  updateSection(selectedSection.id, { settings: { items } });
+                                }}
+                                placeholder="Role"
+                                className="px-2 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs"
+                              />
+                            </div>
+                            <textarea
+                              rows={2}
+                              value={it.quote || ""}
+                              onChange={(e) => {
+                                const items = [...(selectedSection.settings?.items || [])];
+                                items[idx] = { ...(items[idx] || {}), quote: e.target.value };
+                                updateSection(selectedSection.id, { settings: { items } });
+                              }}
+                              placeholder="Quote"
+                              className="mt-2 w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs"
+                            />
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => {
+                            const items = Array.isArray(selectedSection.settings?.items)
+                              ? [...selectedSection.settings.items]
+                              : [];
+                            items.push({
+                              id: createSectionId(),
+                              name: "Customer",
+                              role: "",
+                              quote: ""
+                            });
+                            updateSection(selectedSection.id, { settings: { items } });
+                          }}
+                          className="px-3 py-2 rounded-lg bg-gray-900 text-white hover:bg-black dark:bg-white dark:text-black dark:hover:bg-gray-100 text-xs font-semibold"
+                        >
+                          + Add testimonial
+                        </button>
                       </div>
                     </>
                   )}
