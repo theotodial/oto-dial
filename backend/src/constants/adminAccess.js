@@ -11,7 +11,10 @@ export const ADMIN_ACCESS_AREAS = [
   "support",
   "team",
   "blog",
-  "analytics"
+  "analytics",
+  "site_builder",
+  "site_seo",
+  "site_environment"
 ];
 
 export const ADMIN_ACCESS_LABELS = {
@@ -25,7 +28,10 @@ export const ADMIN_ACCESS_LABELS = {
   support: "Support",
   team: "Team",
   blog: "Blog",
-  analytics: "Analytics"
+  analytics: "Analytics",
+  site_builder: "Site Builder",
+  site_seo: "Site SEO",
+  site_environment: "Site Environment"
 };
 
 export const normalizeAdminRoles = (roles = []) => {
@@ -82,6 +88,9 @@ export const getRequiredAdminRolesForPath = (path = "") => {
   if (normalizedPath.startsWith("/api/admin/support")) return ["support"];
   if (normalizedPath.startsWith("/api/admin/team")) return ["team"];
   if (normalizedPath.startsWith("/api/admin/subscriptions")) return ["users"];
+  if (normalizedPath.startsWith("/api/admin/site/builder")) return ["site_builder"];
+  if (normalizedPath.startsWith("/api/admin/site/seo")) return ["site_seo"];
+  if (normalizedPath.startsWith("/api/admin/site/environment")) return ["site_environment"];
   if (normalizedPath.startsWith("/api/admin/stats")) return ["dashboard"];
   if (normalizedPath.startsWith("/api/admin/usage")) return ["dashboard"];
   if (normalizedPath.startsWith("/api/admin/plans")) return ["dashboard"];
