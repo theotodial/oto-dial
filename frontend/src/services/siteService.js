@@ -5,7 +5,15 @@ export async function fetchHomepageStructure() {
   if (res.error || res.data?.success === false) {
     throw new Error(res.error || res.data?.error || "Failed to load homepage");
   }
-  return res.data?.homepage || { sections: [], themeSettings: {}, headerConfig: {}, updatedAt: null };
+  return (
+    res.data?.homepage || {
+      published: false,
+      sections: [],
+      themeSettings: {},
+      headerConfig: {},
+      updatedAt: null
+    }
+  );
 }
 
 export async function fetchPublicSeoSettings() {

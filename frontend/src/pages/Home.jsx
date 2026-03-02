@@ -33,7 +33,7 @@ function Home() {
         ]);
         if (!isMountedRef.current) return;
         if (seo) applySeoSettingsToDocument(seo, { sections: homepage?.sections || [] });
-        if (Array.isArray(homepage?.sections) && homepage.sections.length > 0) {
+        if (homepage?.published === true && Array.isArray(homepage?.sections) && homepage.sections.length > 0) {
           setDynamic(homepage);
           setDynamicError('');
         } else if (!didFallback) {

@@ -37,19 +37,21 @@ function sendCachedJson(req, res, payload, { cacheSeconds = 60 } = {}) {
 router.get("/homepage", async (req, res) => {
   try {
     const builder = await SiteBuilder.findOne({ siteKey: SITE_KEY })
-      .select("sections themeSettings headerConfig updatedAt")
+      .select("published sections themeSettings headerConfig updatedAt")
       .lean();
 
     const payload = {
       success: true,
       homepage: builder
         ? {
+            published: builder.published === true,
             sections: Array.isArray(builder.sections) ? builder.sections : [],
             themeSettings: builder.themeSettings || {},
             headerConfig: builder.headerConfig || {},
             updatedAt: builder.updatedAt || null
           }
         : {
+            published: false,
             sections: [],
             themeSettings: {},
             headerConfig: {},

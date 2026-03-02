@@ -193,7 +193,14 @@ router.get("/builder", async (req, res) => {
     const builder = await SiteBuilder.findOne({ siteKey: SITE_KEY }).lean();
     return res.json({
       success: true,
-      builder: builder || { siteKey: SITE_KEY, sections: [], themeSettings: {}, headerConfig: {} }
+      builder:
+        builder || {
+          siteKey: SITE_KEY,
+          published: false,
+          sections: [],
+          themeSettings: {},
+          headerConfig: {}
+        }
     });
   } catch (err) {
     console.error("Admin site builder load error:", err);
@@ -208,6 +215,7 @@ router.put("/builder", async (req, res) => {
   try {
     const payload = req.body || {};
     const next = {
+      published: payload.published === true,
       sections: Array.isArray(payload.sections) ? payload.sections : [],
       themeSettings: payload.themeSettings && typeof payload.themeSettings === "object" ? payload.themeSettings : {},
       headerConfig: payload.headerConfig && typeof payload.headerConfig === "object" ? payload.headerConfig : {}
@@ -223,6 +231,33 @@ router.put("/builder", async (req, res) => {
   } catch (err) {
     console.error("Admin site builder save error:", err);
     return res.status(500).json({ success: false, error: "Failed to save site builder" });
+  }
+});
+
+/**
+ * POST /api/admin/site/builder/reset
+ * Restores original homepage behavior by unpublishing + clearing builder data.
+ */
+router.post("/builder/reset", async (req, res) => {
+  try {
+    const builder = await SiteBuilder.findOneAndUpdate(
+      { siteKey: SITE_KEY },
+      {
+        $set: {
+          siteKey: SITE_KEY,
+          published: false,
+          sections: [],
+          themeSettings: {},
+          headerConfig: {}
+        }
+      },
+      { upsert: true, new: true }
+    ).lean();
+
+    return res.json({ success: true, builder });
+  } catch (err) {
+    console.error("Admin site builder reset error:", err);
+    return res.status(500).json({ success: false, error: "Failed to reset site builder" });
   }
 });
 

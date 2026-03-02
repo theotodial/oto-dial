@@ -121,6 +121,7 @@ function normalizeBuilderDoc(input) {
   const doc = input && typeof input === "object" ? input : {};
   return {
     siteKey: doc.siteKey || "default",
+    published: doc.published === true,
     sections: Array.isArray(doc.sections)
       ? doc.sections.map((s) => ({ ...s, id: s?.id || createSectionId() }))
       : [],
@@ -148,7 +149,6 @@ function SiteBuilder() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [autosave, setAutosave] = useState(true);
   const [viewport, setViewport] = useState(DEFAULT_VIEWPORT);
   const [builderDoc, setBuilderDoc] = useState(null);
   const [selectedSectionId, setSelectedSectionId] = useState("");
@@ -158,8 +158,9 @@ function SiteBuilder() {
   const [richEdit, setRichEdit] = useState(null);
   const isMountedRef = useRef(true);
   const inlineDraftRef = useRef("");
-  const autosaveTimerRef = useRef(null);
   const lastSavedHashRef = useRef("");
+  const [history, setHistory] = useState({ past: [], future: [] });
+  const applyingHistoryRef = useRef(false);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -175,6 +176,7 @@ function SiteBuilder() {
         const normalized = normalizeBuilderDoc(res.data?.builder || null);
         setBuilderDoc(normalized);
         lastSavedHashRef.current = JSON.stringify({
+          published: normalized.published === true,
           sections: normalized.sections || [],
           themeSettings: normalized.themeSettings || {},
           headerConfig: normalized.headerConfig || {}
@@ -196,58 +198,22 @@ function SiteBuilder() {
   }, []);
 
   useEffect(() => {
-    if (!autosave) return;
     if (!builderDoc) return;
-    if (saving) return;
-
-    const hash = JSON.stringify({
-      sections: builderDoc.sections || [],
-      themeSettings: builderDoc.themeSettings || {},
-      headerConfig: builderDoc.headerConfig || {}
+    if (applyingHistoryRef.current) return;
+    // Push to undo stack on any local change (manual-save workflow).
+    setHistory((prev) => {
+      const snapshot = prev.past.length ? prev.past[prev.past.length - 1] : null;
+      const nextSnapshot = JSON.stringify({
+        published: builderDoc.published === true,
+        sections: builderDoc.sections || [],
+        themeSettings: builderDoc.themeSettings || {},
+        headerConfig: builderDoc.headerConfig || {}
+      });
+      if (snapshot === nextSnapshot) return prev;
+      const past = [...prev.past, nextSnapshot].slice(-50);
+      return { past, future: [] };
     });
-    if (hash === lastSavedHashRef.current) return;
-
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current);
-      autosaveTimerRef.current = null;
-    }
-
-    autosaveTimerRef.current = setTimeout(async () => {
-      if (!isMountedRef.current) return;
-      setSaving(true);
-      setError("");
-      try {
-        const res = await API.put("/api/admin/site/builder", builderDoc);
-        if (res.error || res.data?.success === false) {
-          throw new Error(res.error || res.data?.error || "Autosave failed");
-        }
-        if (!isMountedRef.current) return;
-        const normalized = normalizeBuilderDoc(res.data?.builder || builderDoc);
-        setBuilderDoc(normalized);
-        lastSavedHashRef.current = JSON.stringify({
-          sections: normalized.sections || [],
-          themeSettings: normalized.themeSettings || {},
-          headerConfig: normalized.headerConfig || {}
-        });
-        setNotice("Autosaved.");
-        setTimeout(() => {
-          if (isMountedRef.current) setNotice("");
-        }, 900);
-      } catch (err) {
-        if (!isMountedRef.current) return;
-        setError(err?.message || "Autosave failed");
-      } finally {
-        if (isMountedRef.current) setSaving(false);
-      }
-    }, 800);
-
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-      }
-    };
-  }, [autosave, builderDoc, saving]);
+  }, [builderDoc]);
 
   const previewWidthClass = useMemo(() => {
     if (viewport === "mobile") return "w-[375px]";
@@ -270,6 +236,7 @@ function SiteBuilder() {
       const normalized = normalizeBuilderDoc(res.data?.builder || builderDoc);
       setBuilderDoc(normalized);
       lastSavedHashRef.current = JSON.stringify({
+        published: normalized.published === true,
         sections: normalized.sections || [],
         themeSettings: normalized.themeSettings || {},
         headerConfig: normalized.headerConfig || {}
@@ -283,6 +250,75 @@ function SiteBuilder() {
     } finally {
       if (isMountedRef.current) setSaving(false);
     }
+  };
+
+  const handleRestoreOriginal = async () => {
+    const confirmed = window.confirm(
+      "Restore the original homepage? This will UNPUBLISH and clear the Site Builder content."
+    );
+    if (!confirmed) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const res = await API.post("/api/admin/site/builder/reset", {});
+      if (res.error || res.data?.success === false) {
+        throw new Error(res.error || res.data?.error || "Failed to restore original homepage");
+      }
+      const normalized = normalizeBuilderDoc(res.data?.builder || null);
+      setBuilderDoc(normalized);
+      setSelectedSectionId(normalized.sections?.[0]?.id || "");
+      setHistory({ past: [], future: [] });
+      setNotice("Restored original homepage (builder unpublished).");
+      setTimeout(() => {
+        if (isMountedRef.current) setNotice("");
+      }, 1400);
+    } catch (err) {
+      setError(err?.message || "Failed to restore original homepage");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const canUndo = history.past.length > 1; // current state included
+  const canRedo = history.future.length > 0;
+
+  const applySnapshot = (json) => {
+    try {
+      const parsed = JSON.parse(json);
+      applyingHistoryRef.current = true;
+      setBuilderDoc((prev) => ({
+        ...normalizeBuilderDoc(prev),
+        published: parsed.published === true,
+        sections: parsed.sections || [],
+        themeSettings: parsed.themeSettings || {},
+        headerConfig: parsed.headerConfig || {}
+      }));
+    } finally {
+      setTimeout(() => {
+        applyingHistoryRef.current = false;
+      }, 0);
+    }
+  };
+
+  const handleUndo = () => {
+    setHistory((prev) => {
+      if (prev.past.length <= 1) return prev;
+      const past = [...prev.past];
+      const current = past.pop();
+      const previous = past[past.length - 1];
+      applySnapshot(previous);
+      return { past, future: [current, ...prev.future] };
+    });
+  };
+
+  const handleRedo = () => {
+    setHistory((prev) => {
+      if (prev.future.length === 0) return prev;
+      const [next, ...rest] = prev.future;
+      applySnapshot(next);
+      return { past: [...prev.past, next].slice(-50), future: rest };
+    });
   };
 
   const createStarterHomepage = () => {
@@ -629,16 +665,23 @@ function SiteBuilder() {
 
           <div className="flex flex-wrap items-center gap-3">
             <div className="text-xs text-gray-500 dark:text-gray-400">
-              {notice ? notice : autosave ? "Autosave on" : "Autosave off"}
+              {notice ? notice : builderDoc?.published ? "Published" : "Not published (safe)"}
             </div>
-            <label className="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-              <input
-                type="checkbox"
-                checked={autosave}
-                onChange={(e) => setAutosave(e.target.checked)}
-              />
-              Autosave
-            </label>
+
+            <button
+              onClick={handleUndo}
+              disabled={!canUndo}
+              className="px-3 py-2 rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 text-sm font-semibold"
+            >
+              Undo
+            </button>
+            <button
+              onClick={handleRedo}
+              disabled={!canRedo}
+              className="px-3 py-2 rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 text-sm font-semibold"
+            >
+              Redo
+            </button>
 
             <div className="inline-flex rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
               {[
@@ -661,12 +704,42 @@ function SiteBuilder() {
             </div>
 
             <button
+              onClick={() =>
+                setBuilderDoc((prev) => ({ ...normalizeBuilderDoc(prev), published: false }))
+              }
+              disabled={!builderDoc?.published}
+              className="px-3 py-2 rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 text-sm font-semibold"
+              title="Stops the builder from affecting the live homepage"
+            >
+              Unpublish
+            </button>
+            <button
+              onClick={() =>
+                setBuilderDoc((prev) => ({ ...normalizeBuilderDoc(prev), published: true }))
+              }
+              disabled={builderDoc?.published || (builderDoc?.sections || []).length === 0}
+              className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 text-sm font-semibold"
+              title="Publish makes the builder take over the live homepage"
+            >
+              Publish
+            </button>
+
+            <button
               onClick={handleSave}
-              disabled={saving || autosave}
+              disabled={saving}
               className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 text-sm font-semibold"
-              title={autosave ? "Disable autosave to use manual Save" : "Save changes"}
+              title="Save changes to database (does not publish unless you click Publish)"
             >
               {saving ? "Saving..." : "Save"}
+            </button>
+
+            <button
+              onClick={handleRestoreOriginal}
+              disabled={saving}
+              className="px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800 disabled:opacity-50 text-sm font-semibold"
+              title="Unpublish + clear builder content"
+            >
+              Restore original
             </button>
           </div>
         </div>
