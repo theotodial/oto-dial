@@ -56,6 +56,31 @@ function buildFaqSchemaFromSections(sections = []) {
   };
 }
 
+function buildReviewSchemaFromSections({ sections = [], organizationName = "" } = {}) {
+  const testimonialSection = (Array.isArray(sections) ? sections : []).find(
+    (s) => String(s?.type || "").toLowerCase() === "testimonials" && !s?.hidden
+  );
+  const items = Array.isArray(testimonialSection?.settings?.items)
+    ? testimonialSection.settings.items
+    : [];
+  const reviews = items
+    .map((it) => ({
+      "@type": "Review",
+      reviewBody: String(it?.quote || "").trim(),
+      author: { "@type": "Person", name: String(it?.name || "Customer").trim() }
+    }))
+    .filter((r) => r.reviewBody)
+    .slice(0, 12);
+
+  if (!reviews.length) return null;
+  return {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: organizationName || undefined,
+    review: reviews
+  };
+}
+
 export function applySeoSettingsToDocument(seo = {}, context = {}) {
   if (typeof document === "undefined") return;
   const meta = seo?.meta || {};
@@ -85,6 +110,13 @@ export function applySeoSettingsToDocument(seo = {}, context = {}) {
   if (schema?.enableFaqSchema) {
     const faqJson = buildFaqSchemaFromSections(context?.sections || []);
     if (faqJson) upsertJsonLd("faq", faqJson);
+  }
+  if (schema?.enableReviewSchema) {
+    const reviewJson = buildReviewSchemaFromSections({
+      sections: context?.sections || [],
+      organizationName: meta?.title || ""
+    });
+    if (reviewJson) upsertJsonLd("reviews", reviewJson);
   }
   if (schema?.customJsonLd) {
     try {
