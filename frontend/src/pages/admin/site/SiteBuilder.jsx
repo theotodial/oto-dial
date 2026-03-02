@@ -154,7 +154,10 @@ function SiteBuilder() {
   const [selectedSectionId, setSelectedSectionId] = useState("");
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
   const [mediaPickerTarget, setMediaPickerTarget] = useState(null);
+  const [inlineEdit, setInlineEdit] = useState(null);
+  const [richEdit, setRichEdit] = useState(null);
   const isMountedRef = useRef(true);
+  const inlineDraftRef = useRef("");
   const autosaveTimerRef = useRef(null);
   const lastSavedHashRef = useRef("");
 
@@ -459,6 +462,39 @@ function SiteBuilder() {
           ...(patch || {}),
           settings: { ...(s.settings || {}), ...((patch || {}).settings || {}) }
         };
+      });
+      return { ...normalized, sections: nextSections };
+    });
+  };
+
+  const setSectionValueByPath = (sectionId, path, value) => {
+    const tokens = String(path || "")
+      .split(".")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (tokens.length === 0) return;
+
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const nextSections = (normalized.sections || []).map((s) => {
+        if (s.id !== sectionId) return s;
+        const next = JSON.parse(JSON.stringify(s || {}));
+        let cursor = next;
+        for (let i = 0; i < tokens.length; i += 1) {
+          const token = tokens[i];
+          const isLast = i === tokens.length - 1;
+          const key = /^[0-9]+$/.test(token) ? Number(token) : token;
+          if (isLast) {
+            cursor[key] = value;
+          } else {
+            if (cursor[key] === undefined || cursor[key] === null) {
+              const nextToken = tokens[i + 1];
+              cursor[key] = /^[0-9]+$/.test(nextToken) ? [] : {};
+            }
+            cursor = cursor[key];
+          }
+        }
+        return next;
       });
       return { ...normalized, sections: nextSections };
     });
@@ -1286,6 +1322,16 @@ function SiteBuilder() {
                       isBuilderPreview
                       selectedSectionId={selectedSectionId}
                       onSelectSection={(id) => setSelectedSectionId(id)}
+                      onRequestEdit={(req) => {
+                        if (!req?.sectionId || !req?.path) return;
+                        setSelectedSectionId(req.sectionId);
+                        if (req.kind === "richtext") {
+                          setRichEdit(req);
+                          return;
+                        }
+                        inlineDraftRef.current = String(req.value ?? "");
+                        setInlineEdit(req);
+                      }}
                     />
                   </>
                 )}
@@ -1294,6 +1340,111 @@ function SiteBuilder() {
           </div>
         </div>
       </div>
+
+      {/* Inline editor popover */}
+      {inlineEdit && (
+        <div
+          className="fixed z-[60] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl p-3 w-[320px]"
+          style={{
+            top: Math.min((inlineEdit.rect?.bottom || 120) + 10, window.innerHeight - 160),
+            left: Math.min((inlineEdit.rect?.left || 24), window.innerWidth - 340)
+          }}
+        >
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+              {inlineEdit.label || "Edit"}
+            </div>
+            <button
+              onClick={() => setInlineEdit(null)}
+              className="text-xs text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+            >
+              Close
+            </button>
+          </div>
+          {inlineEdit.kind === "textarea" ? (
+            <textarea
+              autoFocus
+              defaultValue={inlineDraftRef.current}
+              rows={4}
+              onChange={(e) => {
+                inlineDraftRef.current = e.target.value;
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-white text-sm"
+            />
+          ) : (
+            <input
+              autoFocus
+              defaultValue={inlineDraftRef.current}
+              onChange={(e) => {
+                inlineDraftRef.current = e.target.value;
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-white text-sm"
+            />
+          )}
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              onClick={() => setInlineEdit(null)}
+              className="px-3 py-2 rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-slate-700 dark:text-gray-100 dark:hover:bg-slate-600 text-sm font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                setSectionValueByPath(inlineEdit.sectionId, inlineEdit.path, inlineDraftRef.current);
+                setInlineEdit(null);
+              }}
+              className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-sm font-semibold"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Rich text modal */}
+      {richEdit && (
+        <div className="fixed inset-0 z-[70] bg-black/50 p-4 overflow-y-auto">
+          <div className="max-w-4xl mx-auto bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xl p-5 my-10">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                {richEdit.label || "Edit content"}
+              </div>
+              <button
+                onClick={() => setRichEdit(null)}
+                className="px-3 py-2 rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-slate-700 dark:text-gray-100 dark:hover:bg-slate-600 text-sm font-semibold"
+              >
+                Close
+              </button>
+            </div>
+            <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              <RichTextEditor
+                value={String(richEdit.value ?? "")}
+                onChange={(val) => {
+                  setRichEdit((prev) => (prev ? { ...prev, value: val } : prev));
+                }}
+                placeholder="Write content..."
+              />
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setRichEdit(null)}
+                className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-slate-700 dark:text-gray-100 dark:hover:bg-slate-600 text-sm font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setSectionValueByPath(richEdit.sectionId, richEdit.path, richEdit.value ?? "");
+                  setRichEdit(null);
+                }}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-sm font-semibold"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <MediaLibrary
         isOpen={mediaPickerOpen}

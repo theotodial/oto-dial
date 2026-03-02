@@ -1,6 +1,44 @@
 import { memo, Suspense, useCallback, useMemo } from "react";
 
-const HeroBannerSection = memo(function HeroBannerSection({ section }) {
+function EditableText({
+  as: Tag = "span",
+  isBuilderPreview,
+  onRequestEdit,
+  request,
+  className = "",
+  children
+}) {
+  if (!isBuilderPreview) {
+    return <Tag className={className}>{children}</Tag>;
+  }
+
+  return (
+    <Tag
+      className={`${className} cursor-text`}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof onRequestEdit !== "function") return;
+        const rect = e.currentTarget?.getBoundingClientRect?.() || null;
+        onRequestEdit({ ...request, rect });
+      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          const rect = e.currentTarget?.getBoundingClientRect?.() || null;
+          if (typeof onRequestEdit === "function") onRequestEdit({ ...request, rect });
+        }
+      }}
+    >
+      {children}
+    </Tag>
+  );
+}
+
+const HeroBannerSection = memo(function HeroBannerSection({ section, isBuilderPreview, onRequestEdit }) {
   const s = section?.settings || {};
   const heading = s.heading || "Your headline";
   const subheading = s.subheading || "";
@@ -13,13 +51,25 @@ const HeroBannerSection = memo(function HeroBannerSection({ section }) {
     <section className="w-full" style={backgroundImage ? { backgroundImage: `url(${backgroundImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
         <div className={`max-w-2xl ${align === "center" ? "mx-auto text-center" : ""} ${align === "right" ? "ml-auto text-right" : ""}`}>
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-gray-900 dark:text-white">
+          <EditableText
+            as="h1"
+            isBuilderPreview={isBuilderPreview}
+            onRequestEdit={onRequestEdit}
+            request={{ sectionId: section?.id, kind: "text", path: "settings.heading", label: "Hero heading", value: heading }}
+            className="text-4xl md:text-5xl font-bold tracking-tight text-gray-900 dark:text-white"
+          >
             {heading}
-          </h1>
+          </EditableText>
           {subheading && (
-            <p className="mt-4 text-lg text-gray-700 dark:text-gray-300">
+            <EditableText
+              as="p"
+              isBuilderPreview={isBuilderPreview}
+              onRequestEdit={onRequestEdit}
+              request={{ sectionId: section?.id, kind: "textarea", path: "settings.subheading", label: "Hero subheading", value: subheading }}
+              className="mt-4 text-lg text-gray-700 dark:text-gray-300"
+            >
               {subheading}
-            </p>
+            </EditableText>
           )}
           {buttonText && (
             <div className={`mt-8 ${align === "center" ? "flex justify-center" : ""} ${align === "right" ? "flex justify-end" : ""}`}>
@@ -28,7 +78,13 @@ const HeroBannerSection = memo(function HeroBannerSection({ section }) {
                 className="inline-flex items-center justify-center px-6 py-3 rounded-xl text-white font-semibold transition-colors"
                 style={{ backgroundColor: "var(--site-primary)", borderRadius: "var(--site-radius)" }}
               >
-                {buttonText}
+                <EditableText
+                  isBuilderPreview={isBuilderPreview}
+                  onRequestEdit={onRequestEdit}
+                  request={{ sectionId: section?.id, kind: "text", path: "settings.buttonText", label: "Hero button text", value: buttonText }}
+                >
+                  {buttonText}
+                </EditableText>
               </a>
             </div>
           )}
@@ -38,7 +94,7 @@ const HeroBannerSection = memo(function HeroBannerSection({ section }) {
   );
 });
 
-const TextBlockSection = memo(function TextBlockSection({ section }) {
+const TextBlockSection = memo(function TextBlockSection({ section, isBuilderPreview, onRequestEdit }) {
   const s = section?.settings || {};
   const html = s.html || "";
   const align = s.align || "left";
@@ -50,13 +106,31 @@ const TextBlockSection = memo(function TextBlockSection({ section }) {
             align === "center" ? "text-center" : align === "right" ? "text-right" : ""
           }`}
           dangerouslySetInnerHTML={{ __html: html }}
+          onClick={(e) => {
+            if (!isBuilderPreview) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const rect = e.currentTarget?.getBoundingClientRect?.() || null;
+            if (typeof onRequestEdit === "function") {
+              onRequestEdit({
+                sectionId: section?.id,
+                kind: "richtext",
+                path: "settings.html",
+                label: "Text block",
+                value: html,
+                rect
+              });
+            }
+          }}
+          role={isBuilderPreview ? "button" : undefined}
+          tabIndex={isBuilderPreview ? 0 : undefined}
         />
       </div>
     </section>
   );
 });
 
-const FeaturesGridSection = memo(function FeaturesGridSection({ section }) {
+const FeaturesGridSection = memo(function FeaturesGridSection({ section, isBuilderPreview, onRequestEdit }) {
   const s = section?.settings || {};
   const title = s.title || "";
   const items = Array.isArray(s.items) ? s.items : [];
@@ -64,9 +138,15 @@ const FeaturesGridSection = memo(function FeaturesGridSection({ section }) {
     <section className="w-full bg-gray-50 dark:bg-slate-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         {title && (
-          <h2 className="text-3xl font-bold text-gray-900 dark:text-white text-center mb-10">
+          <EditableText
+            as="h2"
+            isBuilderPreview={isBuilderPreview}
+            onRequestEdit={onRequestEdit}
+            request={{ sectionId: section?.id, kind: "text", path: "settings.title", label: "Section title", value: title }}
+            className="text-3xl font-bold text-gray-900 dark:text-white text-center mb-10"
+          >
             {title}
-          </h2>
+          </EditableText>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {items.slice(0, 24).map((it, idx) => (
@@ -75,12 +155,36 @@ const FeaturesGridSection = memo(function FeaturesGridSection({ section }) {
               className="border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6"
               style={{ borderRadius: "var(--site-radius)" }}
             >
-              <div className="text-lg font-semibold text-gray-900 dark:text-white">
+              <EditableText
+                as="div"
+                isBuilderPreview={isBuilderPreview}
+                onRequestEdit={onRequestEdit}
+                request={{
+                  sectionId: section?.id,
+                  kind: "text",
+                  path: `settings.items.${idx}.title`,
+                  label: "Feature title",
+                  value: it.title || ""
+                }}
+                className="text-lg font-semibold text-gray-900 dark:text-white"
+              >
                 {it.title || "Feature"}
-              </div>
-              <div className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+              </EditableText>
+              <EditableText
+                as="div"
+                isBuilderPreview={isBuilderPreview}
+                onRequestEdit={onRequestEdit}
+                request={{
+                  sectionId: section?.id,
+                  kind: "textarea",
+                  path: `settings.items.${idx}.description`,
+                  label: "Feature description",
+                  value: it.description || ""
+                }}
+                className="mt-2 text-sm text-gray-600 dark:text-gray-300"
+              >
                 {it.description || ""}
-              </div>
+              </EditableText>
             </div>
           ))}
         </div>
@@ -89,16 +193,22 @@ const FeaturesGridSection = memo(function FeaturesGridSection({ section }) {
   );
 });
 
-const FaqSection = memo(function FaqSection({ section }) {
+const FaqSection = memo(function FaqSection({ section, isBuilderPreview, onRequestEdit }) {
   const s = section?.settings || {};
   const title = s.title || "FAQ";
   const items = Array.isArray(s.items) ? s.items : [];
   return (
     <section className="w-full">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-8 text-center">
+        <EditableText
+          as="h2"
+          isBuilderPreview={isBuilderPreview}
+          onRequestEdit={onRequestEdit}
+          request={{ sectionId: section?.id, kind: "text", path: "settings.title", label: "FAQ title", value: title }}
+          className="text-3xl font-bold text-gray-900 dark:text-white mb-8 text-center"
+        >
           {title}
-        </h2>
+        </EditableText>
         <div className="space-y-3">
           {items.slice(0, 30).map((it, idx) => (
             <details
@@ -106,11 +216,36 @@ const FaqSection = memo(function FaqSection({ section }) {
               className="group rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
             >
               <summary className="cursor-pointer list-none font-semibold text-gray-900 dark:text-white">
-                {it.q || "Question"}
+                <EditableText
+                  as="span"
+                  isBuilderPreview={isBuilderPreview}
+                  onRequestEdit={onRequestEdit}
+                  request={{
+                    sectionId: section?.id,
+                    kind: "text",
+                    path: `settings.items.${idx}.q`,
+                    label: "Question",
+                    value: it.q || ""
+                  }}
+                >
+                  {it.q || "Question"}
+                </EditableText>
               </summary>
-              <div className="mt-2 text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap">
+              <EditableText
+                as="div"
+                isBuilderPreview={isBuilderPreview}
+                onRequestEdit={onRequestEdit}
+                request={{
+                  sectionId: section?.id,
+                  kind: "textarea",
+                  path: `settings.items.${idx}.a`,
+                  label: "Answer",
+                  value: it.a || ""
+                }}
+                className="mt-2 text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap"
+              >
                 {it.a || ""}
-              </div>
+              </EditableText>
             </details>
           ))}
         </div>
@@ -119,7 +254,7 @@ const FaqSection = memo(function FaqSection({ section }) {
   );
 });
 
-const CtaSection = memo(function CtaSection({ section }) {
+const CtaSection = memo(function CtaSection({ section, isBuilderPreview, onRequestEdit }) {
   const s = section?.settings || {};
   return (
     <section
@@ -129,13 +264,37 @@ const CtaSection = memo(function CtaSection({ section }) {
       }}
     >
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
-        <h2 className="text-3xl md:text-4xl font-bold text-white">
+        <EditableText
+          as="h2"
+          isBuilderPreview={isBuilderPreview}
+          onRequestEdit={onRequestEdit}
+          request={{
+            sectionId: section?.id,
+            kind: "text",
+            path: "settings.heading",
+            label: "CTA heading",
+            value: s.heading || ""
+          }}
+          className="text-3xl md:text-4xl font-bold text-white"
+        >
           {s.heading || "Call to action"}
-        </h2>
+        </EditableText>
         {s.subheading && (
-          <p className="mt-4 text-lg text-indigo-100">
+          <EditableText
+            as="p"
+            isBuilderPreview={isBuilderPreview}
+            onRequestEdit={onRequestEdit}
+            request={{
+              sectionId: section?.id,
+              kind: "textarea",
+              path: "settings.subheading",
+              label: "CTA subheading",
+              value: s.subheading || ""
+            }}
+            className="mt-4 text-lg text-indigo-100"
+          >
             {s.subheading}
-          </p>
+          </EditableText>
         )}
         <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
           {s.primaryButtonText && (
@@ -144,7 +303,19 @@ const CtaSection = memo(function CtaSection({ section }) {
               className="inline-flex items-center justify-center px-6 py-3 bg-white text-indigo-700 font-semibold hover:bg-gray-50 transition-colors"
               style={{ borderRadius: "var(--site-radius)" }}
             >
-              {s.primaryButtonText}
+              <EditableText
+                isBuilderPreview={isBuilderPreview}
+                onRequestEdit={onRequestEdit}
+                request={{
+                  sectionId: section?.id,
+                  kind: "text",
+                  path: "settings.primaryButtonText",
+                  label: "Primary button text",
+                  value: s.primaryButtonText || ""
+                }}
+              >
+                {s.primaryButtonText}
+              </EditableText>
             </a>
           )}
           {s.secondaryButtonText && (
@@ -153,7 +324,19 @@ const CtaSection = memo(function CtaSection({ section }) {
               className="inline-flex items-center justify-center px-6 py-3 border border-white text-white font-semibold hover:bg-white/10 transition-colors"
               style={{ borderRadius: "var(--site-radius)" }}
             >
-              {s.secondaryButtonText}
+              <EditableText
+                isBuilderPreview={isBuilderPreview}
+                onRequestEdit={onRequestEdit}
+                request={{
+                  sectionId: section?.id,
+                  kind: "text",
+                  path: "settings.secondaryButtonText",
+                  label: "Secondary button text",
+                  value: s.secondaryButtonText || ""
+                }}
+              >
+                {s.secondaryButtonText}
+              </EditableText>
             </a>
           )}
         </div>
@@ -179,7 +362,7 @@ const CustomHtmlSection = memo(function CustomHtmlSection({ section }) {
   );
 });
 
-const ImageTextSection = memo(function ImageTextSection({ section }) {
+const ImageTextSection = memo(function ImageTextSection({ section, isBuilderPreview, onRequestEdit }) {
   const s = section?.settings || {};
   const side = s.imageSide === "right" ? "right" : "left";
   const imageUrl = s.imageUrl || "";
@@ -200,14 +383,44 @@ const ImageTextSection = memo(function ImageTextSection({ section }) {
           )}
           <div>
             {s.heading && (
-              <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
+              <EditableText
+                as="h2"
+                isBuilderPreview={isBuilderPreview}
+                onRequestEdit={onRequestEdit}
+                request={{
+                  sectionId: section?.id,
+                  kind: "text",
+                  path: "settings.heading",
+                  label: "Heading",
+                  value: s.heading || ""
+                }}
+                className="text-3xl font-bold text-gray-900 dark:text-white"
+              >
                 {s.heading}
-              </h2>
+              </EditableText>
             )}
             {s.html && (
               <div
                 className="mt-4 prose dark:prose-invert max-w-none"
                 dangerouslySetInnerHTML={{ __html: s.html }}
+                onClick={(e) => {
+                  if (!isBuilderPreview) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const rect = e.currentTarget?.getBoundingClientRect?.() || null;
+                  if (typeof onRequestEdit === "function") {
+                    onRequestEdit({
+                      sectionId: section?.id,
+                      kind: "richtext",
+                      path: "settings.html",
+                      label: "Body",
+                      value: s.html || "",
+                      rect
+                    });
+                  }
+                }}
+                role={isBuilderPreview ? "button" : undefined}
+                tabIndex={isBuilderPreview ? 0 : undefined}
               />
             )}
           </div>
@@ -228,16 +441,28 @@ const ImageTextSection = memo(function ImageTextSection({ section }) {
   );
 });
 
-const TestimonialsSection = memo(function TestimonialsSection({ section }) {
+const TestimonialsSection = memo(function TestimonialsSection({ section, isBuilderPreview, onRequestEdit }) {
   const s = section?.settings || {};
   const title = s.title || "Testimonials";
   const items = Array.isArray(s.items) ? s.items : [];
   return (
     <section className="w-full bg-gray-50 dark:bg-slate-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        <h2 className="text-3xl font-bold text-gray-900 dark:text-white text-center mb-10">
+        <EditableText
+          as="h2"
+          isBuilderPreview={isBuilderPreview}
+          onRequestEdit={onRequestEdit}
+          request={{
+            sectionId: section?.id,
+            kind: "text",
+            path: "settings.title",
+            label: "Testimonials title",
+            value: title
+          }}
+          className="text-3xl font-bold text-gray-900 dark:text-white text-center mb-10"
+        >
           {title}
-        </h2>
+        </EditableText>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {items.slice(0, 12).map((it, idx) => (
             <div
@@ -245,14 +470,52 @@ const TestimonialsSection = memo(function TestimonialsSection({ section }) {
               className="border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6"
               style={{ borderRadius: "var(--site-radius)" }}
             >
-              <div className="text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap">
+              <EditableText
+                as="div"
+                isBuilderPreview={isBuilderPreview}
+                onRequestEdit={onRequestEdit}
+                request={{
+                  sectionId: section?.id,
+                  kind: "textarea",
+                  path: `settings.items.${idx}.quote`,
+                  label: "Quote",
+                  value: it.quote || ""
+                }}
+                className="text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap"
+              >
                 “{it.quote || ""}”
-              </div>
-              <div className="mt-4 text-sm font-semibold text-gray-900 dark:text-white">
+              </EditableText>
+              <EditableText
+                as="div"
+                isBuilderPreview={isBuilderPreview}
+                onRequestEdit={onRequestEdit}
+                request={{
+                  sectionId: section?.id,
+                  kind: "text",
+                  path: `settings.items.${idx}.name`,
+                  label: "Name",
+                  value: it.name || ""
+                }}
+                className="mt-4 text-sm font-semibold text-gray-900 dark:text-white"
+              >
                 {it.name || "Customer"}
-              </div>
+              </EditableText>
               {it.role && (
-                <div className="text-xs text-gray-500 dark:text-gray-400">{it.role}</div>
+                <EditableText
+                  as="div"
+                  isBuilderPreview={isBuilderPreview}
+                  onRequestEdit={onRequestEdit}
+                  request={{
+                    sectionId: section?.id,
+                    kind: "text",
+                    path: `settings.items.${idx}.role`,
+                    label: "Role",
+                    value: it.role || ""
+                  }}
+                  className="text-xs text-gray-500 dark:text-gray-400"
+                >
+                  {it.role}
+                </EditableText>
               )}
             </div>
           ))}
@@ -294,7 +557,8 @@ function HomepageRendererInner({
   renderHidden = false,
   isBuilderPreview = false,
   selectedSectionId = "",
-  onSelectSection = null
+  onSelectSection = null,
+  onRequestEdit = null
 }) {
   const styleVars = useMemo(() => applyThemeVars(themeSettings), [themeSettings]);
   const visible = useMemo(() => {
@@ -347,7 +611,11 @@ function HomepageRendererInner({
             }
           >
             <Suspense fallback={<div className="py-10" />}>
-              <Comp section={section} />
+              <Comp
+                section={section}
+                isBuilderPreview={isBuilderPreview}
+                onRequestEdit={onRequestEdit}
+              />
             </Suspense>
           </div>
         );
