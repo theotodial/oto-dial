@@ -615,18 +615,22 @@ function SiteBuilder() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-900">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
+      {/* Professional top bar */}
+      <div className="sticky top-0 z-50 bg-white/90 dark:bg-slate-900/80 backdrop-blur border-b border-gray-200 dark:border-slate-700">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
-              Site Builder
+            <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+              Site / Homepage
+            </div>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
+              Visual Builder
             </h1>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-              Build and publish your homepage with live preview.
-            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              {notice ? notice : autosave ? "Autosave on" : "Autosave off"}
+            </div>
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
               <input
                 type="checkbox"
@@ -666,17 +670,16 @@ function SiteBuilder() {
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
 
         {error && (
           <div className="mb-5 p-4 rounded-lg border border-red-300 bg-red-50 dark:bg-red-900/20 dark:border-red-800 text-red-700 dark:text-red-300 text-sm">
             {error}
           </div>
         )}
-        {notice && (
-          <div className="mb-5 p-4 rounded-lg border border-green-300 bg-green-50 dark:bg-green-900/20 dark:border-green-800 text-green-700 dark:text-green-300 text-sm">
-            {notice}
-          </div>
-        )}
+        {/* Notice moved to top bar; keep error here */}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           {/* Left: controls */}
