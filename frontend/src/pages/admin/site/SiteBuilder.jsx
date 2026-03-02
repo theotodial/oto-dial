@@ -3,6 +3,7 @@ import { Reorder } from "framer-motion";
 import API from "../../../api";
 import HomepageRenderer from "../../../components/site/HomepageRenderer";
 import RichTextEditor from "../../../components/admin/RichTextEditor";
+import MediaLibrary from "../../../components/admin/MediaLibrary";
 
 const DEFAULT_VIEWPORT = "desktop";
 
@@ -116,6 +117,8 @@ function SiteBuilder() {
   const [viewport, setViewport] = useState(DEFAULT_VIEWPORT);
   const [builderDoc, setBuilderDoc] = useState(null);
   const [selectedSectionId, setSelectedSectionId] = useState("");
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  const [mediaPickerTarget, setMediaPickerTarget] = useState(null);
   const isMountedRef = useRef(true);
   const autosaveTimerRef = useRef(null);
   const lastSavedHashRef = useRef("");
@@ -300,6 +303,69 @@ function SiteBuilder() {
     const sections = builderDoc?.sections || [];
     return sections.find((s) => s.id === selectedSectionId) || null;
   }, [builderDoc?.sections, selectedSectionId]);
+
+  const updateHeader = (patch) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      return {
+        ...normalized,
+        headerConfig: {
+          ...(normalized.headerConfig || {}),
+          ...(patch || {})
+        }
+      };
+    });
+  };
+
+  const updateHeaderItem = (id, patch) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const items = Array.isArray(normalized.headerConfig?.items) ? normalized.headerConfig.items : [];
+      const nextItems = items.map((it) => (it?.id === id ? { ...it, ...(patch || {}) } : it));
+      return { ...normalized, headerConfig: { ...(normalized.headerConfig || {}), items: nextItems } };
+    });
+  };
+
+  const deleteHeaderItem = (id) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const items = Array.isArray(normalized.headerConfig?.items) ? normalized.headerConfig.items : [];
+      const nextItems = items.filter((it) => it?.id !== id);
+      return { ...normalized, headerConfig: { ...(normalized.headerConfig || {}), items: nextItems } };
+    });
+  };
+
+  const addHeaderItem = () => {
+    const id = createSectionId();
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const items = Array.isArray(normalized.headerConfig?.items) ? normalized.headerConfig.items : [];
+      return {
+        ...normalized,
+        headerConfig: {
+          ...(normalized.headerConfig || {}),
+          items: [...items, { id, label: "Menu", href: "/" }]
+        }
+      };
+    });
+  };
+
+  const openMediaPicker = (target) => {
+    setMediaPickerTarget(target);
+    setMediaPickerOpen(true);
+  };
+
+  const handleMediaSelect = (url) => {
+    if (!url) return;
+    if (mediaPickerTarget === "header.logo") {
+      updateHeader({ logoUrl: url });
+    }
+    if (mediaPickerTarget === "section.hero.bg" && selectedSection?.type === "hero") {
+      updateSection(selectedSection.id, { settings: { backgroundImage: url } });
+    }
+    setMediaPickerOpen(false);
+    setMediaPickerTarget(null);
+  };
 
   if (loading) {
     return (
@@ -542,6 +608,27 @@ function SiteBuilder() {
                           />
                         </div>
                       </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Background image
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={selectedSection.settings?.backgroundImage || ""}
+                            onChange={(e) =>
+                              updateSection(selectedSection.id, { settings: { backgroundImage: e.target.value } })
+                            }
+                            placeholder="https://..."
+                            className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs font-mono"
+                          />
+                          <button
+                            onClick={() => openMediaPicker("section.hero.bg")}
+                            className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold"
+                          >
+                            Upload
+                          </button>
+                        </div>
+                      </div>
                     </>
                   )}
 
@@ -671,6 +758,125 @@ function SiteBuilder() {
                 />
               </div>
             </div>
+
+            {/* Header */}
+            <div className="mt-5 pt-5 border-t border-gray-200 dark:border-slate-700">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                  Header
+                </h3>
+                <button
+                  onClick={addHeaderItem}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-gray-900 text-white hover:bg-black dark:bg-white dark:text-black dark:hover:bg-gray-100"
+                >
+                  + Menu item
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={builderDoc?.headerConfig?.sticky !== false}
+                    onChange={(e) => updateHeader({ sticky: e.target.checked })}
+                  />
+                  Sticky header
+                </label>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                      Background
+                    </label>
+                    <input
+                      type="text"
+                      value={builderDoc?.headerConfig?.background || ""}
+                      onChange={(e) => updateHeader({ background: e.target.value })}
+                      placeholder="rgba(255,255,255,0.9)"
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                      Brand text
+                    </label>
+                    <input
+                      type="text"
+                      value={builderDoc?.headerConfig?.brandText || "OTO DIAL"}
+                      onChange={(e) => updateHeader({ brandText: e.target.value })}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                    Logo
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="url"
+                      value={builderDoc?.headerConfig?.logoUrl || ""}
+                      onChange={(e) => updateHeader({ logoUrl: e.target.value })}
+                      placeholder="https://..."
+                      className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs font-mono"
+                    />
+                    <button
+                      onClick={() => openMediaPicker("header.logo")}
+                      className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold"
+                    >
+                      Upload
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/40 p-3">
+                  {(builderDoc?.headerConfig?.items || []).length === 0 ? (
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      No menu items yet.
+                    </div>
+                  ) : (
+                    <Reorder.Group
+                      axis="y"
+                      values={builderDoc?.headerConfig?.items || []}
+                      onReorder={(nextOrder) => updateHeader({ items: nextOrder })}
+                      className="space-y-2"
+                    >
+                      {(builderDoc?.headerConfig?.items || []).map((it) => (
+                        <Reorder.Item
+                          key={it.id}
+                          value={it}
+                          className="rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2 cursor-grab active:cursor-grabbing"
+                        >
+                          <div className="grid grid-cols-1 gap-2">
+                            <input
+                              value={it.label || ""}
+                              onChange={(e) => updateHeaderItem(it.id, { label: e.target.value })}
+                              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs"
+                              placeholder="Label"
+                            />
+                            <div className="flex items-center gap-2">
+                              <input
+                                value={it.href || ""}
+                                onChange={(e) => updateHeaderItem(it.id, { href: e.target.value })}
+                                className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs font-mono"
+                                placeholder="/path"
+                              />
+                              <button
+                                onClick={() => deleteHeaderItem(it.id)}
+                                className="px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800 text-xs font-semibold"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        </Reorder.Item>
+                      ))}
+                    </Reorder.Group>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Right: preview */}
@@ -698,6 +904,15 @@ function SiteBuilder() {
           </div>
         </div>
       </div>
+
+      <MediaLibrary
+        isOpen={mediaPickerOpen}
+        onClose={() => {
+          setMediaPickerOpen(false);
+          setMediaPickerTarget(null);
+        }}
+        onSelect={handleMediaSelect}
+      />
     </div>
   );
 }
