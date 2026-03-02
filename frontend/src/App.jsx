@@ -17,12 +17,7 @@ import Home from './pages/Home';
 function HomeOrRedirect() {
   const { token } = useAuth();
   if (token) return <Navigate to="/recents" replace />;
-  return (
-    <>
-      <Navbar />
-      <Home />
-    </>
-  );
+  return <Home />;
 }
 import Signup from './pages/Signup';
 import Login from './pages/Login';

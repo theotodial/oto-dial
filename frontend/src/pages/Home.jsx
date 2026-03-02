@@ -6,8 +6,10 @@ import NewFooter from '../components/homepage/NewFooter';
 import { Link } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import HomepageRenderer from '../components/site/HomepageRenderer';
+import SiteHeader from '../components/site/SiteHeader';
 import { fetchHomepageStructure, fetchPublicSeoSettings } from '../services/siteService';
 import { applySeoSettingsToDocument } from '../utils/seo';
+import Navbar from '../components/Navbar';
 
 function Home() {
   const [dynamic, setDynamic] = useState(null);
@@ -56,6 +58,7 @@ function Home() {
   if (dynamic && Array.isArray(dynamic.sections) && dynamic.sections.length > 0) {
     return (
       <div className="w-full bg-white dark:bg-slate-900">
+        <SiteHeader headerConfig={dynamic.headerConfig} themeSettings={dynamic.themeSettings} />
         <HomepageRenderer sections={dynamic.sections} themeSettings={dynamic.themeSettings} />
         <NewFooter />
       </div>
@@ -64,6 +67,7 @@ function Home() {
 
   return (
     <div className="w-full bg-white dark:bg-slate-900">
+      <Navbar />
       <NewHeroSection />
       <NewFeaturesSection />
       <NewHowItWorks />
