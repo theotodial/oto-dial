@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Reorder } from "framer-motion";
 import API from "../../../api";
 import HomepageRenderer from "../../../components/site/HomepageRenderer";
+import SiteHeader from "../../../components/site/SiteHeader";
 import RichTextEditor from "../../../components/admin/RichTextEditor";
 import MediaLibrary from "../../../components/admin/MediaLibrary";
 
@@ -103,6 +104,17 @@ function createSectionId() {
     return `sec_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   }
 }
+
+const buildStarterTemplate = () => {
+  return [
+    { id: createSectionId(), ...SECTION_TEMPLATES.hero() },
+    { id: createSectionId(), ...SECTION_TEMPLATES.features_grid() },
+    { id: createSectionId(), ...SECTION_TEMPLATES.image_text() },
+    { id: createSectionId(), ...SECTION_TEMPLATES.testimonials() },
+    { id: createSectionId(), ...SECTION_TEMPLATES.faq() },
+    { id: createSectionId(), ...SECTION_TEMPLATES.cta() }
+  ];
+};
 
 function normalizeBuilderDoc(input) {
   const doc = input && typeof input === "object" ? input : {};
@@ -267,6 +279,31 @@ function SiteBuilder() {
     } finally {
       if (isMountedRef.current) setSaving(false);
     }
+  };
+
+  const createStarterHomepage = () => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const hasSections = (normalized.sections || []).length > 0;
+      if (hasSections) return normalized;
+      return {
+        ...normalized,
+        sections: buildStarterTemplate(),
+        headerConfig: {
+          ...(normalized.headerConfig || {}),
+          brandText: normalized.headerConfig?.brandText || "OTO DIAL",
+          sticky: normalized.headerConfig?.sticky !== false,
+          items:
+            Array.isArray(normalized.headerConfig?.items) && normalized.headerConfig.items.length
+              ? normalized.headerConfig.items
+              : [
+                  { id: createSectionId(), label: "Pricing", href: "/billing" },
+                  { id: createSectionId(), label: "Blog", href: "/blog" },
+                  { id: createSectionId(), label: "Contact", href: "/contact" }
+                ]
+        }
+      };
+    });
   };
 
   const addSection = (type) => {
@@ -1063,6 +1100,29 @@ function SiteBuilder() {
               <div
                 className={`mx-auto ${previewWidthClass} min-h-[560px] rounded-xl bg-white dark:bg-slate-800 shadow border border-gray-200 dark:border-slate-700`}
               >
+                {(builderDoc?.sections || []).length === 0 && (
+                  <div className="p-6 border-b border-gray-200 dark:border-slate-700 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                        No homepage yet
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        Create a starter layout to start editing with instant preview.
+                      </div>
+                    </div>
+                    <button
+                      onClick={createStarterHomepage}
+                      className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-sm font-semibold"
+                    >
+                      Create starter homepage
+                    </button>
+                  </div>
+                )}
+
+                <SiteHeader
+                  headerConfig={builderDoc?.headerConfig || {}}
+                  themeSettings={builderDoc?.themeSettings || {}}
+                />
                 <HomepageRenderer
                   sections={builderDoc?.sections || []}
                   themeSettings={builderDoc?.themeSettings || {}}

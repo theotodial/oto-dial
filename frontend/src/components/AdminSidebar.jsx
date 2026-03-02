@@ -75,6 +75,9 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
     location.pathname === item.path || location.pathname.startsWith(item.path + "/")
   );
 
+  // Make the Site group visible by default when active.
+  const computedDefaultSiteOpen = isSiteActive;
+
   return (
     <>
       {/* Mobile Overlay */}
@@ -124,6 +127,57 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
             })}
           </div>
 
+          {/* Site as MAIN item */}
+          {visibleSiteItems.length > 0 && (
+            <div className="mt-6 px-2">
+              <button
+                onClick={() => setSiteOpen((prev) => !prev)}
+                className={`
+                  w-full flex items-center justify-between px-3 py-2.5 rounded-lg
+                  transition-all duration-200 text-sm font-semibold
+                  ${isSiteActive
+                    ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800'
+                  }
+                `}
+              >
+                <span>Site</span>
+                {(siteOpen || computedDefaultSiteOpen) ? (
+                  <ChevronUpIcon className="w-4 h-4" />
+                ) : (
+                  <ChevronDownIcon className="w-4 h-4" />
+                )}
+              </button>
+
+              {(siteOpen || computedDefaultSiteOpen) && (
+                <div className="mt-1 ml-6 space-y-1">
+                  {visibleSiteItems.map((item) => {
+                    const isActive =
+                      location.pathname === item.path ||
+                      location.pathname.startsWith(item.path + "/");
+                    return (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={`
+                          flex items-center px-3 py-2 rounded-lg
+                          transition-all duration-200 text-sm
+                          ${isActive
+                            ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-medium'
+                            : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800'
+                          }
+                        `}
+                      >
+                        <span>{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Communications Section */}
           {visibleCommunicationsItems.length > 0 && (
             <div className="mt-6 px-2">
@@ -164,60 +218,6 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
                           transition-all duration-200 text-sm
                           ${isActive 
                             ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-medium' 
-                            : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800'
-                          }
-                        `}
-                      >
-                        <span>{item.label}</span>
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Site Section */}
-          {visibleSiteItems.length > 0 && (
-            <div className="mt-6 px-2">
-              <button
-                onClick={() => setSiteOpen(!siteOpen)}
-                className={`
-                  w-full flex items-center justify-between px-3 py-2.5 rounded-lg
-                  transition-all duration-200 text-sm font-semibold
-                  ${isSiteActive
-                    ? 'text-indigo-600 dark:text-indigo-400'
-                    : 'text-gray-700 dark:text-gray-300'
-                  }
-                  hover:bg-gray-50 dark:hover:bg-slate-800
-                `}
-              >
-                <span>SITE</span>
-                {siteOpen ? (
-                  <ChevronUpIcon className="w-4 h-4" />
-                ) : (
-                  <ChevronDownIcon className="w-4 h-4" />
-                )}
-              </button>
-
-              {siteOpen && (
-                <div className="mt-1 ml-8 space-y-1">
-                  {visibleSiteItems.map((item) => {
-                    const isActive =
-                      location.pathname === item.path ||
-                      location.pathname.startsWith(item.path + "/");
-                    return (
-                      <Link
-                        key={item.path}
-                        to={item.path}
-                        onClick={() => {
-                          setMobileMenuOpen(false);
-                        }}
-                        className={`
-                          flex items-center px-3 py-2 rounded-lg
-                          transition-all duration-200 text-sm
-                          ${isActive
-                            ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-medium'
                             : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800'
                           }
                         `}

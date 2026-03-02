@@ -127,6 +127,64 @@ function rateLimit({ limit, windowMs, keyPrefix }) {
   };
 }
 
+function resolveSeoDefaultsFromFrontendIndex() {
+  try {
+    const candidates = [
+      path.resolve(process.cwd(), "frontend/index.html"),
+      path.resolve(process.cwd(), "../frontend/index.html"),
+      path.resolve(process.cwd(), "frontend/dist/index.html"),
+      path.resolve(process.cwd(), "../frontend/dist/index.html")
+    ];
+
+    const filePath = candidates.find((p) => {
+      try {
+        return fs.existsSync(p) && fs.statSync(p).isFile();
+      } catch {
+        return false;
+      }
+    });
+    if (!filePath) return {};
+
+    const html = fs.readFileSync(filePath, "utf8");
+    const pick = (re) => {
+      const m = html.match(re);
+      return m?.[1] ? String(m[1]).trim() : "";
+    };
+    const title = pick(/<title>\s*([^<]+)\s*<\/title>/i);
+    const description = pick(/<meta\s+name=["']description["']\s+content=["']([^"']*)["']\s*\/?>/i);
+    const keywords = pick(/<meta\s+name=["']keywords["']\s+content=["']([^"']*)["']\s*\/?>/i);
+    const canonicalUrl = pick(/<link\s+rel=["']canonical["']\s+href=["']([^"']*)["']\s*\/?>/i);
+    const ogTitle = pick(/<meta\s+property=["']og:title["']\s+content=["']([^"']*)["']\s*\/?>/i);
+    const ogDescription = pick(/<meta\s+property=["']og:description["']\s+content=["']([^"']*)["']\s*\/?>/i);
+    const ogImage = pick(/<meta\s+property=["']og:image["']\s+content=["']([^"']*)["']\s*\/?>/i);
+    const twitterTitle = pick(/<meta\s+property=["']twitter:title["']\s+content=["']([^"']*)["']\s*\/?>/i);
+    const twitterDescription = pick(/<meta\s+property=["']twitter:description["']\s+content=["']([^"']*)["']\s*\/?>/i);
+    const twitterImage = pick(/<meta\s+property=["']twitter:image["']\s+content=["']([^"']*)["']\s*\/?>/i);
+
+    return {
+      title,
+      description,
+      canonicalUrl,
+      ogTitle,
+      ogDescription,
+      ogImage,
+      twitterTitle,
+      twitterDescription,
+      twitterImage,
+      keywords
+    };
+  } catch (err) {
+    console.warn("SEO defaults parse failed:", err?.message || err);
+    return {};
+  }
+}
+
+function mergeMetaDefaults(meta = {}, defaults = {}) {
+  const out = { ...(defaults || {}), ...(meta || {}) };
+  // do not force keywords into meta object field set if empty
+  return out;
+}
+
 /**
  * GET /api/admin/site/builder
  */
@@ -174,19 +232,34 @@ router.put("/builder", async (req, res) => {
 router.get("/seo", async (req, res) => {
   try {
     const seo = await SeoSettings.findOne({ siteKey: SITE_KEY }).lean();
+    const defaults = resolveSeoDefaultsFromFrontendIndex();
+    const base = seo || {
+      siteKey: SITE_KEY,
+      meta: {},
+      keywords: [],
+      hiddenKeywords: [],
+      schema: {},
+      analyticsCache: {},
+      robotsTxt: "",
+      redirects: []
+    };
+    const merged = {
+      ...base,
+      meta: mergeMetaDefaults(base.meta || {}, defaults),
+      keywords:
+        Array.isArray(base.keywords) && base.keywords.length
+          ? base.keywords
+          : defaults.keywords
+            ? String(defaults.keywords)
+                .split(",")
+                .map((v) => String(v || "").trim())
+                .filter(Boolean)
+            : []
+    };
     return res.json({
       success: true,
-      seo:
-        seo || {
-          siteKey: SITE_KEY,
-          meta: {},
-          keywords: [],
-          hiddenKeywords: [],
-          schema: {},
-          analyticsCache: {},
-          robotsTxt: "",
-          redirects: []
-        }
+      seo: merged,
+      defaults
     });
   } catch (err) {
     console.error("Admin site seo load error:", err);
