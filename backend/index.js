@@ -49,6 +49,7 @@ import usageStatisticsRoutes from "./src/routes/usageStatistics.js";
 import supportRoutes from "./src/routes/supportRoutes.js";
 import blogRoutes from "./src/routes/blogRoutes.js";
 import analyticsRoutes from "./src/routes/analyticsRoutes.js";
+import sitePublicRoutes from "./src/routes/sitePublic.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
 import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
@@ -238,6 +239,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/affiliate/auth", affiliateAuthRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/admin/auth", adminAuthRoutes); // Admin auth (no auth middleware needed for login)
+app.use("/api/site", sitePublicRoutes);
 
 // ========================
 // PROTECTED
