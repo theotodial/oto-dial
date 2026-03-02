@@ -1,7 +1,98 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Reorder } from "framer-motion";
 import API from "../../../api";
+import HomepageRenderer from "../../../components/site/HomepageRenderer";
+import RichTextEditor from "../../../components/admin/RichTextEditor";
 
 const DEFAULT_VIEWPORT = "desktop";
+
+const SECTION_TEMPLATES = {
+  hero: () => ({
+    type: "hero",
+    hidden: false,
+    settings: {
+      heading: "Get your virtual phone number today",
+      subheading: "Simple calling + SMS for travelers and remote work.",
+      buttonText: "Get started",
+      buttonLink: "/signup",
+      align: "left",
+      backgroundImage: ""
+    }
+  }),
+  text: () => ({
+    type: "text",
+    hidden: false,
+    settings: {
+      html: "<h2>Why OTO DIAL?</h2><p>Write your content here.</p>",
+      align: "left"
+    }
+  }),
+  features_grid: () => ({
+    type: "features_grid",
+    hidden: false,
+    settings: {
+      title: "Features",
+      items: [
+        { id: "f1", title: "Global calling", description: "Call anywhere with transparent pricing." },
+        { id: "f2", title: "SMS included", description: "Send messages from your virtual number." },
+        { id: "f3", title: "Fast setup", description: "Start in minutes." }
+      ]
+    }
+  }),
+  faq: () => ({
+    type: "faq",
+    hidden: false,
+    settings: {
+      title: "Frequently Asked Questions",
+      items: [
+        { id: "q1", q: "How does it work?", a: "You buy a number and start calling/SMS from the app." }
+      ]
+    }
+  }),
+  cta: () => ({
+    type: "cta",
+    hidden: false,
+    settings: {
+      heading: "Ready to start?",
+      subheading: "Choose a plan and get your number today.",
+      primaryButtonText: "View pricing",
+      primaryButtonLink: "/billing",
+      secondaryButtonText: "Sign up",
+      secondaryButtonLink: "/signup"
+    }
+  }),
+  spacer: () => ({
+    type: "spacer",
+    hidden: false,
+    settings: { heightPx: 32 }
+  }),
+  custom_html: () => ({
+    type: "custom_html",
+    hidden: false,
+    settings: { html: "<div>Custom HTML</div>" }
+  })
+};
+
+function createSectionId() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `sec_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  }
+}
+
+function normalizeBuilderDoc(input) {
+  const doc = input && typeof input === "object" ? input : {};
+  return {
+    siteKey: doc.siteKey || "default",
+    sections: Array.isArray(doc.sections)
+      ? doc.sections.map((s) => ({ ...s, id: s?.id || createSectionId() }))
+      : [],
+    themeSettings: doc.themeSettings && typeof doc.themeSettings === "object" ? doc.themeSettings : {},
+    headerConfig: doc.headerConfig && typeof doc.headerConfig === "object" ? doc.headerConfig : {},
+    updatedAt: doc.updatedAt || null
+  };
+}
 
 function SkeletonCard() {
   return (
@@ -24,7 +115,10 @@ function SiteBuilder() {
   const [autosave, setAutosave] = useState(true);
   const [viewport, setViewport] = useState(DEFAULT_VIEWPORT);
   const [builderDoc, setBuilderDoc] = useState(null);
+  const [selectedSectionId, setSelectedSectionId] = useState("");
   const isMountedRef = useRef(true);
+  const autosaveTimerRef = useRef(null);
+  const lastSavedHashRef = useRef("");
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -37,7 +131,16 @@ function SiteBuilder() {
           throw new Error(res.error || res.data?.error || "Failed to load builder");
         }
         if (!isMountedRef.current) return;
-        setBuilderDoc(res.data?.builder || null);
+        const normalized = normalizeBuilderDoc(res.data?.builder || null);
+        setBuilderDoc(normalized);
+        lastSavedHashRef.current = JSON.stringify({
+          sections: normalized.sections || [],
+          themeSettings: normalized.themeSettings || {},
+          headerConfig: normalized.headerConfig || {}
+        });
+        if (!selectedSectionId && normalized.sections.length) {
+          setSelectedSectionId(normalized.sections[0].id);
+        }
       } catch (err) {
         if (!isMountedRef.current) return;
         setError(err?.message || "Failed to load builder");
@@ -50,6 +153,60 @@ function SiteBuilder() {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!autosave) return;
+    if (!builderDoc) return;
+    if (saving) return;
+
+    const hash = JSON.stringify({
+      sections: builderDoc.sections || [],
+      themeSettings: builderDoc.themeSettings || {},
+      headerConfig: builderDoc.headerConfig || {}
+    });
+    if (hash === lastSavedHashRef.current) return;
+
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+
+    autosaveTimerRef.current = setTimeout(async () => {
+      if (!isMountedRef.current) return;
+      setSaving(true);
+      setError("");
+      try {
+        const res = await API.put("/api/admin/site/builder", builderDoc);
+        if (res.error || res.data?.success === false) {
+          throw new Error(res.error || res.data?.error || "Autosave failed");
+        }
+        if (!isMountedRef.current) return;
+        const normalized = normalizeBuilderDoc(res.data?.builder || builderDoc);
+        setBuilderDoc(normalized);
+        lastSavedHashRef.current = JSON.stringify({
+          sections: normalized.sections || [],
+          themeSettings: normalized.themeSettings || {},
+          headerConfig: normalized.headerConfig || {}
+        });
+        setNotice("Autosaved.");
+        setTimeout(() => {
+          if (isMountedRef.current) setNotice("");
+        }, 900);
+      } catch (err) {
+        if (!isMountedRef.current) return;
+        setError(err?.message || "Autosave failed");
+      } finally {
+        if (isMountedRef.current) setSaving(false);
+      }
+    }, 800);
+
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [autosave, builderDoc, saving]);
 
   const previewWidthClass = useMemo(() => {
     if (viewport === "mobile") return "w-[375px]";
@@ -69,7 +226,13 @@ function SiteBuilder() {
       }
       if (!isMountedRef.current) return;
       setNotice("Saved.");
-      setBuilderDoc(res.data?.builder || builderDoc);
+      const normalized = normalizeBuilderDoc(res.data?.builder || builderDoc);
+      setBuilderDoc(normalized);
+      lastSavedHashRef.current = JSON.stringify({
+        sections: normalized.sections || [],
+        themeSettings: normalized.themeSettings || {},
+        headerConfig: normalized.headerConfig || {}
+      });
       setTimeout(() => {
         if (isMountedRef.current) setNotice("");
       }, 1200);
@@ -80,6 +243,63 @@ function SiteBuilder() {
       if (isMountedRef.current) setSaving(false);
     }
   };
+
+  const addSection = (type) => {
+    const factory = SECTION_TEMPLATES[type];
+    if (!factory) return;
+    const section = { id: createSectionId(), ...factory() };
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      return { ...normalized, sections: [...(normalized.sections || []), section] };
+    });
+    setSelectedSectionId(section.id);
+  };
+
+  const updateSection = (id, patch) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const nextSections = (normalized.sections || []).map((s) => {
+        if (s.id !== id) return s;
+        return {
+          ...s,
+          ...(patch || {}),
+          settings: { ...(s.settings || {}), ...((patch || {}).settings || {}) }
+        };
+      });
+      return { ...normalized, sections: nextSections };
+    });
+  };
+
+  const deleteSection = (id) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const nextSections = (normalized.sections || []).filter((s) => s.id !== id);
+      return { ...normalized, sections: nextSections };
+    });
+    setSelectedSectionId((prev) => (prev === id ? "" : prev));
+  };
+
+  const duplicateSection = (id) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const idx = (normalized.sections || []).findIndex((s) => s.id === id);
+      if (idx < 0) return normalized;
+      const original = normalized.sections[idx];
+      const clone = {
+        ...original,
+        id: createSectionId(),
+        settings: JSON.parse(JSON.stringify(original.settings || {}))
+      };
+      const nextSections = [...normalized.sections];
+      nextSections.splice(idx + 1, 0, clone);
+      return { ...normalized, sections: nextSections };
+    });
+  };
+
+  const selectedSection = useMemo(() => {
+    const sections = builderDoc?.sections || [];
+    return sections.find((s) => s.id === selectedSectionId) || null;
+  }, [builderDoc?.sections, selectedSectionId]);
 
   if (loading) {
     return (
@@ -169,28 +389,287 @@ function SiteBuilder() {
               Sections
             </h2>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Drag & drop, duplicate, reorder, and edit sections (full editor coming next).
+              Add, reorder (drag), duplicate, hide, and edit sections.
             </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {Object.keys(SECTION_TEMPLATES).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => addSection(type)}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
+                >
+                  + {type}
+                </button>
+              ))}
+            </div>
             <div className="mt-4 space-y-2">
               {(builderDoc?.sections || []).length === 0 ? (
                 <div className="text-sm text-gray-600 dark:text-gray-300 rounded-lg border border-dashed border-gray-300 dark:border-slate-600 p-4">
                   No sections yet.
                 </div>
               ) : (
-                (builderDoc?.sections || []).map((section) => (
-                  <div
-                    key={section.id}
-                    className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/40 px-3 py-2"
-                  >
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">
-                      {section.type}
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                      {section.hidden ? "Hidden" : "Visible"}
-                    </div>
-                  </div>
-                ))
+                <Reorder.Group
+                  axis="y"
+                  values={builderDoc?.sections || []}
+                  onReorder={(nextOrder) => {
+                    setBuilderDoc((prev) => ({ ...normalizeBuilderDoc(prev), sections: nextOrder }));
+                  }}
+                  className="space-y-2"
+                >
+                  {(builderDoc?.sections || []).map((section) => {
+                    const isSelected = section.id === selectedSectionId;
+                    return (
+                      <Reorder.Item
+                        key={section.id}
+                        value={section}
+                        className={`rounded-lg border px-3 py-2 cursor-grab active:cursor-grabbing ${
+                          isSelected
+                            ? "border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20"
+                            : "border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/40"
+                        }`}
+                        onClick={() => setSelectedSectionId(section.id)}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                              {section.type}
+                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              {section.hidden ? "Hidden" : "Visible"}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                updateSection(section.id, { hidden: !section.hidden });
+                              }}
+                              className="px-2 py-1 rounded-md text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"
+                              title={section.hidden ? "Show section" : "Hide section"}
+                            >
+                              {section.hidden ? "Show" : "Hide"}
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                duplicateSection(section.id);
+                              }}
+                              className="px-2 py-1 rounded-md text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"
+                              title="Duplicate section"
+                            >
+                              Dup
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteSection(section.id);
+                              }}
+                              className="px-2 py-1 rounded-md text-xs bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800"
+                              title="Delete section"
+                            >
+                              Del
+                            </button>
+                          </div>
+                        </div>
+                      </Reorder.Item>
+                    );
+                  })}
+                </Reorder.Group>
               )}
+            </div>
+
+            {/* Inspector */}
+            <div className="mt-5 pt-5 border-t border-gray-200 dark:border-slate-700">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                Inspector
+              </h3>
+              {!selectedSection ? (
+                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  Select a section to edit.
+                </div>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  {selectedSection.type === "hero" && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Heading
+                        </label>
+                        <input
+                          value={selectedSection.settings?.heading || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { heading: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Subheading
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={selectedSection.settings?.subheading || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { subheading: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                            Button text
+                          </label>
+                          <input
+                            value={selectedSection.settings?.buttonText || ""}
+                            onChange={(e) =>
+                              updateSection(selectedSection.id, { settings: { buttonText: e.target.value } })
+                            }
+                            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                            Button link
+                          </label>
+                          <input
+                            value={selectedSection.settings?.buttonLink || ""}
+                            onChange={(e) =>
+                              updateSection(selectedSection.id, { settings: { buttonLink: e.target.value } })
+                            }
+                            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {selectedSection.type === "text" && (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">
+                        Rich text
+                      </label>
+                      <div className="rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+                        <RichTextEditor
+                          value={selectedSection.settings?.html || ""}
+                          onChange={(val) =>
+                            updateSection(selectedSection.id, { settings: { html: val } })
+                          }
+                          placeholder="Write homepage content..."
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedSection.type === "cta" && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Heading
+                        </label>
+                        <input
+                          value={selectedSection.settings?.heading || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { heading: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Subheading
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={selectedSection.settings?.subheading || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { subheading: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedSection.type === "spacer" && (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                        Height (px)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={240}
+                        value={selectedSection.settings?.heightPx || 0}
+                        onChange={(e) =>
+                          updateSection(selectedSection.id, { settings: { heightPx: Number(e.target.value || 0) } })
+                        }
+                        className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Theme */}
+            <div className="mt-5 pt-5 border-t border-gray-200 dark:border-slate-700">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                Theme
+              </h3>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                    Primary
+                  </label>
+                  <input
+                    type="color"
+                    value={builderDoc?.themeSettings?.primaryColor || "#4f46e5"}
+                    onChange={(e) =>
+                      setBuilderDoc((prev) => ({
+                        ...normalizeBuilderDoc(prev),
+                        themeSettings: { ...(normalizeBuilderDoc(prev).themeSettings || {}), primaryColor: e.target.value }
+                      }))
+                    }
+                    className="w-full h-10 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                    Secondary
+                  </label>
+                  <input
+                    type="color"
+                    value={builderDoc?.themeSettings?.secondaryColor || "#9333ea"}
+                    onChange={(e) =>
+                      setBuilderDoc((prev) => ({
+                        ...normalizeBuilderDoc(prev),
+                        themeSettings: { ...(normalizeBuilderDoc(prev).themeSettings || {}), secondaryColor: e.target.value }
+                      }))
+                    }
+                    className="w-full h-10 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+              </div>
+              <div className="mt-3">
+                <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                  Border radius
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={24}
+                  value={Number(builderDoc?.themeSettings?.borderRadius || 12)}
+                  onChange={(e) =>
+                    setBuilderDoc((prev) => ({
+                      ...normalizeBuilderDoc(prev),
+                      themeSettings: { ...(normalizeBuilderDoc(prev).themeSettings || {}), borderRadius: Number(e.target.value) }
+                    }))
+                  }
+                  className="w-full"
+                />
+              </div>
             </div>
           </div>
 
@@ -209,14 +688,11 @@ function SiteBuilder() {
               <div
                 className={`mx-auto ${previewWidthClass} min-h-[560px] rounded-xl bg-white dark:bg-slate-800 shadow border border-gray-200 dark:border-slate-700`}
               >
-                <div className="p-6">
-                  <div className="text-sm text-gray-700 dark:text-gray-200 font-semibold">
-                    Preview renderer will appear here once builder integration is enabled.
-                  </div>
-                  <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    This page is already wired to load/save builder JSON safely.
-                  </div>
-                </div>
+                <HomepageRenderer
+                  sections={builderDoc?.sections || []}
+                  themeSettings={builderDoc?.themeSettings || {}}
+                  renderHidden
+                />
               </div>
             </div>
           </div>
