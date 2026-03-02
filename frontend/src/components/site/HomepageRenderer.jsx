@@ -25,7 +25,8 @@ const HeroBannerSection = memo(function HeroBannerSection({ section }) {
             <div className={`mt-8 ${align === "center" ? "flex justify-center" : ""} ${align === "right" ? "flex justify-end" : ""}`}>
               <a
                 href={buttonLink}
-                className="inline-flex items-center justify-center px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition-colors"
+                className="inline-flex items-center justify-center px-6 py-3 rounded-xl text-white font-semibold transition-colors"
+                style={{ backgroundColor: "var(--site-primary)", borderRadius: "var(--site-radius)" }}
               >
                 {buttonText}
               </a>
@@ -71,7 +72,8 @@ const FeaturesGridSection = memo(function FeaturesGridSection({ section }) {
           {items.slice(0, 24).map((it, idx) => (
             <div
               key={it.id || idx}
-              className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6"
+              className="border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6"
+              style={{ borderRadius: "var(--site-radius)" }}
             >
               <div className="text-lg font-semibold text-gray-900 dark:text-white">
                 {it.title || "Feature"}
@@ -120,7 +122,12 @@ const FaqSection = memo(function FaqSection({ section }) {
 const CtaSection = memo(function CtaSection({ section }) {
   const s = section?.settings || {};
   return (
-    <section className="w-full bg-gradient-to-r from-indigo-600 to-purple-600">
+    <section
+      className="w-full"
+      style={{
+        backgroundImage: "linear-gradient(90deg, var(--site-primary), var(--site-secondary))"
+      }}
+    >
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
         <h2 className="text-3xl md:text-4xl font-bold text-white">
           {s.heading || "Call to action"}
@@ -134,7 +141,8 @@ const CtaSection = memo(function CtaSection({ section }) {
           {s.primaryButtonText && (
             <a
               href={s.primaryButtonLink || "#"}
-              className="inline-flex items-center justify-center px-6 py-3 rounded-xl bg-white text-indigo-700 font-semibold hover:bg-gray-50 transition-colors"
+              className="inline-flex items-center justify-center px-6 py-3 bg-white text-indigo-700 font-semibold hover:bg-gray-50 transition-colors"
+              style={{ borderRadius: "var(--site-radius)" }}
             >
               {s.primaryButtonText}
             </a>
@@ -142,7 +150,8 @@ const CtaSection = memo(function CtaSection({ section }) {
           {s.secondaryButtonText && (
             <a
               href={s.secondaryButtonLink || "#"}
-              className="inline-flex items-center justify-center px-6 py-3 rounded-xl border border-white text-white font-semibold hover:bg-white/10 transition-colors"
+              className="inline-flex items-center justify-center px-6 py-3 border border-white text-white font-semibold hover:bg-white/10 transition-colors"
+              style={{ borderRadius: "var(--site-radius)" }}
             >
               {s.secondaryButtonText}
             </a>
