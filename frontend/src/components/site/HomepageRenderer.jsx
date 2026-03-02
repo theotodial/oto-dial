@@ -1,4 +1,4 @@
-import { memo, Suspense, useMemo } from "react";
+import { memo, Suspense, useCallback, useMemo } from "react";
 
 const HeroBannerSection = memo(function HeroBannerSection({ section }) {
   const s = section?.settings || {};
@@ -288,7 +288,14 @@ function applyThemeVars(themeSettings = {}) {
   };
 }
 
-function HomepageRendererInner({ sections = [], themeSettings = {}, renderHidden = false }) {
+function HomepageRendererInner({
+  sections = [],
+  themeSettings = {},
+  renderHidden = false,
+  isBuilderPreview = false,
+  selectedSectionId = "",
+  onSelectSection = null
+}) {
   const styleVars = useMemo(() => applyThemeVars(themeSettings), [themeSettings]);
   const visible = useMemo(() => {
     const list = Array.isArray(sections) ? sections : [];
@@ -296,19 +303,53 @@ function HomepageRendererInner({ sections = [], themeSettings = {}, renderHidden
     return list.filter((s) => !s?.hidden);
   }, [sections, renderHidden]);
 
+  const handleClickCapture = useCallback(
+    (e) => {
+      if (!isBuilderPreview) return;
+      const link = e.target?.closest ? e.target.closest("a") : null;
+      if (link) {
+        e.preventDefault();
+        e.stopPropagation();
+        const wrapper = e.target.closest?.("[data-section-id]") || null;
+        const sectionId = wrapper?.getAttribute?.("data-section-id") || "";
+        if (sectionId && typeof onSelectSection === "function") {
+          onSelectSection(sectionId);
+        }
+      }
+    },
+    [isBuilderPreview, onSelectSection]
+  );
+
   return (
-    <div style={styleVars}>
+    <div style={styleVars} onClickCapture={handleClickCapture}>
       {visible.map((section, idx) => {
         const type = String(section?.type || "").toLowerCase();
         const Comp = SECTION_REGISTRY[type];
         if (!Comp) return null;
+        const sectionId = String(section?.id || `${type}-${idx}`);
+        const isSelected = isBuilderPreview && selectedSectionId && selectedSectionId === sectionId;
         return (
-          <Suspense
-            key={section?.id || `${type}-${idx}`}
-            fallback={<div className="py-10" />}
+          <div
+            key={sectionId}
+            data-section-id={sectionId}
+            className={isBuilderPreview ? "relative cursor-pointer" : undefined}
+            onClick={() => {
+              if (!isBuilderPreview) return;
+              if (typeof onSelectSection === "function") onSelectSection(sectionId);
+            }}
+            style={
+              isSelected
+                ? {
+                    outline: "2px solid var(--site-primary)",
+                    outlineOffset: "-2px"
+                  }
+                : undefined
+            }
           >
-            <Comp section={section} />
-          </Suspense>
+            <Suspense fallback={<div className="py-10" />}>
+              <Comp section={section} />
+            </Suspense>
+          </div>
         );
       })}
     </div>

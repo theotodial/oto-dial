@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 function normalizeMenuItems(items = []) {
@@ -13,7 +13,7 @@ function normalizeMenuItems(items = []) {
     .filter((it) => it.label);
 }
 
-function SiteHeader({ headerConfig = {}, themeSettings = {} }) {
+function SiteHeader({ headerConfig = {}, themeSettings = {}, isBuilderPreview = false }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const items = useMemo(() => normalizeMenuItems(headerConfig?.items || []), [headerConfig?.items]);
@@ -36,22 +36,51 @@ function SiteHeader({ headerConfig = {}, themeSettings = {} }) {
 
   const Wrapper = sticky ? "div" : "div";
 
+  const preventPreviewNavigation = useCallback(
+    (e) => {
+      if (!isBuilderPreview) return;
+      e.preventDefault();
+      e.stopPropagation();
+    },
+    [isBuilderPreview]
+  );
+
   return (
     <Wrapper className={sticky ? "sticky top-0 z-50" : "relative z-10"} style={headerStyle}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-3">
-          {logoUrl ? (
-            <img src={logoUrl} alt="Logo" className="h-8 w-auto object-contain" />
-          ) : (
-            <div
-              className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold"
-              style={{ backgroundColor: "var(--site-primary)" }}
-            >
-              OD
-            </div>
-          )}
-          <span className="text-lg font-bold text-gray-900">{brandText}</span>
-        </Link>
+        {isBuilderPreview ? (
+          <button
+            type="button"
+            onClick={preventPreviewNavigation}
+            className="flex items-center gap-3"
+          >
+            {logoUrl ? (
+              <img src={logoUrl} alt="Logo" className="h-8 w-auto object-contain" />
+            ) : (
+              <div
+                className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold"
+                style={{ backgroundColor: "var(--site-primary)" }}
+              >
+                OD
+              </div>
+            )}
+            <span className="text-lg font-bold text-gray-900">{brandText}</span>
+          </button>
+        ) : (
+          <Link to="/" className="flex items-center gap-3">
+            {logoUrl ? (
+              <img src={logoUrl} alt="Logo" className="h-8 w-auto object-contain" />
+            ) : (
+              <div
+                className="h-9 w-9 rounded-xl flex items-center justify-center text-white font-bold"
+                style={{ backgroundColor: "var(--site-primary)" }}
+              >
+                OD
+              </div>
+            )}
+            <span className="text-lg font-bold text-gray-900">{brandText}</span>
+          </Link>
+        )}
 
         {/* Desktop */}
         <div className="hidden md:flex items-center gap-6">
@@ -68,6 +97,7 @@ function SiteHeader({ headerConfig = {}, themeSettings = {} }) {
                         key={child.id || idx}
                         href={child.href || "#"}
                         className="block px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+                        onClick={preventPreviewNavigation}
                       >
                         {child.label || "Item"}
                       </a>
@@ -80,25 +110,48 @@ function SiteHeader({ headerConfig = {}, themeSettings = {} }) {
                 key={item.id}
                 href={item.href || "#"}
                 className="text-sm font-semibold text-gray-700 hover:text-gray-900"
+                onClick={preventPreviewNavigation}
               >
                 {item.label}
               </a>
             )
           )}
 
-          <Link
-            to="/login"
-            className="text-sm font-semibold text-gray-700 hover:text-gray-900"
-          >
-            Login
-          </Link>
-          <Link
-            to="/signup"
-            className="px-4 py-2 rounded-xl text-white font-semibold text-sm"
-            style={{ backgroundColor: "var(--site-primary)" }}
-          >
-            Get Started
-          </Link>
+          {isBuilderPreview ? (
+            <>
+              <button
+                type="button"
+                onClick={preventPreviewNavigation}
+                className="text-sm font-semibold text-gray-700 hover:text-gray-900"
+              >
+                Login
+              </button>
+              <button
+                type="button"
+                onClick={preventPreviewNavigation}
+                className="px-4 py-2 rounded-xl text-white font-semibold text-sm"
+                style={{ backgroundColor: "var(--site-primary)" }}
+              >
+                Get Started
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                to="/login"
+                className="text-sm font-semibold text-gray-700 hover:text-gray-900"
+              >
+                Login
+              </Link>
+              <Link
+                to="/signup"
+                className="px-4 py-2 rounded-xl text-white font-semibold text-sm"
+                style={{ backgroundColor: "var(--site-primary)" }}
+              >
+                Get Started
+              </Link>
+            </>
+          )}
         </div>
 
         {/* Mobile */}
@@ -126,27 +179,58 @@ function SiteHeader({ headerConfig = {}, themeSettings = {} }) {
                 key={item.id}
                 href={item.href || "#"}
                 className="block px-3 py-2 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                onClick={() => setMobileOpen(false)}
+                onClick={(e) => {
+                  if (isBuilderPreview) preventPreviewNavigation(e);
+                  setMobileOpen(false);
+                }}
               >
                 {item.label}
               </a>
             ))}
             <div className="pt-2 flex gap-2">
-              <Link
-                to="/login"
-                className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold text-center"
-                onClick={() => setMobileOpen(false)}
-              >
-                Login
-              </Link>
-              <Link
-                to="/signup"
-                className="flex-1 px-3 py-2 rounded-lg text-white text-sm font-semibold text-center"
-                style={{ backgroundColor: "var(--site-primary)" }}
-                onClick={() => setMobileOpen(false)}
-              >
-                Get Started
-              </Link>
+              {isBuilderPreview ? (
+                <>
+                  <button
+                    type="button"
+                    className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold text-center"
+                    onClick={(e) => {
+                      preventPreviewNavigation(e);
+                      setMobileOpen(false);
+                    }}
+                  >
+                    Login
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 px-3 py-2 rounded-lg text-white text-sm font-semibold text-center"
+                    style={{ backgroundColor: "var(--site-primary)" }}
+                    onClick={(e) => {
+                      preventPreviewNavigation(e);
+                      setMobileOpen(false);
+                    }}
+                  >
+                    Get Started
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link
+                    to="/login"
+                    className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold text-center"
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    Login
+                  </Link>
+                  <Link
+                    to="/signup"
+                    className="flex-1 px-3 py-2 rounded-lg text-white text-sm font-semibold text-center"
+                    style={{ backgroundColor: "var(--site-primary)" }}
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    Get Started
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>

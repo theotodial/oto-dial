@@ -1122,11 +1122,15 @@ function SiteBuilder() {
                 <SiteHeader
                   headerConfig={builderDoc?.headerConfig || {}}
                   themeSettings={builderDoc?.themeSettings || {}}
+                  isBuilderPreview
                 />
                 <HomepageRenderer
                   sections={builderDoc?.sections || []}
                   themeSettings={builderDoc?.themeSettings || {}}
                   renderHidden
+                  isBuilderPreview
+                  selectedSectionId={selectedSectionId}
+                  onSelectSection={(id) => setSelectedSectionId(id)}
                 />
               </div>
             </div>
