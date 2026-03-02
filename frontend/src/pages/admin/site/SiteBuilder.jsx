@@ -3,6 +3,7 @@ import { Reorder } from "framer-motion";
 import API from "../../../api";
 import HomepageRenderer from "../../../components/site/HomepageRenderer";
 import SiteHeader from "../../../components/site/SiteHeader";
+import ExistingHomepagePreview from "../../../components/site/ExistingHomepagePreview";
 import RichTextEditor from "../../../components/admin/RichTextEditor";
 import MediaLibrary from "../../../components/admin/MediaLibrary";
 
@@ -298,6 +299,137 @@ function SiteBuilder() {
               ? normalized.headerConfig.items
               : [
                   { id: createSectionId(), label: "Pricing", href: "/billing" },
+                  { id: createSectionId(), label: "Blog", href: "/blog" },
+                  { id: createSectionId(), label: "Contact", href: "/contact" }
+                ]
+        }
+      };
+    });
+  };
+
+  const importCurrentHomepage = () => {
+    const hero = {
+      id: createSectionId(),
+      type: "hero",
+      hidden: false,
+      settings: {
+        heading: "Virtual Phone Numbers for Calling & SMS Anywhere",
+        subheading:
+          "Get a local phone number in the US, UK, and other countries. Make calls and send SMS from anywhere—perfect for travelers, freelancers, and remote workers. A simple alternative to Google Voice and TextNow.",
+        buttonText: "View Pricing",
+        buttonLink: "#pricing",
+        align: "center",
+        backgroundImage: ""
+      }
+    };
+    const features = {
+      id: createSectionId(),
+      type: "features_grid",
+      hidden: false,
+      settings: {
+        title: "Call and Text Using a Local Number",
+        items: [
+          {
+            id: createSectionId(),
+            title: "Virtual Phone Numbers",
+            description:
+              "Get a local phone number in the US, UK, and other countries instantly. Perfect for travelers and remote workers. No contracts, activate in under 60 seconds."
+          },
+          {
+            id: createSectionId(),
+            title: "Smart Call Routing",
+            description:
+              "Intelligently route calls based on time, location, and availability. Never miss an important call again."
+          },
+          {
+            id: createSectionId(),
+            title: "Call Recording",
+            description:
+              "Automatically record and transcribe all your calls. Perfect for training, quality assurance, and compliance."
+          },
+          {
+            id: createSectionId(),
+            title: "Two-Way SMS Platform",
+            description:
+              "Send and receive SMS messages from your virtual phone number. Perfect for staying connected with clients, family, and contacts worldwide."
+          },
+          {
+            id: createSectionId(),
+            title: "Call Analytics & Reporting",
+            description:
+              "Track your calls and SMS usage. Monitor your communications with simple reporting and insights."
+          },
+          {
+            id: createSectionId(),
+            title: "Secure & Reliable",
+            description:
+              "Built on carrier-grade infrastructure for reliable voice and SMS delivery. Your communications are secure and private."
+          }
+        ]
+      }
+    };
+    const howItWorks = {
+      id: createSectionId(),
+      type: "features_grid",
+      hidden: false,
+      settings: {
+        title: "Get Started in 3 Simple Steps",
+        items: [
+          {
+            id: createSectionId(),
+            title: "Buy Virtual Phone Number",
+            description:
+              "Browse and buy virtual phone numbers from 100+ countries. Filter by location, features, or price to find the perfect number."
+          },
+          {
+            id: createSectionId(),
+            title: "Configure Settings",
+            description:
+              "Set up call routing, voicemail, and automation rules in minutes. Our intuitive dashboard makes it easy."
+          },
+          {
+            id: createSectionId(),
+            title: "Start Calling & Sending SMS",
+            description:
+              "Begin making and receiving calls, plus send and receive SMS messages immediately."
+          }
+        ]
+      }
+    };
+    const pricingCta = {
+      id: createSectionId(),
+      type: "cta",
+      hidden: false,
+      settings: {
+        heading: "Simple, transparent pricing",
+        subheading: "Choose a plan and get your number today.",
+        primaryButtonText: "View pricing",
+        primaryButtonLink: "/billing",
+        secondaryButtonText: "Sign up",
+        secondaryButtonLink: "/signup"
+      }
+    };
+
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      return {
+        ...normalized,
+        sections: [hero, features, howItWorks, pricingCta],
+        themeSettings: {
+          ...(normalized.themeSettings || {}),
+          primaryColor: normalized.themeSettings?.primaryColor || "#4f46e5",
+          secondaryColor: normalized.themeSettings?.secondaryColor || "#9333ea",
+          borderRadius: normalized.themeSettings?.borderRadius ?? 12
+        },
+        headerConfig: {
+          ...(normalized.headerConfig || {}),
+          brandText: normalized.headerConfig?.brandText || "OTO DIAL",
+          sticky: normalized.headerConfig?.sticky !== false,
+          items:
+            Array.isArray(normalized.headerConfig?.items) && normalized.headerConfig.items.length
+              ? normalized.headerConfig.items
+              : [
+                  { id: createSectionId(), label: "Pricing", href: "#pricing" },
                   { id: createSectionId(), label: "Blog", href: "/blog" },
                   { id: createSectionId(), label: "Contact", href: "/contact" }
                 ]
@@ -1100,38 +1232,63 @@ function SiteBuilder() {
               <div
                 className={`mx-auto ${previewWidthClass} min-h-[560px] rounded-xl bg-white dark:bg-slate-800 shadow border border-gray-200 dark:border-slate-700`}
               >
-                {(builderDoc?.sections || []).length === 0 && (
-                  <div className="p-6 border-b border-gray-200 dark:border-slate-700 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-gray-900 dark:text-white">
-                        No homepage yet
+                {(builderDoc?.sections || []).length === 0 ? (
+                  <>
+                    <div className="p-6 border-b border-gray-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                          Previewing your current live homepage (read-only)
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          To edit with Shopify-style controls, import it into the Site Builder JSON first.
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        Create a starter layout to start editing with instant preview.
+                      <div className="flex gap-2">
+                        <button
+                          onClick={importCurrentHomepage}
+                          className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-sm font-semibold"
+                        >
+                          Import current homepage
+                        </button>
+                        <button
+                          onClick={createStarterHomepage}
+                          className="px-4 py-2 rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-slate-700 text-sm font-semibold"
+                        >
+                          Start from template
+                        </button>
                       </div>
                     </div>
-                    <button
-                      onClick={createStarterHomepage}
-                      className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-sm font-semibold"
-                    >
-                      Create starter homepage
-                    </button>
-                  </div>
-                )}
 
-                <SiteHeader
-                  headerConfig={builderDoc?.headerConfig || {}}
-                  themeSettings={builderDoc?.themeSettings || {}}
-                  isBuilderPreview
-                />
-                <HomepageRenderer
-                  sections={builderDoc?.sections || []}
-                  themeSettings={builderDoc?.themeSettings || {}}
-                  renderHidden
-                  isBuilderPreview
-                  selectedSectionId={selectedSectionId}
-                  onSelectSection={(id) => setSelectedSectionId(id)}
-                />
+                    <div
+                      className="relative"
+                      onClickCapture={(e) => {
+                        const link = e.target?.closest ? e.target.closest("a") : null;
+                        if (link) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }
+                      }}
+                    >
+                      <ExistingHomepagePreview />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <SiteHeader
+                      headerConfig={builderDoc?.headerConfig || {}}
+                      themeSettings={builderDoc?.themeSettings || {}}
+                      isBuilderPreview
+                    />
+                    <HomepageRenderer
+                      sections={builderDoc?.sections || []}
+                      themeSettings={builderDoc?.themeSettings || {}}
+                      renderHidden
+                      isBuilderPreview
+                      selectedSectionId={selectedSectionId}
+                      onSelectSection={(id) => setSelectedSectionId(id)}
+                    />
+                  </>
+                )}
               </div>
             </div>
           </div>
