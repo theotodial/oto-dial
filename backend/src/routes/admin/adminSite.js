@@ -6,6 +6,7 @@ import { PRIMARY_ADMIN_EMAIL } from "../../constants/adminAccess.js";
 import SiteBuilder from "../../models/SiteBuilder.js";
 import SeoSettings from "../../models/SeoSettings.js";
 import EnvLog from "../../models/EnvLog.js";
+import NotFoundLog from "../../models/NotFoundLog.js";
 
 const router = express.Router();
 
@@ -219,6 +220,26 @@ router.put("/seo", async (req, res) => {
   } catch (err) {
     console.error("Admin site seo save error:", err);
     return res.status(500).json({ success: false, error: "Failed to save SEO settings" });
+  }
+});
+
+/**
+ * GET /api/admin/site/seo/404-logs
+ * Returns recent API 404 hits (backend-side monitoring).
+ */
+router.get("/seo/404-logs", async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(1, Number(req.query?.limit || 100)), 500);
+    const logs = await NotFoundLog.find()
+      .sort({ lastSeenAt: -1 })
+      .limit(limit)
+      .select("path method count lastSeenAt lastIp")
+      .lean();
+
+    return res.json({ success: true, logs });
+  } catch (err) {
+    console.error("Admin 404 logs error:", err);
+    return res.status(500).json({ success: false, error: "Failed to load 404 logs" });
   }
 });
 
