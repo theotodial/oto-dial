@@ -34,7 +34,29 @@ function upsertJsonLd(id, json) {
   el.textContent = JSON.stringify(json);
 }
 
-export function applySeoSettingsToDocument(seo = {}) {
+function buildFaqSchemaFromSections(sections = []) {
+  const faqSection = (Array.isArray(sections) ? sections : []).find(
+    (s) => String(s?.type || "").toLowerCase() === "faq" && !s?.hidden
+  );
+  const items = Array.isArray(faqSection?.settings?.items) ? faqSection.settings.items : [];
+  const entities = items
+    .map((it) => ({
+      name: String(it?.q || "").trim(),
+      acceptedAnswer: { "@type": "Answer", text: String(it?.a || "").trim() }
+    }))
+    .filter((row) => row.name && row.acceptedAnswer.text)
+    .slice(0, 30)
+    .map((row) => ({ "@type": "Question", ...row }));
+
+  if (!entities.length) return null;
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: entities
+  };
+}
+
+export function applySeoSettingsToDocument(seo = {}, context = {}) {
   if (typeof document === "undefined") return;
   const meta = seo?.meta || {};
   const keywords = Array.isArray(seo?.keywords) ? seo.keywords : [];
@@ -60,6 +82,10 @@ export function applySeoSettingsToDocument(seo = {}) {
   setMetaTag("twitter:image", meta.twitterImage || meta.ogImage);
 
   const schema = seo?.schema || {};
+  if (schema?.enableFaqSchema) {
+    const faqJson = buildFaqSchemaFromSections(context?.sections || []);
+    if (faqJson) upsertJsonLd("faq", faqJson);
+  }
   if (schema?.customJsonLd) {
     try {
       const parsed =

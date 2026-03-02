@@ -30,7 +30,7 @@ function Home() {
           fetchPublicSeoSettings().catch(() => null)
         ]);
         if (!isMountedRef.current) return;
-        if (seo) applySeoSettingsToDocument(seo);
+        if (seo) applySeoSettingsToDocument(seo, { sections: homepage?.sections || [] });
         if (Array.isArray(homepage?.sections) && homepage.sections.length > 0) {
           setDynamic(homepage);
           setDynamicError('');
