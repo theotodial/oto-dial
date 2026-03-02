@@ -14,7 +14,10 @@ const ROLE_OPTIONS = [
   { key: 'support', label: 'Support' },
   { key: 'team', label: 'Team Management' },
   { key: 'blog', label: 'Blog' },
-  { key: 'analytics', label: 'Analytics' }
+  { key: 'analytics', label: 'Analytics' },
+  { key: 'site_builder', label: 'Site Builder' },
+  { key: 'site_seo', label: 'Site SEO' },
+  { key: 'site_environment', label: 'Site Environment (Super-admin recommended)' }
 ];
 
 const DEFAULT_CREATE_FORM = {

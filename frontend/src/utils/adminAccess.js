@@ -9,7 +9,10 @@ export const ADMIN_ACCESS_AREAS = [
   "support",
   "team",
   "blog",
-  "analytics"
+  "analytics",
+  "site_builder",
+  "site_seo",
+  "site_environment"
 ];
 
 export const ADMIN_ACCESS_LABELS = {
@@ -23,7 +26,10 @@ export const ADMIN_ACCESS_LABELS = {
   support: "Support",
   team: "Team",
   blog: "Blog",
-  analytics: "Analytics"
+  analytics: "Analytics",
+  site_builder: "Site Builder",
+  site_seo: "Site SEO",
+  site_environment: "Site Environment"
 };
 
 const DEFAULT_PATH_BY_ROLE = {
@@ -37,7 +43,10 @@ const DEFAULT_PATH_BY_ROLE = {
   support: "/adminbobby/support",
   team: "/adminbobby/team",
   blog: "/adminbobby/blog",
-  analytics: "/adminbobby/analytics"
+  analytics: "/adminbobby/analytics",
+  site_builder: "/adminbobby/site/builder",
+  site_seo: "/adminbobby/site/seo",
+  site_environment: "/adminbobby/site/environment"
 };
 
 const normalizeAdminRoles = (roles = []) => {
@@ -86,6 +95,10 @@ export const hasAdminRole = (adminProfile, role) => {
   return getAdminRoles(adminProfile).includes(role);
 };
 
+export const isSuperAdmin = (adminProfile) => {
+  return !!adminProfile?.isPrimaryAdmin;
+};
+
 export const getRequiredRoleForAdminPath = (pathname = "") => {
   if (!pathname.startsWith("/adminbobby")) return null;
 
@@ -100,6 +113,9 @@ export const getRequiredRoleForAdminPath = (pathname = "") => {
   if (pathname.startsWith("/adminbobby/team")) return "team";
   if (pathname.startsWith("/adminbobby/blog")) return "blog";
   if (pathname.startsWith("/adminbobby/analytics")) return "analytics";
+  if (pathname.startsWith("/adminbobby/site/builder")) return "site_builder";
+  if (pathname.startsWith("/adminbobby/site/seo")) return "site_seo";
+  if (pathname.startsWith("/adminbobby/site/environment")) return "site_environment";
 
   return null;
 };
@@ -115,6 +131,7 @@ export const getFirstAccessibleAdminPath = (adminProfile) => {
     "dashboard",
     "support",
     "analytics",
+    "site_builder",
     "users",
     "affiliates",
     "notifications",

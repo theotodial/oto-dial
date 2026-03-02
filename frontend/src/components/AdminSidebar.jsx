@@ -4,6 +4,7 @@ import { useTheme } from '../context/ThemeContext';
 import {
   clearStoredAdminProfile,
   hasAdminRole,
+  isSuperAdmin,
   readStoredAdminProfile
 } from '../utils/adminAccess';
 
@@ -37,16 +38,28 @@ const communicationsItems = [
   { path: '/adminbobby/numbers', label: 'Numbers', role: 'numbers' },
 ];
 
+const siteItems = [
+  { path: '/adminbobby/site/builder', label: 'Builder', role: 'site_builder' },
+  { path: '/adminbobby/site/seo', label: 'SEO', role: 'site_seo' },
+  { path: '/adminbobby/site/environment', label: 'Environment', role: 'site_environment', superAdminOnly: true },
+];
+
 function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isDarkMode, toggleTheme } = useTheme();
   const [communicationsOpen, setCommunicationsOpen] = useState(false);
+  const [siteOpen, setSiteOpen] = useState(false);
   const adminProfile = readStoredAdminProfile();
   const visibleNavItems = navItems.filter((item) => hasAdminRole(adminProfile, item.role));
   const visibleCommunicationsItems = communicationsItems.filter((item) =>
     hasAdminRole(adminProfile, item.role)
   );
+  const visibleSiteItems = siteItems.filter((item) => {
+    if (!hasAdminRole(adminProfile, item.role)) return false;
+    if (item.superAdminOnly && !isSuperAdmin(adminProfile)) return false;
+    return true;
+  });
 
   const handleLogout = () => {
     localStorage.removeItem('adminToken');
@@ -58,6 +71,12 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
   const isCommunicationsActive = visibleCommunicationsItems.some(item => 
     location.pathname === item.path || location.pathname.startsWith(item.path + '/')
   );
+  const isSiteActive = visibleSiteItems.some((item) =>
+    location.pathname === item.path || location.pathname.startsWith(item.path + "/")
+  );
+
+  // Make the Site group visible by default when active.
+  const computedDefaultSiteOpen = isSiteActive;
 
   return (
     <>
@@ -107,6 +126,57 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
               );
             })}
           </div>
+
+          {/* Site as MAIN item */}
+          {visibleSiteItems.length > 0 && (
+            <div className="mt-6 px-2">
+              <button
+                onClick={() => setSiteOpen((prev) => !prev)}
+                className={`
+                  w-full flex items-center justify-between px-3 py-2.5 rounded-lg
+                  transition-all duration-200 text-sm font-semibold
+                  ${isSiteActive
+                    ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800'
+                  }
+                `}
+              >
+                <span>Site</span>
+                {(siteOpen || computedDefaultSiteOpen) ? (
+                  <ChevronUpIcon className="w-4 h-4" />
+                ) : (
+                  <ChevronDownIcon className="w-4 h-4" />
+                )}
+              </button>
+
+              {(siteOpen || computedDefaultSiteOpen) && (
+                <div className="mt-1 ml-6 space-y-1">
+                  {visibleSiteItems.map((item) => {
+                    const isActive =
+                      location.pathname === item.path ||
+                      location.pathname.startsWith(item.path + "/");
+                    return (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={`
+                          flex items-center px-3 py-2 rounded-lg
+                          transition-all duration-200 text-sm
+                          ${isActive
+                            ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-medium'
+                            : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800'
+                          }
+                        `}
+                      >
+                        <span>{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Communications Section */}
           {visibleCommunicationsItems.length > 0 && (
@@ -161,7 +231,9 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
             </div>
           )}
 
-          {visibleNavItems.length === 0 && visibleCommunicationsItems.length === 0 && (
+          {visibleNavItems.length === 0 &&
+            visibleCommunicationsItems.length === 0 &&
+            visibleSiteItems.length === 0 && (
             <div className="px-4 mt-6">
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 No admin sections are assigned to this account.

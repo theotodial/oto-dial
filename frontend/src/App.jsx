@@ -17,12 +17,7 @@ import Home from './pages/Home';
 function HomeOrRedirect() {
   const { token } = useAuth();
   if (token) return <Navigate to="/recents" replace />;
-  return (
-    <>
-      <Navbar />
-      <Home />
-    </>
-  );
+  return <Home />;
 }
 import Signup from './pages/Signup';
 import Login from './pages/Login';
@@ -61,6 +56,9 @@ import AdminAnalytics from './pages/admin/AdminAnalytics';
 import AdminAnalyticsDetail from './pages/admin/AdminAnalyticsDetail';
 import AdminAffiliates from './pages/admin/AdminAffiliates';
 import AdminNotifications from './pages/admin/AdminNotifications';
+import SiteBuilder from './pages/admin/site/SiteBuilder';
+import SiteSeo from './pages/admin/site/SiteSeo';
+import SiteEnvironment from './pages/admin/site/SiteEnvironment';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
 import AdminProtectedRoute from './components/AdminProtectedRoute';
@@ -361,6 +359,37 @@ function App() {
                 <AdminProtectedRoute>
                   <AdminLayout>
                     <AdminNotifications />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/adminbobby/site/builder"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <SiteBuilder />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+            <Route
+              path="/adminbobby/site/seo"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <SiteSeo />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+            <Route
+              path="/adminbobby/site/environment"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <SiteEnvironment />
                   </AdminLayout>
                 </AdminProtectedRoute>
               }

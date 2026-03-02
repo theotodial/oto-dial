@@ -37,13 +37,16 @@ const isPasswordValid = async (inputPassword, storedPassword) => {
 
 const buildAdminUserResponse = (user) => {
   const adminRoles = getAdminRolesForUser(user);
+  const normalizedEmail = String(user.email || "").toLowerCase().trim();
+  const isPrimaryAdmin = normalizedEmail === PRIMARY_ADMIN_EMAIL.toLowerCase();
   return {
     id: user._id,
     email: user.email,
     name: user.name || "Admin",
     role: user.role,
     adminRoles,
-    allowedModules: adminRoles
+    allowedModules: adminRoles,
+    isPrimaryAdmin
   };
 };
 

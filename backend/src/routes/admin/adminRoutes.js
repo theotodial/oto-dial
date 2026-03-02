@@ -23,6 +23,7 @@ import adminActivationFailures from "./adminActivationFailures.js";
 import adminAffiliates from "./adminAffiliates.js";
 import adminNotifications from "./adminNotifications.js";
 import Plan from "../../models/Plan.js";
+import adminSite from "./adminSite.js";
 
 const router = express.Router();
 
@@ -51,6 +52,9 @@ router.use("/support", adminSupport);
 
 // Admin team management
 router.use("/team", adminTeam);
+
+// Site builder / seo / env manager
+router.use("/site", adminSite);
 
 // Affiliate management and admin notifications
 router.use("/", adminAffiliates);

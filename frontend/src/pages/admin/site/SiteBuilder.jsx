@@ -1,0 +1,1538 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Reorder } from "framer-motion";
+import API from "../../../api";
+import HomepageRenderer from "../../../components/site/HomepageRenderer";
+import SiteHeader from "../../../components/site/SiteHeader";
+import ExistingHomepagePreview from "../../../components/site/ExistingHomepagePreview";
+import RichTextEditor from "../../../components/admin/RichTextEditor";
+import MediaLibrary from "../../../components/admin/MediaLibrary";
+
+const DEFAULT_VIEWPORT = "desktop";
+
+const SECTION_TEMPLATES = {
+  hero: () => ({
+    type: "hero",
+    hidden: false,
+    settings: {
+      heading: "Get your virtual phone number today",
+      subheading: "Simple calling + SMS for travelers and remote work.",
+      buttonText: "Get started",
+      buttonLink: "/signup",
+      align: "left",
+      backgroundImage: ""
+    }
+  }),
+  text: () => ({
+    type: "text",
+    hidden: false,
+    settings: {
+      html: "<h2>Why OTO DIAL?</h2><p>Write your content here.</p>",
+      align: "left"
+    }
+  }),
+  features_grid: () => ({
+    type: "features_grid",
+    hidden: false,
+    settings: {
+      title: "Features",
+      items: [
+        { id: "f1", title: "Global calling", description: "Call anywhere with transparent pricing." },
+        { id: "f2", title: "SMS included", description: "Send messages from your virtual number." },
+        { id: "f3", title: "Fast setup", description: "Start in minutes." }
+      ]
+    }
+  }),
+  faq: () => ({
+    type: "faq",
+    hidden: false,
+    settings: {
+      title: "Frequently Asked Questions",
+      items: [
+        { id: "q1", q: "How does it work?", a: "You buy a number and start calling/SMS from the app." }
+      ]
+    }
+  }),
+  cta: () => ({
+    type: "cta",
+    hidden: false,
+    settings: {
+      heading: "Ready to start?",
+      subheading: "Choose a plan and get your number today.",
+      primaryButtonText: "View pricing",
+      primaryButtonLink: "/billing",
+      secondaryButtonText: "Sign up",
+      secondaryButtonLink: "/signup"
+    }
+  }),
+  spacer: () => ({
+    type: "spacer",
+    hidden: false,
+    settings: { heightPx: 32 }
+  }),
+  custom_html: () => ({
+    type: "custom_html",
+    hidden: false,
+    settings: { html: "<div>Custom HTML</div>" }
+  }),
+  image_text: () => ({
+    type: "image_text",
+    hidden: false,
+    settings: {
+      imageUrl: "",
+      imageSide: "left",
+      heading: "Built for global calling",
+      html: "<p>Add your copy here.</p>"
+    }
+  }),
+  testimonials: () => ({
+    type: "testimonials",
+    hidden: false,
+    settings: {
+      title: "Loved by customers",
+      items: [
+        { id: "t1", name: "Alex", role: "Freelancer", quote: "Setup was super fast and the call quality is great." },
+        { id: "t2", name: "Sam", role: "Traveler", quote: "I got a local number abroad and stayed reachable." },
+        { id: "t3", name: "Taylor", role: "Remote worker", quote: "Perfect for international clients." }
+      ]
+    }
+  })
+};
+
+function createSectionId() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `sec_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  }
+}
+
+const buildStarterTemplate = () => {
+  return [
+    { id: createSectionId(), ...SECTION_TEMPLATES.hero() },
+    { id: createSectionId(), ...SECTION_TEMPLATES.features_grid() },
+    { id: createSectionId(), ...SECTION_TEMPLATES.image_text() },
+    { id: createSectionId(), ...SECTION_TEMPLATES.testimonials() },
+    { id: createSectionId(), ...SECTION_TEMPLATES.faq() },
+    { id: createSectionId(), ...SECTION_TEMPLATES.cta() }
+  ];
+};
+
+function normalizeBuilderDoc(input) {
+  const doc = input && typeof input === "object" ? input : {};
+  return {
+    siteKey: doc.siteKey || "default",
+    published: doc.published === true,
+    sections: Array.isArray(doc.sections)
+      ? doc.sections.map((s) => ({ ...s, id: s?.id || createSectionId() }))
+      : [],
+    themeSettings: doc.themeSettings && typeof doc.themeSettings === "object" ? doc.themeSettings : {},
+    headerConfig: doc.headerConfig && typeof doc.headerConfig === "object" ? doc.headerConfig : {},
+    updatedAt: doc.updatedAt || null
+  };
+}
+
+function SkeletonCard() {
+  return (
+    <div className="animate-pulse rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+      <div className="h-4 w-40 rounded bg-gray-200 dark:bg-slate-700" />
+      <div className="mt-3 space-y-2">
+        <div className="h-3 w-full rounded bg-gray-200 dark:bg-slate-700" />
+        <div className="h-3 w-5/6 rounded bg-gray-200 dark:bg-slate-700" />
+        <div className="h-3 w-2/3 rounded bg-gray-200 dark:bg-slate-700" />
+      </div>
+    </div>
+  );
+}
+
+function SiteBuilder() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [viewport, setViewport] = useState(DEFAULT_VIEWPORT);
+  const [builderDoc, setBuilderDoc] = useState(null);
+  const [selectedSectionId, setSelectedSectionId] = useState("");
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  const [mediaPickerTarget, setMediaPickerTarget] = useState(null);
+  const [inlineEdit, setInlineEdit] = useState(null);
+  const [richEdit, setRichEdit] = useState(null);
+  const isMountedRef = useRef(true);
+  const inlineDraftRef = useRef("");
+  const lastSavedHashRef = useRef("");
+  const [history, setHistory] = useState({ past: [], future: [] });
+  const applyingHistoryRef = useRef(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    const load = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const res = await API.get("/api/admin/site/builder");
+        if (res.error || res.data?.success === false) {
+          throw new Error(res.error || res.data?.error || "Failed to load builder");
+        }
+        if (!isMountedRef.current) return;
+        const normalized = normalizeBuilderDoc(res.data?.builder || null);
+        setBuilderDoc(normalized);
+        lastSavedHashRef.current = JSON.stringify({
+          published: normalized.published === true,
+          sections: normalized.sections || [],
+          themeSettings: normalized.themeSettings || {},
+          headerConfig: normalized.headerConfig || {}
+        });
+        if (!selectedSectionId && normalized.sections.length) {
+          setSelectedSectionId(normalized.sections[0].id);
+        }
+      } catch (err) {
+        if (!isMountedRef.current) return;
+        setError(err?.message || "Failed to load builder");
+      } finally {
+        if (isMountedRef.current) setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!builderDoc) return;
+    if (applyingHistoryRef.current) return;
+    // Push to undo stack on any local change (manual-save workflow).
+    setHistory((prev) => {
+      const snapshot = prev.past.length ? prev.past[prev.past.length - 1] : null;
+      const nextSnapshot = JSON.stringify({
+        published: builderDoc.published === true,
+        sections: builderDoc.sections || [],
+        themeSettings: builderDoc.themeSettings || {},
+        headerConfig: builderDoc.headerConfig || {}
+      });
+      if (snapshot === nextSnapshot) return prev;
+      const past = [...prev.past, nextSnapshot].slice(-50);
+      return { past, future: [] };
+    });
+  }, [builderDoc]);
+
+  const previewWidthClass = useMemo(() => {
+    if (viewport === "mobile") return "w-[375px]";
+    if (viewport === "tablet") return "w-[768px]";
+    return "w-full";
+  }, [viewport]);
+
+  const handleSave = async () => {
+    if (!builderDoc) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const res = await API.put("/api/admin/site/builder", builderDoc);
+      if (res.error || res.data?.success === false) {
+        throw new Error(res.error || res.data?.error || "Failed to save");
+      }
+      if (!isMountedRef.current) return;
+      setNotice("Saved.");
+      const normalized = normalizeBuilderDoc(res.data?.builder || builderDoc);
+      setBuilderDoc(normalized);
+      lastSavedHashRef.current = JSON.stringify({
+        published: normalized.published === true,
+        sections: normalized.sections || [],
+        themeSettings: normalized.themeSettings || {},
+        headerConfig: normalized.headerConfig || {}
+      });
+      setTimeout(() => {
+        if (isMountedRef.current) setNotice("");
+      }, 1200);
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setError(err?.message || "Failed to save");
+    } finally {
+      if (isMountedRef.current) setSaving(false);
+    }
+  };
+
+  const handleRestoreOriginal = async () => {
+    const confirmed = window.confirm(
+      "Restore the original homepage? This will UNPUBLISH and clear the Site Builder content."
+    );
+    if (!confirmed) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const res = await API.post("/api/admin/site/builder/reset", {});
+      if (res.error || res.data?.success === false) {
+        throw new Error(res.error || res.data?.error || "Failed to restore original homepage");
+      }
+      const normalized = normalizeBuilderDoc(res.data?.builder || null);
+      setBuilderDoc(normalized);
+      setSelectedSectionId(normalized.sections?.[0]?.id || "");
+      setHistory({ past: [], future: [] });
+      setNotice("Restored original homepage (builder unpublished).");
+      setTimeout(() => {
+        if (isMountedRef.current) setNotice("");
+      }, 1400);
+    } catch (err) {
+      setError(err?.message || "Failed to restore original homepage");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const canUndo = history.past.length > 1; // current state included
+  const canRedo = history.future.length > 0;
+
+  const applySnapshot = (json) => {
+    try {
+      const parsed = JSON.parse(json);
+      applyingHistoryRef.current = true;
+      setBuilderDoc((prev) => ({
+        ...normalizeBuilderDoc(prev),
+        published: parsed.published === true,
+        sections: parsed.sections || [],
+        themeSettings: parsed.themeSettings || {},
+        headerConfig: parsed.headerConfig || {}
+      }));
+    } finally {
+      setTimeout(() => {
+        applyingHistoryRef.current = false;
+      }, 0);
+    }
+  };
+
+  const handleUndo = () => {
+    setHistory((prev) => {
+      if (prev.past.length <= 1) return prev;
+      const past = [...prev.past];
+      const current = past.pop();
+      const previous = past[past.length - 1];
+      applySnapshot(previous);
+      return { past, future: [current, ...prev.future] };
+    });
+  };
+
+  const handleRedo = () => {
+    setHistory((prev) => {
+      if (prev.future.length === 0) return prev;
+      const [next, ...rest] = prev.future;
+      applySnapshot(next);
+      return { past: [...prev.past, next].slice(-50), future: rest };
+    });
+  };
+
+  const createStarterHomepage = () => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const hasSections = (normalized.sections || []).length > 0;
+      if (hasSections) return normalized;
+      return {
+        ...normalized,
+        sections: buildStarterTemplate(),
+        headerConfig: {
+          ...(normalized.headerConfig || {}),
+          brandText: normalized.headerConfig?.brandText || "OTO DIAL",
+          sticky: normalized.headerConfig?.sticky !== false,
+          items:
+            Array.isArray(normalized.headerConfig?.items) && normalized.headerConfig.items.length
+              ? normalized.headerConfig.items
+              : [
+                  { id: createSectionId(), label: "Pricing", href: "/billing" },
+                  { id: createSectionId(), label: "Blog", href: "/blog" },
+                  { id: createSectionId(), label: "Contact", href: "/contact" }
+                ]
+        }
+      };
+    });
+  };
+
+  const importCurrentHomepage = () => {
+    const hero = {
+      id: createSectionId(),
+      type: "hero",
+      hidden: false,
+      settings: {
+        heading: "Virtual Phone Numbers for Calling & SMS Anywhere",
+        subheading:
+          "Get a local phone number in the US, UK, and other countries. Make calls and send SMS from anywhere—perfect for travelers, freelancers, and remote workers. A simple alternative to Google Voice and TextNow.",
+        buttonText: "View Pricing",
+        buttonLink: "#pricing",
+        align: "center",
+        backgroundImage: ""
+      }
+    };
+    const features = {
+      id: createSectionId(),
+      type: "features_grid",
+      hidden: false,
+      settings: {
+        title: "Call and Text Using a Local Number",
+        items: [
+          {
+            id: createSectionId(),
+            title: "Virtual Phone Numbers",
+            description:
+              "Get a local phone number in the US, UK, and other countries instantly. Perfect for travelers and remote workers. No contracts, activate in under 60 seconds."
+          },
+          {
+            id: createSectionId(),
+            title: "Smart Call Routing",
+            description:
+              "Intelligently route calls based on time, location, and availability. Never miss an important call again."
+          },
+          {
+            id: createSectionId(),
+            title: "Call Recording",
+            description:
+              "Automatically record and transcribe all your calls. Perfect for training, quality assurance, and compliance."
+          },
+          {
+            id: createSectionId(),
+            title: "Two-Way SMS Platform",
+            description:
+              "Send and receive SMS messages from your virtual phone number. Perfect for staying connected with clients, family, and contacts worldwide."
+          },
+          {
+            id: createSectionId(),
+            title: "Call Analytics & Reporting",
+            description:
+              "Track your calls and SMS usage. Monitor your communications with simple reporting and insights."
+          },
+          {
+            id: createSectionId(),
+            title: "Secure & Reliable",
+            description:
+              "Built on carrier-grade infrastructure for reliable voice and SMS delivery. Your communications are secure and private."
+          }
+        ]
+      }
+    };
+    const howItWorks = {
+      id: createSectionId(),
+      type: "features_grid",
+      hidden: false,
+      settings: {
+        title: "Get Started in 3 Simple Steps",
+        items: [
+          {
+            id: createSectionId(),
+            title: "Buy Virtual Phone Number",
+            description:
+              "Browse and buy virtual phone numbers from 100+ countries. Filter by location, features, or price to find the perfect number."
+          },
+          {
+            id: createSectionId(),
+            title: "Configure Settings",
+            description:
+              "Set up call routing, voicemail, and automation rules in minutes. Our intuitive dashboard makes it easy."
+          },
+          {
+            id: createSectionId(),
+            title: "Start Calling & Sending SMS",
+            description:
+              "Begin making and receiving calls, plus send and receive SMS messages immediately."
+          }
+        ]
+      }
+    };
+    const pricingCta = {
+      id: createSectionId(),
+      type: "cta",
+      hidden: false,
+      settings: {
+        heading: "Simple, transparent pricing",
+        subheading: "Choose a plan and get your number today.",
+        primaryButtonText: "View pricing",
+        primaryButtonLink: "/billing",
+        secondaryButtonText: "Sign up",
+        secondaryButtonLink: "/signup"
+      }
+    };
+
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      return {
+        ...normalized,
+        sections: [hero, features, howItWorks, pricingCta],
+        themeSettings: {
+          ...(normalized.themeSettings || {}),
+          primaryColor: normalized.themeSettings?.primaryColor || "#4f46e5",
+          secondaryColor: normalized.themeSettings?.secondaryColor || "#9333ea",
+          borderRadius: normalized.themeSettings?.borderRadius ?? 12
+        },
+        headerConfig: {
+          ...(normalized.headerConfig || {}),
+          brandText: normalized.headerConfig?.brandText || "OTO DIAL",
+          sticky: normalized.headerConfig?.sticky !== false,
+          items:
+            Array.isArray(normalized.headerConfig?.items) && normalized.headerConfig.items.length
+              ? normalized.headerConfig.items
+              : [
+                  { id: createSectionId(), label: "Pricing", href: "#pricing" },
+                  { id: createSectionId(), label: "Blog", href: "/blog" },
+                  { id: createSectionId(), label: "Contact", href: "/contact" }
+                ]
+        }
+      };
+    });
+  };
+
+  const addSection = (type) => {
+    const factory = SECTION_TEMPLATES[type];
+    if (!factory) return;
+    const section = { id: createSectionId(), ...factory() };
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      return { ...normalized, sections: [...(normalized.sections || []), section] };
+    });
+    setSelectedSectionId(section.id);
+  };
+
+  const updateSection = (id, patch) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const nextSections = (normalized.sections || []).map((s) => {
+        if (s.id !== id) return s;
+        return {
+          ...s,
+          ...(patch || {}),
+          settings: { ...(s.settings || {}), ...((patch || {}).settings || {}) }
+        };
+      });
+      return { ...normalized, sections: nextSections };
+    });
+  };
+
+  const setSectionValueByPath = (sectionId, path, value) => {
+    const tokens = String(path || "")
+      .split(".")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (tokens.length === 0) return;
+
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const nextSections = (normalized.sections || []).map((s) => {
+        if (s.id !== sectionId) return s;
+        const next = JSON.parse(JSON.stringify(s || {}));
+        let cursor = next;
+        for (let i = 0; i < tokens.length; i += 1) {
+          const token = tokens[i];
+          const isLast = i === tokens.length - 1;
+          const key = /^[0-9]+$/.test(token) ? Number(token) : token;
+          if (isLast) {
+            cursor[key] = value;
+          } else {
+            if (cursor[key] === undefined || cursor[key] === null) {
+              const nextToken = tokens[i + 1];
+              cursor[key] = /^[0-9]+$/.test(nextToken) ? [] : {};
+            }
+            cursor = cursor[key];
+          }
+        }
+        return next;
+      });
+      return { ...normalized, sections: nextSections };
+    });
+  };
+
+  const deleteSection = (id) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const nextSections = (normalized.sections || []).filter((s) => s.id !== id);
+      return { ...normalized, sections: nextSections };
+    });
+    setSelectedSectionId((prev) => (prev === id ? "" : prev));
+  };
+
+  const duplicateSection = (id) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const idx = (normalized.sections || []).findIndex((s) => s.id === id);
+      if (idx < 0) return normalized;
+      const original = normalized.sections[idx];
+      const clone = {
+        ...original,
+        id: createSectionId(),
+        settings: JSON.parse(JSON.stringify(original.settings || {}))
+      };
+      const nextSections = [...normalized.sections];
+      nextSections.splice(idx + 1, 0, clone);
+      return { ...normalized, sections: nextSections };
+    });
+  };
+
+  const selectedSection = useMemo(() => {
+    const sections = builderDoc?.sections || [];
+    return sections.find((s) => s.id === selectedSectionId) || null;
+  }, [builderDoc?.sections, selectedSectionId]);
+
+  const updateHeader = (patch) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      return {
+        ...normalized,
+        headerConfig: {
+          ...(normalized.headerConfig || {}),
+          ...(patch || {})
+        }
+      };
+    });
+  };
+
+  const updateHeaderItem = (id, patch) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const items = Array.isArray(normalized.headerConfig?.items) ? normalized.headerConfig.items : [];
+      const nextItems = items.map((it) => (it?.id === id ? { ...it, ...(patch || {}) } : it));
+      return { ...normalized, headerConfig: { ...(normalized.headerConfig || {}), items: nextItems } };
+    });
+  };
+
+  const deleteHeaderItem = (id) => {
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const items = Array.isArray(normalized.headerConfig?.items) ? normalized.headerConfig.items : [];
+      const nextItems = items.filter((it) => it?.id !== id);
+      return { ...normalized, headerConfig: { ...(normalized.headerConfig || {}), items: nextItems } };
+    });
+  };
+
+  const addHeaderItem = () => {
+    const id = createSectionId();
+    setBuilderDoc((prev) => {
+      const normalized = normalizeBuilderDoc(prev);
+      const items = Array.isArray(normalized.headerConfig?.items) ? normalized.headerConfig.items : [];
+      return {
+        ...normalized,
+        headerConfig: {
+          ...(normalized.headerConfig || {}),
+          items: [...items, { id, label: "Menu", href: "/" }]
+        }
+      };
+    });
+  };
+
+  const openMediaPicker = (target) => {
+    setMediaPickerTarget(target);
+    setMediaPickerOpen(true);
+  };
+
+  const handleMediaSelect = (url) => {
+    if (!url) return;
+    if (mediaPickerTarget === "header.logo") {
+      updateHeader({ logoUrl: url });
+    }
+    if (mediaPickerTarget === "section.hero.bg" && selectedSection?.type === "hero") {
+      updateSection(selectedSection.id, { settings: { backgroundImage: url } });
+    }
+    if (mediaPickerTarget === "section.image_text.image" && selectedSection?.type === "image_text") {
+      updateSection(selectedSection.id, { settings: { imageUrl: url } });
+    }
+    setMediaPickerOpen(false);
+    setMediaPickerTarget(null);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-slate-900 p-6">
+        <div className="mx-auto max-w-7xl space-y-5">
+          <SkeletonCard />
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <SkeletonCard />
+            <div className="lg:col-span-2">
+              <SkeletonCard />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-900">
+      {/* Professional top bar */}
+      <div className="sticky top-0 z-50 bg-white/90 dark:bg-slate-900/80 backdrop-blur border-b border-gray-200 dark:border-slate-700">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+              Site / Homepage
+            </div>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
+              Visual Builder
+            </h1>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              {notice ? notice : builderDoc?.published ? "Published" : "Not published (safe)"}
+            </div>
+
+            <button
+              onClick={handleUndo}
+              disabled={!canUndo}
+              className="px-3 py-2 rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 text-sm font-semibold"
+            >
+              Undo
+            </button>
+            <button
+              onClick={handleRedo}
+              disabled={!canRedo}
+              className="px-3 py-2 rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 text-sm font-semibold"
+            >
+              Redo
+            </button>
+
+            <div className="inline-flex rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
+              {[
+                { key: "desktop", label: "Desktop" },
+                { key: "tablet", label: "Tablet" },
+                { key: "mobile", label: "Mobile" }
+              ].map((opt) => (
+                <button
+                  key={opt.key}
+                  onClick={() => setViewport(opt.key)}
+                  className={`px-3 py-2 text-xs font-semibold ${
+                    viewport === opt.key
+                      ? "bg-indigo-600 text-white"
+                      : "bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() =>
+                setBuilderDoc((prev) => ({ ...normalizeBuilderDoc(prev), published: false }))
+              }
+              disabled={!builderDoc?.published}
+              className="px-3 py-2 rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 text-sm font-semibold"
+              title="Stops the builder from affecting the live homepage"
+            >
+              Unpublish
+            </button>
+            <button
+              onClick={() =>
+                setBuilderDoc((prev) => ({ ...normalizeBuilderDoc(prev), published: true }))
+              }
+              disabled={builderDoc?.published || (builderDoc?.sections || []).length === 0}
+              className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 text-sm font-semibold"
+              title="Publish makes the builder take over the live homepage"
+            >
+              Publish
+            </button>
+
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 text-sm font-semibold"
+              title="Save changes to database (does not publish unless you click Publish)"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+
+            <button
+              onClick={handleRestoreOriginal}
+              disabled={saving}
+              className="px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800 disabled:opacity-50 text-sm font-semibold"
+              title="Unpublish + clear builder content"
+            >
+              Restore original
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+
+        {error && (
+          <div className="mb-5 p-4 rounded-lg border border-red-300 bg-red-50 dark:bg-red-900/20 dark:border-red-800 text-red-700 dark:text-red-300 text-sm">
+            {error}
+          </div>
+        )}
+        {/* Notice moved to top bar; keep error here */}
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Left: controls */}
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-700 p-4">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
+              Sections
+            </h2>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Add, reorder (drag), duplicate, hide, and edit sections.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {Object.keys(SECTION_TEMPLATES).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => addSection(type)}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
+                >
+                  + {type}
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 space-y-2">
+              {(builderDoc?.sections || []).length === 0 ? (
+                <div className="text-sm text-gray-600 dark:text-gray-300 rounded-lg border border-dashed border-gray-300 dark:border-slate-600 p-4">
+                  No sections yet.
+                </div>
+              ) : (
+                <Reorder.Group
+                  axis="y"
+                  values={builderDoc?.sections || []}
+                  onReorder={(nextOrder) => {
+                    setBuilderDoc((prev) => ({ ...normalizeBuilderDoc(prev), sections: nextOrder }));
+                  }}
+                  className="space-y-2"
+                >
+                  {(builderDoc?.sections || []).map((section) => {
+                    const isSelected = section.id === selectedSectionId;
+                    return (
+                      <Reorder.Item
+                        key={section.id}
+                        value={section}
+                        className={`rounded-lg border px-3 py-2 cursor-grab active:cursor-grabbing ${
+                          isSelected
+                            ? "border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20"
+                            : "border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/40"
+                        }`}
+                        onClick={() => setSelectedSectionId(section.id)}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                              {section.type}
+                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              {section.hidden ? "Hidden" : "Visible"}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                updateSection(section.id, { hidden: !section.hidden });
+                              }}
+                              className="px-2 py-1 rounded-md text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"
+                              title={section.hidden ? "Show section" : "Hide section"}
+                            >
+                              {section.hidden ? "Show" : "Hide"}
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                duplicateSection(section.id);
+                              }}
+                              className="px-2 py-1 rounded-md text-xs bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"
+                              title="Duplicate section"
+                            >
+                              Dup
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteSection(section.id);
+                              }}
+                              className="px-2 py-1 rounded-md text-xs bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800"
+                              title="Delete section"
+                            >
+                              Del
+                            </button>
+                          </div>
+                        </div>
+                      </Reorder.Item>
+                    );
+                  })}
+                </Reorder.Group>
+              )}
+            </div>
+
+            {/* Inspector */}
+            <div className="mt-5 pt-5 border-t border-gray-200 dark:border-slate-700">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                Inspector
+              </h3>
+              {!selectedSection ? (
+                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  Select a section to edit.
+                </div>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  {selectedSection.type === "hero" && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Heading
+                        </label>
+                        <input
+                          value={selectedSection.settings?.heading || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { heading: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Subheading
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={selectedSection.settings?.subheading || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { subheading: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                            Button text
+                          </label>
+                          <input
+                            value={selectedSection.settings?.buttonText || ""}
+                            onChange={(e) =>
+                              updateSection(selectedSection.id, { settings: { buttonText: e.target.value } })
+                            }
+                            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                            Button link
+                          </label>
+                          <input
+                            value={selectedSection.settings?.buttonLink || ""}
+                            onChange={(e) =>
+                              updateSection(selectedSection.id, { settings: { buttonLink: e.target.value } })
+                            }
+                            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Background image
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={selectedSection.settings?.backgroundImage || ""}
+                            onChange={(e) =>
+                              updateSection(selectedSection.id, { settings: { backgroundImage: e.target.value } })
+                            }
+                            placeholder="https://..."
+                            className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs font-mono"
+                          />
+                          <button
+                            onClick={() => openMediaPicker("section.hero.bg")}
+                            className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold"
+                          >
+                            Upload
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {selectedSection.type === "text" && (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">
+                        Rich text
+                      </label>
+                      <div className="rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+                        <RichTextEditor
+                          value={selectedSection.settings?.html || ""}
+                          onChange={(val) =>
+                            updateSection(selectedSection.id, { settings: { html: val } })
+                          }
+                          placeholder="Write homepage content..."
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedSection.type === "cta" && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Heading
+                        </label>
+                        <input
+                          value={selectedSection.settings?.heading || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { heading: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Subheading
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={selectedSection.settings?.subheading || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { subheading: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedSection.type === "image_text" && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Heading
+                        </label>
+                        <input
+                          value={selectedSection.settings?.heading || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { heading: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                            Image side
+                          </label>
+                          <select
+                            value={selectedSection.settings?.imageSide || "left"}
+                            onChange={(e) =>
+                              updateSection(selectedSection.id, { settings: { imageSide: e.target.value } })
+                            }
+                            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                          >
+                            <option value="left">Left</option>
+                            <option value="right">Right</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                            Image URL
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={selectedSection.settings?.imageUrl || ""}
+                              onChange={(e) =>
+                                updateSection(selectedSection.id, { settings: { imageUrl: e.target.value } })
+                              }
+                              placeholder="https://..."
+                              className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs font-mono"
+                            />
+                            <button
+                              onClick={() => openMediaPicker("section.image_text.image")}
+                              className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold"
+                              title="Upload (uses media library)"
+                            >
+                              Upload
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">
+                          Body
+                        </label>
+                        <div className="rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+                          <RichTextEditor
+                            value={selectedSection.settings?.html || ""}
+                            onChange={(val) => updateSection(selectedSection.id, { settings: { html: val } })}
+                            placeholder="Write section content..."
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {selectedSection.type === "testimonials" && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                          Title
+                        </label>
+                        <input
+                          value={selectedSection.settings?.title || ""}
+                          onChange={(e) =>
+                            updateSection(selectedSection.id, { settings: { title: e.target.value } })
+                          }
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        {(selectedSection.settings?.items || []).slice(0, 6).map((it, idx) => (
+                          <div
+                            key={it.id || idx}
+                            className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/40 p-2"
+                          >
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                value={it.name || ""}
+                                onChange={(e) => {
+                                  const items = [...(selectedSection.settings?.items || [])];
+                                  items[idx] = { ...(items[idx] || {}), name: e.target.value };
+                                  updateSection(selectedSection.id, { settings: { items } });
+                                }}
+                                placeholder="Name"
+                                className="px-2 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs"
+                              />
+                              <input
+                                value={it.role || ""}
+                                onChange={(e) => {
+                                  const items = [...(selectedSection.settings?.items || [])];
+                                  items[idx] = { ...(items[idx] || {}), role: e.target.value };
+                                  updateSection(selectedSection.id, { settings: { items } });
+                                }}
+                                placeholder="Role"
+                                className="px-2 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs"
+                              />
+                            </div>
+                            <textarea
+                              rows={2}
+                              value={it.quote || ""}
+                              onChange={(e) => {
+                                const items = [...(selectedSection.settings?.items || [])];
+                                items[idx] = { ...(items[idx] || {}), quote: e.target.value };
+                                updateSection(selectedSection.id, { settings: { items } });
+                              }}
+                              placeholder="Quote"
+                              className="mt-2 w-full px-2 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs"
+                            />
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => {
+                            const items = Array.isArray(selectedSection.settings?.items)
+                              ? [...selectedSection.settings.items]
+                              : [];
+                            items.push({
+                              id: createSectionId(),
+                              name: "Customer",
+                              role: "",
+                              quote: ""
+                            });
+                            updateSection(selectedSection.id, { settings: { items } });
+                          }}
+                          className="px-3 py-2 rounded-lg bg-gray-900 text-white hover:bg-black dark:bg-white dark:text-black dark:hover:bg-gray-100 text-xs font-semibold"
+                        >
+                          + Add testimonial
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {selectedSection.type === "spacer" && (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                        Height (px)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={240}
+                        value={selectedSection.settings?.heightPx || 0}
+                        onChange={(e) =>
+                          updateSection(selectedSection.id, { settings: { heightPx: Number(e.target.value || 0) } })
+                        }
+                        className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Theme */}
+            <div className="mt-5 pt-5 border-t border-gray-200 dark:border-slate-700">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                Theme
+              </h3>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                    Primary
+                  </label>
+                  <input
+                    type="color"
+                    value={builderDoc?.themeSettings?.primaryColor || "#4f46e5"}
+                    onChange={(e) =>
+                      setBuilderDoc((prev) => ({
+                        ...normalizeBuilderDoc(prev),
+                        themeSettings: { ...(normalizeBuilderDoc(prev).themeSettings || {}), primaryColor: e.target.value }
+                      }))
+                    }
+                    className="w-full h-10 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                    Secondary
+                  </label>
+                  <input
+                    type="color"
+                    value={builderDoc?.themeSettings?.secondaryColor || "#9333ea"}
+                    onChange={(e) =>
+                      setBuilderDoc((prev) => ({
+                        ...normalizeBuilderDoc(prev),
+                        themeSettings: { ...(normalizeBuilderDoc(prev).themeSettings || {}), secondaryColor: e.target.value }
+                      }))
+                    }
+                    className="w-full h-10 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+              </div>
+              <div className="mt-3">
+                <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                  Border radius
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={24}
+                  value={Number(builderDoc?.themeSettings?.borderRadius || 12)}
+                  onChange={(e) =>
+                    setBuilderDoc((prev) => ({
+                      ...normalizeBuilderDoc(prev),
+                      themeSettings: { ...(normalizeBuilderDoc(prev).themeSettings || {}), borderRadius: Number(e.target.value) }
+                    }))
+                  }
+                  className="w-full"
+                />
+              </div>
+            </div>
+
+            {/* Header */}
+            <div className="mt-5 pt-5 border-t border-gray-200 dark:border-slate-700">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                  Header
+                </h3>
+                <button
+                  onClick={addHeaderItem}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-gray-900 text-white hover:bg-black dark:bg-white dark:text-black dark:hover:bg-gray-100"
+                >
+                  + Menu item
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={builderDoc?.headerConfig?.sticky !== false}
+                    onChange={(e) => updateHeader({ sticky: e.target.checked })}
+                  />
+                  Sticky header
+                </label>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                      Background
+                    </label>
+                    <input
+                      type="text"
+                      value={builderDoc?.headerConfig?.background || ""}
+                      onChange={(e) => updateHeader({ background: e.target.value })}
+                      placeholder="rgba(255,255,255,0.9)"
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                      Brand text
+                    </label>
+                    <input
+                      type="text"
+                      value={builderDoc?.headerConfig?.brandText || "OTO DIAL"}
+                      onChange={(e) => updateHeader({ brandText: e.target.value })}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                    Logo
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="url"
+                      value={builderDoc?.headerConfig?.logoUrl || ""}
+                      onChange={(e) => updateHeader({ logoUrl: e.target.value })}
+                      placeholder="https://..."
+                      className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs font-mono"
+                    />
+                    <button
+                      onClick={() => openMediaPicker("header.logo")}
+                      className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold"
+                    >
+                      Upload
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/40 p-3">
+                  {(builderDoc?.headerConfig?.items || []).length === 0 ? (
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      No menu items yet.
+                    </div>
+                  ) : (
+                    <Reorder.Group
+                      axis="y"
+                      values={builderDoc?.headerConfig?.items || []}
+                      onReorder={(nextOrder) => updateHeader({ items: nextOrder })}
+                      className="space-y-2"
+                    >
+                      {(builderDoc?.headerConfig?.items || []).map((it) => (
+                        <Reorder.Item
+                          key={it.id}
+                          value={it}
+                          className="rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2 cursor-grab active:cursor-grabbing"
+                        >
+                          <div className="grid grid-cols-1 gap-2">
+                            <input
+                              value={it.label || ""}
+                              onChange={(e) => updateHeaderItem(it.id, { label: e.target.value })}
+                              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs"
+                              placeholder="Label"
+                            />
+                            <div className="flex items-center gap-2">
+                              <input
+                                value={it.href || ""}
+                                onChange={(e) => updateHeaderItem(it.id, { href: e.target.value })}
+                                className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white text-xs font-mono"
+                                placeholder="/path"
+                              />
+                              <button
+                                onClick={() => deleteHeaderItem(it.id)}
+                                className="px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800 text-xs font-semibold"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        </Reorder.Item>
+                      ))}
+                    </Reorder.Group>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right: preview */}
+          <div className="lg:col-span-2 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-700 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+                Live Preview
+              </h2>
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {builderDoc?.updatedAt ? `Updated ${new Date(builderDoc.updatedAt).toLocaleString()}` : ""}
+              </span>
+            </div>
+
+            <div className="w-full overflow-auto rounded-xl bg-gray-100 dark:bg-slate-900 p-4">
+              <div
+                className={`mx-auto ${previewWidthClass} min-h-[560px] rounded-xl bg-white dark:bg-slate-800 shadow border border-gray-200 dark:border-slate-700`}
+              >
+                {(builderDoc?.sections || []).length === 0 ? (
+                  <>
+                    <div className="p-6 border-b border-gray-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                          Previewing your current live homepage (read-only)
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          To edit with Shopify-style controls, import it into the Site Builder JSON first.
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={importCurrentHomepage}
+                          className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-sm font-semibold"
+                        >
+                          Import current homepage
+                        </button>
+                        <button
+                          onClick={createStarterHomepage}
+                          className="px-4 py-2 rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-slate-700 text-sm font-semibold"
+                        >
+                          Start from template
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      className="relative"
+                      onClickCapture={(e) => {
+                        const link = e.target?.closest ? e.target.closest("a") : null;
+                        if (link) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }
+                      }}
+                    >
+                      <ExistingHomepagePreview />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <SiteHeader
+                      headerConfig={builderDoc?.headerConfig || {}}
+                      themeSettings={builderDoc?.themeSettings || {}}
+                      isBuilderPreview
+                    />
+                    <HomepageRenderer
+                      sections={builderDoc?.sections || []}
+                      themeSettings={builderDoc?.themeSettings || {}}
+                      renderHidden
+                      isBuilderPreview
+                      selectedSectionId={selectedSectionId}
+                      onSelectSection={(id) => setSelectedSectionId(id)}
+                      onRequestEdit={(req) => {
+                        if (!req?.sectionId || !req?.path) return;
+                        setSelectedSectionId(req.sectionId);
+                        if (req.kind === "richtext") {
+                          setRichEdit(req);
+                          return;
+                        }
+                        inlineDraftRef.current = String(req.value ?? "");
+                        setInlineEdit(req);
+                      }}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Inline editor popover */}
+      {inlineEdit && (
+        <div
+          className="fixed z-[60] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl p-3 w-[320px]"
+          style={{
+            top: Math.min((inlineEdit.rect?.bottom || 120) + 10, window.innerHeight - 160),
+            left: Math.min((inlineEdit.rect?.left || 24), window.innerWidth - 340)
+          }}
+        >
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+              {inlineEdit.label || "Edit"}
+            </div>
+            <button
+              onClick={() => setInlineEdit(null)}
+              className="text-xs text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+            >
+              Close
+            </button>
+          </div>
+          {inlineEdit.kind === "textarea" ? (
+            <textarea
+              autoFocus
+              defaultValue={inlineDraftRef.current}
+              rows={4}
+              onChange={(e) => {
+                inlineDraftRef.current = e.target.value;
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-white text-sm"
+            />
+          ) : (
+            <input
+              autoFocus
+              defaultValue={inlineDraftRef.current}
+              onChange={(e) => {
+                inlineDraftRef.current = e.target.value;
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-white text-sm"
+            />
+          )}
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              onClick={() => setInlineEdit(null)}
+              className="px-3 py-2 rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-slate-700 dark:text-gray-100 dark:hover:bg-slate-600 text-sm font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                setSectionValueByPath(inlineEdit.sectionId, inlineEdit.path, inlineDraftRef.current);
+                setInlineEdit(null);
+              }}
+              className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-sm font-semibold"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Rich text modal */}
+      {richEdit && (
+        <div className="fixed inset-0 z-[70] bg-black/50 p-4 overflow-y-auto">
+          <div className="max-w-4xl mx-auto bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xl p-5 my-10">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                {richEdit.label || "Edit content"}
+              </div>
+              <button
+                onClick={() => setRichEdit(null)}
+                className="px-3 py-2 rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-slate-700 dark:text-gray-100 dark:hover:bg-slate-600 text-sm font-semibold"
+              >
+                Close
+              </button>
+            </div>
+            <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              <RichTextEditor
+                value={String(richEdit.value ?? "")}
+                onChange={(val) => {
+                  setRichEdit((prev) => (prev ? { ...prev, value: val } : prev));
+                }}
+                placeholder="Write content..."
+              />
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setRichEdit(null)}
+                className="px-4 py-2 rounded-lg bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-slate-700 dark:text-gray-100 dark:hover:bg-slate-600 text-sm font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setSectionValueByPath(richEdit.sectionId, richEdit.path, richEdit.value ?? "");
+                  setRichEdit(null);
+                }}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-sm font-semibold"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <MediaLibrary
+        isOpen={mediaPickerOpen}
+        onClose={() => {
+          setMediaPickerOpen(false);
+          setMediaPickerTarget(null);
+        }}
+        onSelect={handleMediaSelect}
+      />
+    </div>
+  );
+}
+
+export default SiteBuilder;
+

@@ -49,6 +49,8 @@ import usageStatisticsRoutes from "./src/routes/usageStatistics.js";
 import supportRoutes from "./src/routes/supportRoutes.js";
 import blogRoutes from "./src/routes/blogRoutes.js";
 import analyticsRoutes from "./src/routes/analyticsRoutes.js";
+import sitePublicRoutes from "./src/routes/sitePublic.js";
+import NotFoundLog from "./src/models/NotFoundLog.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
 import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
@@ -238,6 +240,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/affiliate/auth", affiliateAuthRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/admin/auth", adminAuthRoutes); // Admin auth (no auth middleware needed for login)
+app.use("/api/site", sitePublicRoutes);
 
 // ========================
 // PROTECTED
@@ -302,6 +305,39 @@ app.get("/api/webhook-info", (req, res) => {
 
 app.get("/", (req, res) => {
   res.json({ success: true, message: "OTO DIAL API" });
+});
+
+// ========================
+// 404 MONITORING (API ONLY)
+// ========================
+app.use("/api", async (req, res, next) => {
+  try {
+    if (res.headersSent) return next();
+    const pathname = String(req.originalUrl || "").split("?")[0] || "";
+    const method = String(req.method || "GET").toUpperCase();
+
+    // Avoid logging noisy preflight OPTIONS.
+    if (method === "OPTIONS") {
+      return res.status(404).json({ success: false, error: "Not found" });
+    }
+
+    await NotFoundLog.findOneAndUpdate(
+      { path: pathname, method },
+      {
+        $inc: { count: 1 },
+        $set: {
+          lastSeenAt: new Date(),
+          lastIp: String(req.ip || ""),
+          lastUserAgent: String(req.get("user-agent") || "")
+        }
+      },
+      { upsert: true }
+    );
+  } catch (err) {
+    // Never crash on 404 logging.
+    console.warn("404 log failed:", err?.message || err);
+  }
+  return res.status(404).json({ success: false, error: "Not found" });
 });
 
 // Friendly payload-too-large response for clients (instead of raw HTML 413 pages).

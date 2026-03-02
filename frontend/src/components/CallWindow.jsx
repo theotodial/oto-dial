@@ -158,6 +158,7 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
   const toggleSpeaker = callContext?.toggleSpeaker || (() => {});
   const sendDTMF = callContext?.sendDTMF || (() => {});
   const minimizeCall = callContext?.minimizeCall || (() => {});
+  const callError = callContext?.error || null;
   const formatDuration = callContext?.formatDuration || ((s) => {
     const mins = Math.floor(s / 60);
     const secs = s % 60;
@@ -249,6 +250,12 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
         <div className="text-emerald-400 text-3xl font-medium tracking-wider">
           {isIncoming ? 'Incoming Call' : (statusText || formatDuration(callDuration))}
         </div>
+
+        {callError && (
+          <div className="mt-3 text-xs text-rose-200/90 text-center max-w-xs">
+            {callError}
+          </div>
+        )}
       </div>
 
       {/* Incoming Call UI - Accept/Reject Buttons */}

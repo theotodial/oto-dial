@@ -1367,7 +1367,6 @@ router.post(
         return res.status(400).json({ error: "Phone number required" });
       }
       let phoneNumber = normalizePhoneNumberForOrder(requestedPhoneNumber);
-      const originalRequestedPhoneNumber = phoneNumber;
 
       const telnyx = getTelnyxClient();
       if (!telnyx) {
@@ -1563,10 +1562,8 @@ router.post(
         validatedNumber?.requirements_group_id ||
         null;
 
-      let candidateResolved = false;
       let preflightWarning = null;
-      const attemptedPhones = new Set([normalizePhoneNumberForOrder(phoneNumber)]);
-      for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
         const regulatoryProbe = await getRegulatoryRequirementsForNumber({
           telnyx,
           phoneNumber
@@ -1590,68 +1587,19 @@ router.post(
           allowRequirementGroupCreate: true
         });
 
-        if ((!requiresRegulatoryBundle || selectedRequirementGroupId) && purchaseReady) {
-          candidateResolved = true;
-          break;
-        }
-
-        const alternative = await findAlternativePurchaseNumber({
-          telnyx,
-          countryCode: detectedCountryCode,
-          excludePhoneNumber: phoneNumber,
-          limit: 1
-        });
-        if (!alternative) {
-          if (requiresRegulatoryBundle && !selectedRequirementGroupId) {
-            preflightWarning =
-              "Could not auto-resolve regulatory profile in preflight; attempting direct provider order.";
-          } else {
-            preflightWarning =
-              "Could not find a prevalidated alternative number; attempting direct provider order.";
-          }
-          candidateResolved = true;
-          break;
-        }
-
-        const nextPhone = normalizePhoneNumberForOrder(alternative.phone_number);
-        if (attemptedPhones.has(nextPhone)) {
+        if (!purchaseReady) {
           preflightWarning =
-            "Alternative inventory loop detected; attempting direct provider order.";
-          candidateResolved = true;
-          break;
+            "Could not confirm purchase-ready inventory in preflight; attempting direct provider order.";
+        } else if (requiresRegulatoryBundle && !selectedRequirementGroupId) {
+          preflightWarning =
+            "This number may require regulatory verification; provider may reject purchase. Please choose another available number if it fails.";
         }
-        attemptedPhones.add(nextPhone);
-        phoneNumber = nextPhone;
-        validatedNumber = alternative;
-        detectedNumberType = extractNumberType(alternative);
-        selectedRequirementGroupId =
-          alternative.requirement_group_id ||
-          alternative.requirements_group_id ||
-          null;
-      }
-
-      if (!candidateResolved) {
-        preflightWarning =
-          "Preflight could not confirm purchase-ready inventory; attempting direct provider order.";
-      }
-
-      // Recompute pricing snapshot if selected number was replaced.
-      validatedCarrierGroup =
-        validatedNumber?.carrier?.group ||
-        validatedNumber?.carrier_group ||
-        validatedNumber?.carrier?.carrier_group ||
-        normalizeRegionInformation(validatedNumber?.region_information)?.carrier_group ||
-        validatedCarrierGroup;
-      validatedMonthlyCost = extractMonthlyCost(validatedNumber);
-      validatedMessagingRate = extractMessagingRate(validatedNumber);
-      if (
-        enforceCostCaps &&
-        (validatedMonthlyCost > monthlyLimit || validatedMessagingRate > messagingLimit)
-      ) {
-        return res.status(409).json({
-          error:
-            "Selected number changed in provider inventory and is no longer eligible. Please refresh and choose again."
-        });
+      } catch (preflightErr) {
+        console.warn(
+          "Number preflight warning:",
+          extractTelnyxErrorMessage(preflightErr) || preflightErr?.message || preflightErr
+        );
+        preflightWarning = "Preflight check failed; attempting direct provider order.";
       }
 
       const user = await User.findById(req.user._id);
@@ -1687,11 +1635,6 @@ router.post(
       const provisioningWarnings = [];
       if (preflightWarning) {
         provisioningWarnings.push(preflightWarning);
-      }
-      if (normalizeDigits(phoneNumber) !== normalizeDigits(originalRequestedPhoneNumber)) {
-        provisioningWarnings.push(
-          `Selected number became unavailable; purchasing closest available alternative ${phoneNumber}.`
-        );
       }
 
       // PURCHASE NUMBER (ONLY AFTER ALL VALIDATIONS PASSED)
