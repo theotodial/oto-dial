@@ -92,6 +92,9 @@ const supportTicketSchema = new mongoose.Schema(
     serviceRequest: String,
     isUrgent: Boolean,
 
+    screenshotUrl: { type: String, default: null },
+    stripePaymentId: { type: String, default: null },
+
     // Replies/conversation thread
     replies: [{
       message: {

@@ -44,9 +44,9 @@ const DEFAULT_LIMITS = {
 };
 
 /**
- * GET /api/subscription
+ * GET /api/subscription and GET /api/subscription/current
  */
-router.get("/", authMiddleware, async (req, res) => {
+const getSubscriptionHandler = async (req, res) => {
   try {
     const userId = req.userId;
 
@@ -122,7 +122,10 @@ router.get("/", authMiddleware, async (req, res) => {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch subscription" });
   }
-});
+};
+
+router.get("/", authMiddleware, getSubscriptionHandler);
+router.get("/current", authMiddleware, getSubscriptionHandler);
 
 /**
  * GET /api/subscription/activation-health

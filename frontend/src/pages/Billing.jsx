@@ -21,6 +21,7 @@ function Billing() {
   const [addonPlans, setAddonPlans] = useState([]);
   const [currentSubscription, setCurrentSubscription] = useState(null);
   const [buyingAddonId, setBuyingAddonId] = useState(null);
+  const [showPaymentIssueCta, setShowPaymentIssueCta] = useState(false);
 
   const isMountedRef = useRef(true);
   const [searchParams] = useSearchParams();
@@ -36,17 +37,21 @@ function Billing() {
     // Check for successful checkout
     const successParam = searchParams.get('success');
     if (successParam && user?.id) {
-      // Wait a bit for subscription to be created, then track
+      // Wait for subscription to be created, then track or show support CTA
       setTimeout(async () => {
         try {
+          await fetchCurrentSubscription();
           const subResponse = await API.get('/api/subscription/current');
           if (subResponse.data?.subscription?._id) {
             await trackSubscription(user.id, subResponse.data.subscription._id);
+          } else {
+            setShowPaymentIssueCta(true);
           }
         } catch (err) {
           console.warn('Could not track subscription:', err);
+          setShowPaymentIssueCta(true);
         }
-      }, 2000);
+      }, 3500);
     }
     
     return () => {
@@ -336,6 +341,19 @@ function Billing() {
           <div className="mb-4 max-w-3xl mx-auto px-4 py-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 rounded-xl text-sm flex items-center">
             <CheckIcon />
             <span className="ml-2">{success}</span>
+          </div>
+        )}
+
+        {showPaymentIssueCta && !currentSubscription && (
+          <div className="mb-4 max-w-3xl mx-auto px-4 py-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl">
+            <p className="text-amber-800 dark:text-amber-200 font-medium mb-2">Payment completed but subscription not active?</p>
+            <p className="text-sm text-amber-700 dark:text-amber-300 mb-3">If you were just charged but don&apos;t see your plan below, we can fix it. Contact support and we&apos;ll activate your subscription.</p>
+            <a
+              href="/support?subject=Subscription%20not%20activated"
+              className="inline-flex items-center px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm"
+            >
+              Report Subscription Issue
+            </a>
           </div>
         )}
 

@@ -65,7 +65,8 @@ console.log("ENV CHECK AT BOOT:");
 console.log("TELNYX_API_KEY =", process.env.TELNYX_API_KEY ? "✅ set" : "❌ missing");
 console.log("STRIPE_SECRET_KEY =", process.env.STRIPE_SECRET_KEY ? "✅ set" : "❌ missing");
 console.log("JWT_SECRET =", process.env.JWT_SECRET ? "✅ set" : "❌ missing");
-console.log("MONGODB_URI =", process.env.MONGODB_URI);
+const uri = process.env.MONGODB_URI;
+console.log("MONGODB_URI =", uri ? uri.replace(/:[^:@]+@/, ":****@") : "❌ missing");
 
 // Init Telnyx
 getTelnyx();
