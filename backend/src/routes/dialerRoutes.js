@@ -1,4 +1,5 @@
 import express from "express";
+import axios from "axios";
 import { getTelnyx } from "../../config/telnyx.js";
 import axios from "axios";
 import Call from "../models/Call.js";
@@ -7,6 +8,17 @@ import { validateCallCountryLock } from "../middleware/countryLock.js";
 import { findRecentActiveCallForUser } from "../utils/callLifecycle.js";
 
 const router = express.Router();
+const ACTIVE_STATUSES = ["queued", "dialing", "ringing", "in-progress", "answered"];
+const CALL_STATUSES = new Set([
+  "queued",
+  "dialing",
+  "ringing",
+  "in-progress",
+  "answered",
+  "completed",
+  "failed",
+  "missed"
+]);
 
 /**
  * POST /api/dialer/call
@@ -14,7 +26,7 @@ const router = express.Router();
  */
 router.post("/call", validateCallCountryLock, async (req, res) => {
   try {
-    const { to } = req.body;
+    const { to, useWebrtc, callControlId } = req.body;
 
     if (!to) {
       return res.status(400).json({ error: "Destination number required" });
@@ -56,11 +68,6 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
       return res.status(409).json({ error: "Call already in progress" });
     }
 
-    const telnyx = getTelnyx();
-    if (!telnyx) {
-      return res.status(503).json({ error: "Telnyx not configured" });
-    }
-
     // Get user's phone numbers
     let numbers = req.subscription.numbers || [];
     
@@ -78,6 +85,29 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
     }
 
     const fromNumber = numbers[0].phoneNumber;
+
+    if (useWebrtc) {
+      const callRecord = await Call.create({
+        user: req.userId,
+        phoneNumber: to,
+        fromNumber: fromNumber,
+        toNumber: to,
+        direction: "outbound",
+        status: "dialing",
+        telnyxCallControlId: callControlId || null
+      });
+
+      return res.json({
+        success: true,
+        callId: callRecord._id,
+        callControlId: callRecord.telnyxCallControlId
+      });
+    }
+
+    const telnyx = getTelnyx();
+    if (!telnyx) {
+      return res.status(503).json({ error: "Telnyx not configured" });
+    }
 
     // Telnyx SDK v4 uses calls.dial() not calls.create()
     console.log("[CALL FLOW] TELNYX REQUEST SENT (dialer dial)", { to, from: fromNumber });
@@ -115,7 +145,7 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
       callInitiatedAt: new Date() // Track initiation time for billing ring time
     });
 
-    res.json({
+    return res.json({
       success: true,
       callControlId,
       callId: callRecord._id

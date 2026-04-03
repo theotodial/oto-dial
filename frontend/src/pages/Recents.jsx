@@ -176,7 +176,6 @@ function Recents() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [userNumbers, setUserNumbers] = useState([]);
   const [subscriptionActive, setSubscriptionActive] = useState(false);
-  const [calling, setCalling] = useState(false);
   const [dialCountryCode, setDialCountryCode] = useState('+1');
   const [showDialCountryDropdown, setShowDialCountryDropdown] = useState(false);
   
@@ -802,7 +801,6 @@ function Recents() {
     }
 
     if (!isMountedRef.current) return;
-    setCalling(true);
     
     // Get caller ID
     const callerId = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
@@ -2088,13 +2086,13 @@ function Recents() {
                       onPaste={handlePaste}
                       onKeyDown={(e) => {
                         handleKeyDown(e);
-                        if (e.key === 'Enter' && phoneNumber.trim() && !calling && subscriptionActive && userNumbers.length > 0) {
+                        if (e.key === 'Enter' && phoneNumber.trim() && !isCallBusy && subscriptionActive && userNumbers.length > 0) {
                           handleCall();
                         }
                       }}
                       placeholder="Enter phone number"
                       className="w-full text-lg font-semibold text-gray-900 dark:text-white h-12 px-4 text-center bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl focus:border-indigo-500 dark:focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                      disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                     />
                     {phoneNumber && (
                       <button
@@ -2145,7 +2143,7 @@ function Recents() {
                           onTouchEnd={() => {
                             if (pressTimer) clearTimeout(pressTimer);
                           }}
-                        disabled={calling || !subscriptionActive || userNumbers.length === 0}
+                        disabled={isCallBusy || !subscriptionActive || userNumbers.length === 0}
                           className="aspect-square w-full bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 
                                      active:bg-gray-100 dark:active:bg-slate-600 rounded-full border border-gray-200 dark:border-slate-700 
                                      transition-all duration-150 active:scale-[0.96] 
@@ -2167,7 +2165,7 @@ function Recents() {
                   <div className="flex items-center justify-center gap-3">
                     <button
                       onClick={handleBackspace}
-                      disabled={!phoneNumber || calling}
+                      disabled={!phoneNumber || isCallBusy}
                       className="w-12 h-12 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 
                                  hover:bg-gray-50 dark:hover:bg-slate-700 active:bg-gray-100 dark:active:bg-slate-600 
                                  text-gray-700 dark:text-gray-200 rounded-full flex items-center justify-center 
@@ -2183,7 +2181,7 @@ function Recents() {
                                  disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.96]
                                  shadow-sm hover:shadow-md"
                     >
-                      {calling ? (
+                      {isPlacingCall ? (
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                       ) : (
                         <PhoneIcon className="w-4 h-4" />
