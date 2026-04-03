@@ -13,7 +13,7 @@ export const getTransactions = async () => {
   if (response.error) {
     return [];
   }
-  const data = response.data;
+  const data = response.data?.transactions || response.data;
   return Array.isArray(data) ? data : [];
 };
 

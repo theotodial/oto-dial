@@ -1,17 +1,12 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import API from '../api';
 
 export const getStores = async () => {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/stores`);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch stores');
-    }
-    
-    const data = await response.json();
-    return Array.isArray(data) ? data : [];
-  } catch (error) {
-    throw error;
+  const response = await API.get('/api/stores');
+  if (response.error) {
+    throw new Error(response.error || 'Failed to fetch stores');
   }
+
+  const data = response.data?.stores || response.data || [];
+  return Array.isArray(data) ? data : [];
 };
 

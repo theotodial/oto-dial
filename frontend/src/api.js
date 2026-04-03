@@ -94,14 +94,14 @@ const API = {
   post: async (path, data, config = {}) => {
     return safeRequest(() => axiosInstance.post(path, data, config));
   },
-  patch: async (path, data) => {
-    return safeRequest(() => axiosInstance.patch(path, data));
+  patch: async (path, data, config) => {
+    return safeRequest(() => axiosInstance.patch(path, data, config));
   },
   put: async (path, data, config = {}) => {
     return safeRequest(() => axiosInstance.put(path, data, config));
   },
-  delete: async (path) => {
-    return safeRequest(() => axiosInstance.delete(path));
+  delete: async (path, config) => {
+    return safeRequest(() => axiosInstance.delete(path, config));
   }
 };
 

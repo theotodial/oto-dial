@@ -81,14 +81,6 @@ function Chat() {
   const [subscriptionData, setSubscriptionData] = useState({ remainingSMS: 0, planName: 'No Plan' });
   const messagesEndRef = useRef(null);
 
-  const user_id = (() => {
-    try {
-      return localStorage.getItem('user_id');
-    } catch (e) {
-      return null;
-    }
-  })();
-
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };

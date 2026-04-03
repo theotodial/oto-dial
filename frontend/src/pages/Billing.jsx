@@ -280,7 +280,12 @@ function Billing() {
       
       if (!isMountedRef.current) return;
       
-      setBalance(response?.data?.balance ?? 0);
+      if (response.error) {
+        setBalance(0);
+      } else {
+        const nextBalance = Number(response.data?.balance ?? 0);
+        setBalance(Number.isFinite(nextBalance) ? nextBalance : 0);
+      }
     } catch {
       if (!isMountedRef.current) return;
       setBalance(0);

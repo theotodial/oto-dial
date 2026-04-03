@@ -23,68 +23,61 @@ function RecentChats({ onSelectChat, selectedChatId, onNewChat }) {
   const [chatSessions, setChatSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const user_id = localStorage.getItem('user_id');
 
   useEffect(() => {
     fetchChatSessions();
   }, []);
 
   const fetchChatSessions = async () => {
-    if (!user_id) {
-      setLoading(false);
-      return;
-    }
-
     try {
-      const response = await API.get(`/api/chat/${user_id}`);
-      const messages = response.data || [];
-      
-      // Group messages into chat sessions (for now, we'll create mock sessions based on messages)
-      // In a real app, you'd have a separate chat_sessions table
+      const response = await API.get('/api/messages');
+      if (response.error) {
+        setChatSessions([]);
+        return;
+      }
+
+      const messages = response.data?.messages || response.data || [];
       const sessions = groupMessagesIntoSessions(messages);
       setChatSessions(sessions);
     } catch (err) {
       // Silent fail - will show empty state
+      setChatSessions([]);
     } finally {
       setLoading(false);
     }
   };
 
-  // Group messages into sessions by date
+  // Group messages into sessions by phone number (fallback: date)
   const groupMessagesIntoSessions = (messages) => {
-    if (messages.length === 0) return [];
+    if (!Array.isArray(messages) || messages.length === 0) return [];
 
-    const sessions = [];
-    let currentSession = null;
-    let sessionId = 1;
+    const sessionMap = new Map();
 
     messages.forEach((msg) => {
-      const msgDate = new Date(msg.created_at).toDateString();
-      
-      if (!currentSession || currentSession.date !== msgDate) {
-        if (currentSession) {
-          sessions.push(currentSession);
-        }
-        currentSession = {
-          id: sessionId++,
-          date: msgDate,
-          title: getSessionTitle(msg.message),
-          lastMessage: msg.message,
+      const phoneNumber = msg.phone_number || msg.to || msg.from || null;
+      const key = phoneNumber || new Date(msg.created_at).toDateString();
+      const messageText = msg.message || msg.text || msg.body || '';
+
+      if (!sessionMap.has(key)) {
+        sessionMap.set(key, {
+          id: key,
+          phoneNumber,
+          title: phoneNumber || getSessionTitle(messageText),
+          lastMessage: messageText,
           timestamp: msg.created_at,
           messages: [msg]
-        };
+        });
       } else {
-        currentSession.messages.push(msg);
-        currentSession.lastMessage = msg.message;
-        currentSession.timestamp = msg.created_at;
+        const session = sessionMap.get(key);
+        session.messages.push(msg);
+        session.lastMessage = messageText;
+        session.timestamp = msg.created_at;
       }
     });
 
-    if (currentSession) {
-      sessions.push(currentSession);
-    }
-
-    return sessions.reverse(); // Most recent first
+    return Array.from(sessionMap.values()).sort((a, b) =>
+      new Date(b.timestamp) - new Date(a.timestamp)
+    );
   };
 
   const getSessionTitle = (message) => {
@@ -114,8 +107,8 @@ function RecentChats({ onSelectChat, selectedChatId, onNewChat }) {
   };
 
   const filteredSessions = chatSessions.filter(session =>
-    session.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    session.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
+    (session.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (session.lastMessage || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (

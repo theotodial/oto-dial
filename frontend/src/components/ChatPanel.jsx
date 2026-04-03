@@ -25,7 +25,6 @@ function ChatPanel({ selectedChat }) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef(null);
-  const user_id = localStorage.getItem('user_id');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -45,16 +44,25 @@ function ChatPanel({ selectedChat }) {
   }, [selectedChat]);
 
   const fetchMessages = async () => {
-    if (!user_id) {
-      setLoading(false);
-      return;
-    }
-
     try {
-      const response = await API.get(`/api/chat/${user_id}`);
-      setMessages(response.data || []);
+      const response = await API.get('/api/messages');
+      if (response.error) {
+        setMessages([]);
+        return;
+      }
+
+      let nextMessages = response.data?.messages || response.data || [];
+      if (selectedChat?.phoneNumber) {
+        const normalized = String(selectedChat.phoneNumber).replace(/\D/g, '');
+        nextMessages = nextMessages.filter((msg) => {
+          const candidate = msg.phone_number || msg.to || msg.from || '';
+          return String(candidate).replace(/\D/g, '') === normalized;
+        });
+      }
+      setMessages(nextMessages);
     } catch (err) {
       // Silent fail - will show empty state
+      setMessages([]);
     } finally {
       setLoading(false);
     }
@@ -63,7 +71,7 @@ function ChatPanel({ selectedChat }) {
   const handleSend = async (e) => {
     e.preventDefault();
 
-    if (!user_id || !inputMessage.trim() || sending) return;
+    if (!selectedChat?.phoneNumber || !inputMessage.trim() || sending) return;
 
     const userMessageText = inputMessage.trim();
     setInputMessage('');
@@ -72,21 +80,21 @@ function ChatPanel({ selectedChat }) {
     // Optimistically add user message
     const tempUserMessage = {
       id: Date.now(),
-      user_id: parseInt(user_id),
       message: userMessageText,
       sender: 'user',
+      phone_number: selectedChat.phoneNumber,
       created_at: new Date().toISOString()
     };
     setMessages(prev => [...prev, tempUserMessage]);
 
     try {
-      const response = await API.post('/api/chat', {
-        user_id: parseInt(user_id),
-        message: userMessageText
+      const response = await API.post('/api/sms/send', {
+        to: selectedChat.phoneNumber,
+        text: userMessageText
       });
 
-      if (response.data) {
-        setMessages(prev => [...prev, response.data]);
+      if (!response.error) {
+        await fetchMessages();
       }
     } catch (err) {
       // Remove the optimistic message on error

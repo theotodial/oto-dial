@@ -349,4 +349,33 @@ router.post("/login", async (req, res) => {
   }
 });
 
+/**
+ * =========================================
+ * Forgot Password (stub)
+ * =========================================
+ */
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { email, redirectTo } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    console.log("🔐 Password reset requested:", {
+      email,
+      redirectTo,
+      requestedAt: new Date().toISOString()
+    });
+
+    return res.json({
+      success: true,
+      message: "Password reset link sent"
+    });
+  } catch (err) {
+    console.error("FORGOT PASSWORD ERROR:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 export default router;

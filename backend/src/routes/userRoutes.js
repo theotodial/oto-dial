@@ -1,9 +1,14 @@
 import express from "express";
+import multer from "multer";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 import { selfHealSubscriptionForUser } from "../services/stripeSubscriptionService.js";
 
 const router = express.Router();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
 
 /**
  * GET /api/users/profile
