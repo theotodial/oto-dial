@@ -30,32 +30,77 @@ function Billing() {
 
   useEffect(() => {
     isMountedRef.current = true;
+    let pollTimeoutId = null;
+    let cancelled = false;
+
     fetchBalance();
     fetchPlans();
     fetchAddonPlans();
     fetchCurrentSubscription();
     
-    // Check for successful checkout
+    // Check for successful checkout and poll for backend activation.
+    // Stripe webhooks can arrive a few seconds after redirect.
     const successParam = searchParams.get('success');
-    if (successParam && user?.id) {
-      // Wait for subscription to be created, then track or show support CTA
-      setTimeout(async () => {
-        try {
-          await fetchCurrentSubscription();
-          const subResponse = await API.get('/api/subscription/current');
-          if (subResponse.data?.subscription?._id) {
-            await trackSubscription(user.id, subResponse.data.subscription._id);
-          } else {
-            setShowPaymentIssueCta(true);
+    if (successParam) {
+      const isAddonCheckout = successParam === 'addon';
+      const maxAttempts = 15;
+      let attempts = 0;
+
+      setSuccess(
+        isAddonCheckout
+          ? 'Payment confirmed. Applying your add-on now...'
+          : 'Payment confirmed. Activating your subscription now...'
+      );
+
+      const pollSubscriptionStatus = async () => {
+        if (!isMountedRef.current || cancelled) return;
+        attempts += 1;
+
+        const subResponse = await API.get('/api/subscription');
+        if (!isMountedRef.current || cancelled) return;
+
+        const hasActivePlan =
+          !subResponse.error &&
+          subResponse.data &&
+          subResponse.data.planName !== "No Plan";
+
+        if (hasActivePlan) {
+          setCurrentSubscription(subResponse.data);
+          setSuccess(
+            isAddonCheckout
+              ? 'Add-on purchase successful. Your account is updated.'
+              : 'Subscription activated successfully.'
+          );
+
+          if (!isAddonCheckout && user?.id && subResponse.data?.subscription?._id) {
+            try {
+              await trackSubscription(user.id, subResponse.data.subscription._id);
+            } catch (err) {
+              console.warn('Could not track subscription:', err);
+            }
           }
-        } catch (err) {
-          console.warn('Could not track subscription:', err);
+          return;
+        }
+
+        if (attempts < maxAttempts) {
+          pollTimeoutId = setTimeout(pollSubscriptionStatus, 2000);
+          return;
+        }
+
+        if (!isAddonCheckout) {
+          setError('Payment succeeded, but account activation is still processing. Please refresh in a few seconds.');
           setShowPaymentIssueCta(true);
         }
-      }, 3500);
+      };
+
+      pollTimeoutId = setTimeout(pollSubscriptionStatus, 1500);
     }
     
     return () => {
+      cancelled = true;
+      if (pollTimeoutId) {
+        clearTimeout(pollTimeoutId);
+      }
       isMountedRef.current = false;
     };
   }, [searchParams, user, isAuthenticated]);
