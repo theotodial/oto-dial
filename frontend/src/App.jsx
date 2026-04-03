@@ -38,6 +38,7 @@ import Support from './pages/Support';
 import Contact from './pages/Contact';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
+import AffiliateProtectedRoute from './components/AffiliateProtectedRoute';
 import AffiliateLanding from './pages/AffiliateLanding';
 import AffiliateSignup from './pages/AffiliateSignup';
 import AffiliateLogin from './pages/AffiliateLogin';
