@@ -4,10 +4,70 @@ import NewHowItWorks from '../components/homepage/NewHowItWorks';
 import NewPricingSection from '../components/homepage/NewPricingSection';
 import NewFooter from '../components/homepage/NewFooter';
 import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import HomepageRenderer from '../components/site/HomepageRenderer';
+import SiteHeader from '../components/site/SiteHeader';
+import { fetchHomepageStructure, fetchPublicSeoSettings } from '../services/siteService';
+import { applySeoSettingsToDocument } from '../utils/seo';
+import Navbar from '../components/Navbar';
 
 function Home() {
+  const [dynamic, setDynamic] = useState(null);
+  const [dynamicError, setDynamicError] = useState('');
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    let didFallback = false;
+    const fallbackTimer = setTimeout(() => {
+      didFallback = true;
+      // Avoid blocking TTI: if the API is slow, we render the static homepage immediately.
+      if (isMountedRef.current) setDynamicError('timeout');
+    }, 1200);
+
+    const load = async () => {
+      try {
+        const [homepage, seo] = await Promise.all([
+          fetchHomepageStructure(),
+          fetchPublicSeoSettings().catch(() => null)
+        ]);
+        if (!isMountedRef.current) return;
+        if (seo) applySeoSettingsToDocument(seo, { sections: homepage?.sections || [] });
+        if (homepage?.published === true && Array.isArray(homepage?.sections) && homepage.sections.length > 0) {
+          setDynamic(homepage);
+          setDynamicError('');
+        } else if (!didFallback) {
+          setDynamic(null);
+        }
+      } catch (_err) {
+        if (!isMountedRef.current) return;
+        setDynamic(null);
+        setDynamicError('error');
+      } finally {
+        clearTimeout(fallbackTimer);
+      }
+    };
+
+    load();
+    return () => {
+      isMountedRef.current = false;
+      clearTimeout(fallbackTimer);
+    };
+  }, []);
+
+  if (dynamic && Array.isArray(dynamic.sections) && dynamic.sections.length > 0) {
+    return (
+      <div className="w-full bg-white dark:bg-slate-900">
+        <SiteHeader headerConfig={dynamic.headerConfig} themeSettings={dynamic.themeSettings} />
+        <HomepageRenderer sections={dynamic.sections} themeSettings={dynamic.themeSettings} />
+        <NewFooter />
+      </div>
+    );
+  }
+
   return (
     <div className="w-full bg-white dark:bg-slate-900">
+      <Navbar />
       <NewHeroSection />
       <NewFeaturesSection />
       <NewHowItWorks />

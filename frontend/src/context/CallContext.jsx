@@ -161,6 +161,7 @@ export const useCall = () => {
       formatDuration: () => '00:00',
       minimizeCall: () => {},
       expandCall: () => {},
+      callingMode: "unknown",
       CALL_STATES,
       isInCall: false,
       isRinging: false,
@@ -187,6 +188,17 @@ export const CallProvider = ({ children }) => {
   const [isInitializing, setIsInitializing] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
 
+  // Resolve calling mode (build-time env via Vite).
+  // - voice_api: always use backend Voice API calling (no in-browser audio).
+  // - webrtc: always use WebRTC/SIP (requires SIP password + working /api/webrtc/token).
+  // - auto/default: prefer WebRTC if SIP password is configured, else Voice API.
+  const resolvedCallingMode = (() => {
+    const mode = String(import.meta.env.VITE_CALLING_MODE || "").toLowerCase();
+    if (mode === "voice_api") return "voice_api";
+    if (mode === "webrtc") return "webrtc";
+    return import.meta.env.VITE_TELNYX_SIP_PASSWORD ? "webrtc" : "voice_api";
+  })();
+
   // Keep screen awake during active calls (mobile)
   const isActiveCall =
     callState === CALL_STATES.ACTIVE ||
@@ -200,6 +212,7 @@ export const CallProvider = ({ children }) => {
   const telnyxClientRef = useRef(null);
   const currentCallRef = useRef(null);
   const durationIntervalRef = useRef(null);
+  const voiceApiPollIntervalRef = useRef(null);
   const callStateRef = useRef(callState);
   const remoteAudioRef = useRef(null);
   const initializationPromiseRef = useRef(null);
@@ -376,6 +389,10 @@ export const CallProvider = ({ children }) => {
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
         }
+        if (voiceApiPollIntervalRef.current) {
+          clearInterval(voiceApiPollIntervalRef.current);
+          voiceApiPollIntervalRef.current = null;
+        }
       } catch (timerErr) {
         console.warn('Error clearing timer (non-critical):', timerErr);
       }
@@ -402,6 +419,7 @@ export const CallProvider = ({ children }) => {
         setIncomingCall(null);
         setIsMinimized(false);
         handledIncomingCallIdsRef.current.clear();
+        handledTerminalCallIdsRef.current.clear();
         manualHangupRef.current = false;
         resetOutboundRetryState();
       } catch (stateErr) {
@@ -422,7 +440,12 @@ export const CallProvider = ({ children }) => {
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
         }
+        if (voiceApiPollIntervalRef.current) {
+          clearInterval(voiceApiPollIntervalRef.current);
+          voiceApiPollIntervalRef.current = null;
+        }
         handledIncomingCallIdsRef.current.clear();
+        handledTerminalCallIdsRef.current.clear();
         manualHangupRef.current = false;
         resetOutboundRetryState();
       } catch (e) {
@@ -478,7 +501,17 @@ export const CallProvider = ({ children }) => {
             }
           }, 50);
           
-          remoteAudioRef.current.play().catch(e => console.warn('Audio play failed:', e));
+          try {
+            remoteAudioRef.current.muted = false;
+            remoteAudioRef.current.volume = 1.0;
+          } catch {}
+          remoteAudioRef.current.play().catch((e) => {
+            console.warn('Audio play failed:', e);
+            const name = String(e?.name || "");
+            if (name === "NotAllowedError" || name === "AbortError") {
+              setError("Audio playback was blocked by the browser. Tap the call screen once to enable audio.");
+            }
+          });
         }
       }
     } catch (audioErr) {
@@ -541,6 +574,8 @@ export const CallProvider = ({ children }) => {
       case 'ringing':
       case 'early':
         try {
+          // Mark synchronously to avoid relying on async React state timing.
+          call._sawRinging = true;
           setCallState(CALL_STATES.RINGING);
           console.log('[CALL FLOW] STATE UPDATED → ringing (Telnyx ringing/early)');
           if (!outboundRingbackStartedRef.current) {
@@ -568,6 +603,8 @@ export const CallProvider = ({ children }) => {
         break;
       case 'active':
         try {
+          // Mark synchronously to avoid relying on async React state timing.
+          call._sawActive = true;
           setCallState(CALL_STATES.ACTIVE);
           console.log('[CALL FLOW] STATE UPDATED → active (Telnyx)');
           
@@ -679,7 +716,7 @@ export const CallProvider = ({ children }) => {
         }
       }
     }
-  }, [startDurationTimer, handleCallEnd, getCallDirection, getCallHangupCause]); // Removed applyAudioRouting - use ref instead
+  }, [startDurationTimer, handleCallEnd, getCallDirection, getCallHangupCause, getCallUniqueId]); // Removed applyAudioRouting - use ref instead
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
@@ -803,6 +840,10 @@ export const CallProvider = ({ children }) => {
 
   // Initialize Telnyx WebRTC client
   const initializeClient = useCallback(async () => {
+    if (resolvedCallingMode !== "webrtc") {
+      return false;
+    }
+
     // Prevent multiple initializations
     if (initializationPromiseRef.current) {
       console.log('📱 Already initializing, waiting...');
@@ -842,12 +883,14 @@ export const CallProvider = ({ children }) => {
 
         setCredentials(creds);
 
-        // Get SIP password from frontend env
+        // Get SIP password from frontend env (required for forced WebRTC mode)
         const sipPassword = import.meta.env.VITE_TELNYX_SIP_PASSWORD;
         if (!sipPassword) {
           console.error('Missing VITE_TELNYX_SIP_PASSWORD');
           setError('Calling password not configured');
+          setIsClientReady(false);
           setIsInitializing(false);
+          isInitializedRef.current = false;
           return false;
         }
 
@@ -1169,6 +1212,13 @@ export const CallProvider = ({ children }) => {
         resetOutboundRetryState();
         return false;
       }
+      if (!isClientReadyRef.current) {
+        console.log('📱 Client still not ready after initialization wait');
+        setError('Calling service is still connecting. Please try again in a moment.');
+        setCallState(CALL_STATES.IDLE);
+        resetOutboundRetryState();
+        return false;
+      }
 
       let callerId = callerIdNumber;
       if (!callerId && credentials?.callerIdNumber) {
@@ -1350,6 +1400,8 @@ export const CallProvider = ({ children }) => {
       return false;
     }
   }, [
+    startDurationTimer,
+    handleCallEnd,
     initializeClient,
     credentials,
     saveCallRecord,
@@ -1659,7 +1711,8 @@ export const CallProvider = ({ children }) => {
   useEffect(() => {
     const autoInit = async () => {
       const token = localStorage.getItem('token');
-      if (token && !isClientReady && !isInitializing && !isInitializedRef.current) {
+      if (resolvedCallingMode !== "webrtc") return;
+      if (token && !isClientReadyRef.current && !isInitializingRef.current && !isInitializedRef.current) {
         console.log('📱 Auto-initializing WebRTC client for incoming calls...');
 
         await fixPhoneConfiguration();
@@ -1677,6 +1730,7 @@ export const CallProvider = ({ children }) => {
     // Also set up a periodic health check to ensure client stays connected
     const healthCheckInterval = setInterval(() => {
       const token = localStorage.getItem('token');
+      if (resolvedCallingMode !== "webrtc") return;
       // Use refs to avoid dependency on changing state
       if (token && !isClientReadyRef.current && !isInitializingRef.current && !isInitializedRef.current) {
         console.log('📱 Health check: Client not ready, reinitializing...');
@@ -1779,6 +1833,7 @@ export const CallProvider = ({ children }) => {
     remoteNumber,
     incomingCall,
     error,
+    callingMode: resolvedCallingMode,
     isClientReady,
     isInitializing,
     isMinimized,

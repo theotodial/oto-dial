@@ -15,12 +15,7 @@ import Home from './pages/Home';
 function HomeOrRedirect() {
   const { token } = useAuth();
   if (token) return <Navigate to="/recents" replace />;
-  return (
-    <>
-      <Navbar />
-      <Home />
-    </>
-  );
+  return <Home />;
 }
 import Signup from './pages/Signup';
 import Login from './pages/Login';
@@ -364,6 +359,37 @@ function App() {
                 </AdminProtectedRoute>
               }
             />
+            <Route
+              path="/adminbobby/site/builder"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <SiteBuilder />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+            <Route
+              path="/adminbobby/site/seo"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <SiteSeo />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+            <Route
+              path="/adminbobby/site/environment"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <SiteEnvironment />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+
             <Route
               path="/adminbobby/site/builder"
               element={
