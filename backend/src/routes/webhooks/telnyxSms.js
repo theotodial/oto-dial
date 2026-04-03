@@ -3,6 +3,10 @@ import SMS from "../../models/SMS.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import Subscription from "../../models/Subscription.js";
 import { recordSmsCost } from "../../services/telnyxCostCalculator.js";
+import {
+  incrementUnlimitedUsageAfterSuccess,
+  isUnlimitedSubscription
+} from "../../services/unlimitedUsageService.js";
 
 const router = express.Router();
 
@@ -42,6 +46,20 @@ router.post("/", async (req, res) => {
     const fromNumber = payload.from?.phone_number || payload.from;
     const messageText = payload.text || payload.body;
     const telnyxId = payload.id;
+
+    if (telnyxId) {
+      const duplicateInbound = await SMS.findOne({
+        telnyxMessageId: telnyxId,
+        direction: "inbound"
+      })
+        .select("_id")
+        .lean();
+
+      if (duplicateInbound) {
+        console.log(`📱 Duplicate inbound webhook ignored for Telnyx message ${telnyxId}`);
+        return res.json({ received: true, duplicate: true });
+      }
+    }
 
     if (!toNumber || !fromNumber || !messageText) {
       console.warn("SMS webhook missing required fields:", { toNumber, fromNumber, messageText: !!messageText });
@@ -177,26 +195,41 @@ router.post("/", async (req, res) => {
         });
 
         if (subscription) {
-          const smsUsedBefore = subscription.usage?.smsUsed || 0;
-          const smsTotal = (subscription.limits?.smsTotal || 200) + (subscription.addons?.sms || 0);
-          const smsRemainingBefore = Math.max(0, smsTotal - smsUsedBefore);
+          if (isUnlimitedSubscription(subscription)) {
+            const usageResult = await incrementUnlimitedUsageAfterSuccess({
+              subscriptionId: subscription._id,
+              userId: userId,
+              channel: "sms_inbound",
+              smsIncrement: 1
+            });
 
-          // Deduct usage
-        await Subscription.updateOne(
-          { userId: userId, status: "active" },
-            { $inc: { "usage.smsUsed": 1 } }
-        );
+            if (!usageResult.success && usageResult.limitReached) {
+              console.warn(
+                `⚠️ Inbound SMS reached Unlimited threshold for user ${userId}`
+              );
+            }
+          } else {
+            const smsUsedBefore = subscription.usage?.smsUsed || 0;
+            const smsTotal = (subscription.limits?.smsTotal || 200) + (subscription.addons?.sms || 0);
+            const smsRemainingBefore = Math.max(0, smsTotal - smsUsedBefore);
 
-          // Calculate remaining after deduction
-          const smsUsedAfter = smsUsedBefore + 1;
-          const smsRemainingAfter = Math.max(0, smsTotal - smsUsedAfter);
+            // Deduct usage
+            await Subscription.updateOne(
+              { userId: userId, status: "active" },
+              { $inc: { "usage.smsUsed": 1 } }
+            );
 
-          // Enhanced logging for debugging and cost tracking
-          console.log(`📊 INBOUND SMS USAGE DEDUCTED:`);
-          console.log(`   SMS: ${fromNumber} -> ${toNumber}`);
-          console.log(`   User: ${userId}`);
-          console.log(`   Before: ${smsUsedBefore} SMS used, ${smsRemainingBefore} SMS remaining`);
-          console.log(`   After: ${smsUsedAfter} SMS used, ${smsRemainingAfter} SMS remaining`);
+            // Calculate remaining after deduction
+            const smsUsedAfter = smsUsedBefore + 1;
+            const smsRemainingAfter = Math.max(0, smsTotal - smsUsedAfter);
+
+            // Enhanced logging for debugging and cost tracking
+            console.log(`📊 INBOUND SMS USAGE DEDUCTED:`);
+            console.log(`   SMS: ${fromNumber} -> ${toNumber}`);
+            console.log(`   User: ${userId}`);
+            console.log(`   Before: ${smsUsedBefore} SMS used, ${smsRemainingBefore} SMS remaining`);
+            console.log(`   After: ${smsUsedAfter} SMS used, ${smsRemainingAfter} SMS remaining`);
+          }
         } else {
           console.warn(`⚠️ No active subscription found for user ${userId} - SMS usage not deducted`);
         }

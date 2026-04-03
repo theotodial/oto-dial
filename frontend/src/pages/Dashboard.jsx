@@ -65,7 +65,12 @@ function Dashboard() {
 
   const [balance, setBalance] = useState(0);
   const [numbers, setNumbers] = useState([]);
-  const [packageDetails, setPackageDetails] = useState({ remainingMinutes: 0, remainingSMS: 0, planName: 'No Plan' });
+  const [packageDetails, setPackageDetails] = useState({
+    remainingMinutes: 0,
+    remainingSMS: 0,
+    planName: 'No Plan',
+    displayUnlimited: false
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -102,17 +107,23 @@ function Dashboard() {
 
     // Package details - handle gracefully
     if (!subscriptionRes.error && subscriptionRes.data) {
+      const isUnlimitedPlan =
+        Boolean(subscriptionRes.data.displayUnlimited) ||
+        String(subscriptionRes.data.planType || '').toLowerCase() === 'unlimited' ||
+        String(subscriptionRes.data.planName || '').toLowerCase().includes('unlimited');
       setPackageDetails({
-        remainingMinutes: subscriptionRes.data.minutesRemaining || 0,
-        remainingSMS: subscriptionRes.data.smsRemaining || 0,
-        planName: subscriptionRes.data.planName || 'No Plan'
+        remainingMinutes: isUnlimitedPlan ? '∞' : (subscriptionRes.data.minutesRemaining || 0),
+        remainingSMS: isUnlimitedPlan ? '∞' : (subscriptionRes.data.smsRemaining || 0),
+        planName: subscriptionRes.data.planName || 'No Plan',
+        displayUnlimited: isUnlimitedPlan
       });
     } else {
       // Default values if subscription endpoint doesn't exist
       setPackageDetails({
         remainingMinutes: 2500,
         remainingSMS: 200,
-        planName: 'BASIC PLAN'
+        planName: 'BASIC PLAN',
+        displayUnlimited: false
       });
     }
 
@@ -296,11 +307,19 @@ function Dashboard() {
           <div className="space-y-3 mb-4">
             <div className="flex items-center justify-between">
               <span className="text-sm opacity-90">Remaining Minutes</span>
-              <span className="text-2xl font-bold">{parseFloat(packageDetails?.remainingMinutes || 0).toFixed(2)}</span>
+              <span className="text-2xl font-bold">
+                {packageDetails.displayUnlimited
+                  ? '∞'
+                  : parseFloat(packageDetails?.remainingMinutes || 0).toFixed(2)}
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm opacity-90">Remaining SMS</span>
-              <span className="text-2xl font-bold">{(packageDetails?.remainingSMS || 0).toLocaleString()}</span>
+              <span className="text-2xl font-bold">
+                {packageDetails.displayUnlimited
+                  ? '∞'
+                  : (packageDetails?.remainingSMS || 0).toLocaleString()}
+              </span>
             </div>
           </div>
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/20">

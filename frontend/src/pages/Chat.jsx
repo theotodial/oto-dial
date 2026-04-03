@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import API from '../api';
 
 // Icons
@@ -57,6 +58,10 @@ const CallIcon = () => (
 );
 
 function Chat() {
+  const suspiciousActivityText =
+    'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
+  const isSuspiciousActivityError = (message) =>
+    String(message || '').toLowerCase().includes('suspicious activity detected');
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [loading, setLoading] = useState(true);
@@ -766,10 +771,24 @@ function Chat() {
               {sendError && (
                 <div className="px-4 pt-3 pb-1">
                   <div className="px-3 py-2 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-sm flex items-center">
-                    <svg className="w-4 h-4 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    {sendError}
+                    {isSuspiciousActivityError(sendError) ? (
+                      <div className="flex items-center justify-between gap-3 w-full flex-wrap">
+                        <span>{suspiciousActivityText}</span>
+                        <Link
+                          to="/support"
+                          className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
+                        >
+                          Contact Support
+                        </Link>
+                      </div>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        {sendError}
+                      </>
+                    )}
                   </div>
                 </div>
                 )}

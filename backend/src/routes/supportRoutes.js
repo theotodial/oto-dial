@@ -4,6 +4,7 @@ import authenticateUser from "../middleware/authenticateUser.js";
 import { promises as fs } from "fs";
 import path from "path";
 import crypto from "crypto";
+import { createAdminNotification } from "../services/adminNotificationService.js";
 
 const router = express.Router();
 
@@ -163,6 +164,20 @@ router.post("/tickets", authenticateUser, async (req, res) => {
       priority: ticketPriority,
       businessCategory: category || "",
       replies: []
+    });
+
+    await createAdminNotification({
+      type: "support",
+      title: "New support ticket",
+      message: `${userEmail} created a support ticket`,
+      sourceModel: "SupportTicket",
+      sourceId: ticket._id,
+      data: {
+        ticketId: ticket._id.toString(),
+        issueType: ticket.issueType,
+        priority: ticket.priority,
+        userEmail
+      }
     });
 
     console.log(`✅ New support ticket created: ${ticket._id} by user ${userId}`);

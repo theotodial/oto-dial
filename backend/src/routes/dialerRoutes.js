@@ -23,11 +23,24 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
       return res.status(403).json({ error: "Active subscription required" });
     }
 
-    // Check remaining seconds > 0 before allowing outgoing call
-    // minutesRemaining is in minutes (with decimals), convert to seconds
+    const unlimitedGate = await checkUnlimitedUsageBeforeAction({
+      subscriptionId: req.subscription.id,
+      userId: req.userId,
+      channel: "dialer_call_start"
+    });
+
+    if (!unlimitedGate.allowed) {
+      return res.status(403).json(createSuspiciousActivityErrorPayload());
+    }
+
+    const unlimitedPlan = isUnlimitedSubscription(
+      unlimitedGate.subscription || req.subscription
+    );
+
+    // Legacy plans keep remaining-minute based gating.
     const minutesRemaining = req.subscription.minutesRemaining || 0;
     const remainingSeconds = minutesRemaining * 60;
-    if (remainingSeconds <= 0) {
+    if (!unlimitedPlan && remainingSeconds <= 0) {
       return res.status(403).json({ 
         error: "No minutes remaining. Please upgrade your plan or wait for your next billing cycle." 
       });

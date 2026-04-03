@@ -1,6 +1,11 @@
 import express from "express";
 import jwt from "jsonwebtoken";
 import PhoneNumber from "../models/PhoneNumber.js";
+import {
+  checkUnlimitedUsageBeforeAction,
+  createSuspiciousActivityErrorPayload,
+  isUnlimitedSubscription
+} from "../services/unlimitedUsageService.js";
 
 const router = express.Router();
 
@@ -12,6 +17,26 @@ router.get("/token", async (req, res) => {
   try {
     if (!req.subscription || !req.subscription.active) {
       return res.status(403).json({ error: "Active subscription required" });
+    }
+
+    const unlimitedGate = await checkUnlimitedUsageBeforeAction({
+      subscriptionId: req.subscription.id,
+      userId: req.userId,
+      channel: "webrtc_token"
+    });
+
+    if (!unlimitedGate.allowed) {
+      return res.status(403).json(createSuspiciousActivityErrorPayload());
+    }
+
+    const unlimitedPlan = isUnlimitedSubscription(
+      unlimitedGate.subscription || req.subscription
+    );
+
+    if (!unlimitedPlan && (req.subscription.minutesRemaining || 0) <= 0) {
+      return res.status(403).json({
+        error: "No minutes remaining. Please upgrade your plan or wait for your next billing cycle."
+      });
     }
 
     // Get user's phone numbers

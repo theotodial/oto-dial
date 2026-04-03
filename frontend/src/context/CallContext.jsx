@@ -323,7 +323,8 @@ export const CallProvider = ({ children }) => {
   }, []);
 
   // Handle call end
-  const handleCallEnd = useCallback(async () => {
+  const handleCallEnd = useCallback(
+    async ({ preserveError = false, finalStatus = "completed" } = {}) => {
     try {
       console.log('📱 Call ended, cleaning up...');
 
@@ -359,11 +360,11 @@ export const CallProvider = ({ children }) => {
       if (currentCallRef.current?._dbCallId) {
         const duration = callDurationRef.current;
         API.patch(`/api/calls/${currentCallRef.current._dbCallId}`, {
-          status: 'completed',
+          status: finalStatus,
           durationSeconds: duration,
           callEndedAt: new Date().toISOString()
         }).then(() => {
-          console.log('📱 Call record updated with completion status');
+          console.log('📱 Call record updated with final status:', finalStatus);
         }).catch(err => {
           console.warn('📱 Failed to update call record on end (non-critical):', err);
         });
@@ -400,6 +401,9 @@ export const CallProvider = ({ children }) => {
         setError(null);
         setIncomingCall(null);
         setIsMinimized(false);
+        handledIncomingCallIdsRef.current.clear();
+        manualHangupRef.current = false;
+        resetOutboundRetryState();
       } catch (stateErr) {
         console.error('Error resetting call state (handled):', stateErr);
         // Try to at least set to idle
@@ -418,11 +422,14 @@ export const CallProvider = ({ children }) => {
           clearInterval(durationIntervalRef.current);
           durationIntervalRef.current = null;
         }
+        handledIncomingCallIdsRef.current.clear();
+        manualHangupRef.current = false;
+        resetOutboundRetryState();
       } catch (e) {
         console.error('Critical: Failed to reset call state:', e);
       }
     }
-  }, []);
+  }, [resetOutboundRetryState]);
 
   // Handle call state updates from Telnyx
   const handleCallStateChange = useCallback(async (call) => {
@@ -672,7 +679,7 @@ export const CallProvider = ({ children }) => {
         }
       }
     }
-  }, [startDurationTimer, handleCallEnd]); // Removed applyAudioRouting - use ref instead
+  }, [startDurationTimer, handleCallEnd, getCallDirection, getCallHangupCause]); // Removed applyAudioRouting - use ref instead
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
@@ -726,75 +733,50 @@ export const CallProvider = ({ children }) => {
     console.log('📱 =========================================');
     
     currentCallRef.current = call;
-    
+
     setRemoteNumber(callerNumber);
     setCallState(CALL_STATES.INCOMING);
     setIncomingCall(call);
     setIsMinimized(false);
-    
-    // Start WhatsApp-style ringtone immediately
-    console.log('📱 Starting incoming call ringtone...');
+
+    // Start ringtone once for incoming flow.
     soundManager.startRingtone();
 
-    // Show browser notification (even if app is in background)
-    if ('Notification' in window) {
-      if (Notification.permission === 'granted') {
+    // Show browser notification (even if app is in background).
+    if ("Notification" in window) {
+      if (Notification.permission === "granted") {
         try {
-          // Close any existing notification
           if (notificationRef.current) {
             notificationRef.current.close();
           }
-          
-          const notification = new Notification('📞 Incoming Call', {
+
+          const notification = new Notification("📞 Incoming Call", {
             body: `Call from ${callerNumber}`,
-            icon: '/logo.svg',
-            tag: 'incoming-call',
+            icon: "/logo.svg",
+            tag: "incoming-call",
             requireInteraction: true,
-            badge: '/logo.svg',
-            vibrate: [200, 100, 200] // Vibrate pattern for mobile
+            badge: "/logo.svg",
+            vibrate: [200, 100, 200]
           });
-          
+
           notificationRef.current = notification;
-          
-          // When notification is clicked, ensure call UI is visible
+
+          // Keep call window visible; avoid hard navigations/reloads.
           notification.onclick = () => {
-            console.log('📱 Notification clicked - ensuring call UI is visible');
             window.focus();
-            
-            // Ensure call is not minimized and state is visible
             setIsMinimized(false);
-            
-            // Always restore/ensure incoming call state is set
             if (currentCallRef.current) {
-              console.log('📱 Ensuring incoming call state is visible from notification click');
               setCallState(CALL_STATES.INCOMING);
               setRemoteNumber(callerNumber);
               setIncomingCall(currentCallRef.current);
-              setIsMinimized(false); // Explicitly ensure not minimized
             }
-            
-            // Navigate to recents if not already there
-            if (window.location.pathname !== '/recents') {
-              window.location.href = '/recents';
-            } else {
-              // If already on recents, just ensure the UI updates
-              // Force a small delay to ensure state updates are processed
-              setTimeout(() => {
-                setIsMinimized(false);
-                if (currentCallRef.current) {
-                  setCallState(CALL_STATES.INCOMING);
-                  setRemoteNumber(callerNumber);
-                }
-              }, 100);
-            }
-            
             notification.close();
             notificationRef.current = null;
           };
         } catch (err) {
-          console.warn('Failed to show notification:', err);
+          console.warn("Failed to show notification:", err);
         }
-      } else if (Notification.permission === 'default') {
+      } else if (Notification.permission === "default") {
         Notification.requestPermission();
       }
     }
@@ -981,6 +963,7 @@ export const CallProvider = ({ children }) => {
           } else {
             handleCallStateChangeRef.current(call);
           }
+          handleCallStateChangeRef.current(call);
         });
 
         client.on('incoming', (call) => {
@@ -1019,7 +1002,7 @@ export const CallProvider = ({ children }) => {
     })();
 
     return initializationPromiseRef.current;
-  }, []); // Stable - use refs for callbacks and state
+  }, [getCallDirection]); // Stable - use refs for mutable callbacks/state
 
   // Save call record to database
   const saveCallRecord = useCallback(async (toNumber, fromNumber, direction = 'outbound', status = 'dialing') => {
@@ -1056,14 +1039,102 @@ export const CallProvider = ({ children }) => {
     }
   }, []);
 
+  const normalizeDialableNumber = useCallback((input, { assumeUsForTenDigits = false } = {}) => {
+    const raw = String(input || "").trim();
+    if (!raw) return null;
+
+    const sanitized = raw.replace(/[^\d+]/g, "");
+    if (!sanitized) return null;
+
+    let normalized = sanitized;
+    if (normalized.startsWith("00")) {
+      normalized = `+${normalized.slice(2)}`;
+    }
+
+    if (!normalized.startsWith("+")) {
+      const digitsOnly = normalized.replace(/\D/g, "");
+      if (!digitsOnly) return null;
+      normalized =
+        assumeUsForTenDigits && digitsOnly.length === 10
+          ? `+1${digitsOnly}`
+          : `+${digitsOnly}`;
+    } else {
+      normalized = `+${normalized.slice(1).replace(/\D/g, "")}`;
+    }
+
+    return /^\+\d{8,15}$/.test(normalized) ? normalized : null;
+  }, []);
+
+  const ensureMicrophonePermission = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      return true;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      return true;
+    } catch (err) {
+      console.warn("📱 Microphone access unavailable:", err);
+      const permissionMessage =
+        err?.name === "NotAllowedError" || err?.name === "SecurityError"
+          ? "Microphone access is blocked. Please allow microphone permission and try again."
+          : "Microphone is unavailable. Please check your audio settings and try again.";
+      setError(permissionMessage);
+      return false;
+    }
+  }, []);
+
+  const fixPhoneConfiguration = useCallback(async () => {
+    const now = Date.now();
+    const recentlyFixed =
+      hasAttemptedPhoneConfigFixRef.current &&
+      now - lastPhoneConfigFixAtRef.current < 5 * 60 * 1000;
+    if (recentlyFixed) {
+      return true;
+    }
+
+    lastPhoneConfigFixAtRef.current = now;
+
+    try {
+      const voiceResponse = await API.post("/api/numbers/fix-voice");
+      if (voiceResponse?.error) {
+        throw new Error(voiceResponse.error);
+      }
+      hasAttemptedPhoneConfigFixRef.current = true;
+      console.log("📱 Voice connection sync completed");
+      return true;
+    } catch (voiceErr) {
+      // Fallback to full repair path for environments that only expose fix-all.
+      try {
+        const fullResponse = await API.post("/api/numbers/fix-all");
+        if (fullResponse?.error) {
+          throw new Error(fullResponse.error);
+        }
+        hasAttemptedPhoneConfigFixRef.current = true;
+        console.log("📱 Full Telnyx configuration sync completed");
+        return true;
+      } catch (fullErr) {
+        hasAttemptedPhoneConfigFixRef.current = false;
+        console.warn(
+          "📱 Phone configuration sync failed:",
+          fullErr?.message || voiceErr?.message || fullErr || voiceErr
+        );
+        return false;
+      }
+    }
+  }, []);
+
   // Make outbound call
   const makeCall = useCallback(async (destinationNumber, callerIdNumber) => {
     console.log('[CALL FLOW] CALL BUTTON / makeCall', { destinationNumber, callerIdNumber });
     console.log('📱 Current state:', { isClientReady, hasClient: !!telnyxClientRef.current, callState: callStateRef.current });
     
-    if (!destinationNumber) {
+    const normalizedDestination = normalizeDialableNumber(destinationNumber, { assumeUsForTenDigits: true });
+
+    if (!normalizedDestination) {
       console.log('📱 No destination number');
-      setError('Please enter a phone number');
+      setError('Please enter a valid phone number in international format (example: +14155550123).');
       return false;
     }
 
@@ -1084,6 +1155,7 @@ export const CallProvider = ({ children }) => {
           outboundDialActiveRef.current = false;
           setError('Failed to connect to calling service. Please try again.');
           setCallState(CALL_STATES.IDLE);
+          resetOutboundRetryState();
           return false;
         }
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -1094,6 +1166,7 @@ export const CallProvider = ({ children }) => {
         outboundDialActiveRef.current = false;
         setError('Calling service not available');
         setCallState(CALL_STATES.IDLE);
+        resetOutboundRetryState();
         return false;
       }
 
@@ -1107,6 +1180,7 @@ export const CallProvider = ({ children }) => {
         outboundDialActiveRef.current = false;
         setError('No caller ID available. Please purchase a phone number first.');
         setCallState(CALL_STATES.IDLE);
+        resetOutboundRetryState();
         return false;
       }
 
@@ -1169,6 +1243,7 @@ export const CallProvider = ({ children }) => {
         if (callRecordId) {
           updateCallRecord(callRecordId, { status: 'failed' });
         }
+        resetOutboundRetryState();
         return false;
       }
 
@@ -1176,6 +1251,7 @@ export const CallProvider = ({ children }) => {
       outboundNewCallLegRef.current = call;
       outboundLegArrivalMsRef.current = { [call.id]: Date.now() };
       call._dbCallId = callRecordId;
+      call._usedDefaultCallerFallback = false;
 
       handleCallStateChangeRef.current(call);
 
@@ -1270,9 +1346,19 @@ export const CallProvider = ({ children }) => {
       outboundLegArrivalMsRef.current = {};
       setError(err.message || 'Failed to initiate call');
       setCallState(CALL_STATES.IDLE);
+      resetOutboundRetryState();
       return false;
     }
-  }, [initializeClient, credentials, saveCallRecord, updateCallRecord]); // Removed frequently changing deps
+  }, [
+    initializeClient,
+    credentials,
+    saveCallRecord,
+    updateCallRecord,
+    normalizeDialableNumber,
+    ensureMicrophonePermission,
+    fixPhoneConfiguration,
+    resetOutboundRetryState
+  ]); // Removed frequently changing deps
 
   const hangupAllSessionCalls = useCallback(() => {
     const client = telnyxClientRef.current;
@@ -1392,6 +1478,7 @@ export const CallProvider = ({ children }) => {
     console.log('📱 Rejecting call...');
     userEndedFullCallRef.current = true;
     soundManager.stopRingtone();
+    manualHangupRef.current = true;
     
     // Close notification if it exists
     if (notificationRef.current) {
@@ -1568,47 +1655,20 @@ export const CallProvider = ({ children }) => {
     setIsMinimized(false);
   }, []);
 
-  // Fix voice and messaging configuration for phone numbers
-  const fixPhoneConfiguration = useCallback(async () => {
-    try {
-      console.log('📱 Checking and fixing phone configuration...');
-      const response = await API.post('/api/numbers/fix-all');
-      if (response.data?.success) {
-        console.log('✅ Phone configuration fixed:', response.data);
-      }
-      
-      // Also check WebRTC status for debugging
-      try {
-        const statusResponse = await API.get('/api/webrtc/status');
-        if (statusResponse.data?.status) {
-          console.log('📱 WebRTC Status:', statusResponse.data.status);
-          console.log('📱 Instructions:', statusResponse.data.status.instructions);
-        }
-      } catch (statusErr) {
-        console.log('📱 Could not fetch WebRTC status:', statusErr.message);
-      }
-    } catch (err) {
-      // Silently fail - this is just a best-effort fix
-      console.log('📱 Phone config fix skipped:', err.message);
-    }
-  }, []);
-
   // Auto-initialize client when component mounts (for receiving calls)
   useEffect(() => {
     const autoInit = async () => {
       const token = localStorage.getItem('token');
       if (token && !isClientReady && !isInitializing && !isInitializedRef.current) {
         console.log('📱 Auto-initializing WebRTC client for incoming calls...');
-        
-        // First, try to fix phone configuration
+
         await fixPhoneConfiguration();
-        
-        // Then initialize the WebRTC client
+
         setTimeout(() => {
           initializeClient().catch(e => {
             console.log('📱 Auto-init failed:', e.message);
           });
-        }, 1500);
+        }, 500);
       }
     };
     

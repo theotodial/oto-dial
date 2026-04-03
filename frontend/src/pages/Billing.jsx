@@ -198,6 +198,22 @@ function Billing() {
           ],
           popular: false,
           available: true
+        },
+        {
+          _id: 'unlimited',
+          name: "Unlimited",
+          price: "119.99",
+          description: "Built for high-volume teams",
+          features: [
+            "1 Dedicated Number",
+            "Unlimited SMS*",
+            "Unlimited Minutes*",
+            "Email Support"
+          ],
+          displayUnlimited: true,
+          fairUsageNote: "*Fair usage policy applies.",
+          popular: false,
+          available: true
         }
       ]);
     }
@@ -440,15 +456,24 @@ function Billing() {
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             {currentSubscription && (
+              (() => {
+                const isUnlimitedCurrent =
+                  Boolean(currentSubscription.displayUnlimited) ||
+                  String(currentSubscription.planType || '').toLowerCase() === 'unlimited' ||
+                  String(currentSubscription.planName || '').toLowerCase().includes('unlimited');
+                return (
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
                 <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                   Current plan: {currentSubscription.planName}
                 </span>
                 <span className="block mt-0.5">
-                  {currentSubscription.minutesRemaining?.toFixed(1) || 0} minutes •{" "}
-                  {currentSubscription.smsRemaining || 0} SMS remaining
+                        {isUnlimitedCurrent
+                          ? "∞ minutes • ∞ SMS remaining"
+                          : `${currentSubscription.minutesRemaining?.toFixed(1) || 0} minutes • ${currentSubscription.smsRemaining || 0} SMS remaining`}
                 </span>
               </div>
+                );
+              })()
             )}
           </div>
         </div>

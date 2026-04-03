@@ -9,15 +9,39 @@ const axiosInstance = axios.create({
   baseURL: baseURL,
 });
 
+const getRequestPath = (rawUrl = "") => {
+  if (!rawUrl || typeof rawUrl !== "string") return "";
+
+  if (/^https?:\/\//i.test(rawUrl)) {
+    try {
+      const parsed = new URL(rawUrl);
+      return parsed.pathname || "";
+    } catch {
+      return rawUrl.split("?")[0];
+    }
+  }
+
+  const normalized = rawUrl.split("?")[0];
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+};
+
+const isAdminRequest = (url = "") => {
+  const path = getRequestPath(url);
+  return (
+    path.startsWith("/api/admin") ||
+    path.startsWith("/api/blog/admin") ||
+    path.startsWith("/api/analytics/admin")
+  );
+};
+
 // Add request interceptor to include auth token
 axiosInstance.interceptors.request.use(
   (config) => {
-    // CRITICAL: Only use adminToken for /api/admin/* and /api/blog/admin/* routes
-    // Use userToken for all other routes to prevent conflicts
-    const isAdminRoute = config.url && (
-      config.url.startsWith('/api/admin') || 
-      config.url.startsWith('/api/blog/admin')
-    );
+    const isAdminRoute = isAdminRequest(config.url);
+
+    if (!config.headers) {
+      config.headers = {};
+    }
     
     if (isAdminRoute) {
       // Admin routes: use adminToken only

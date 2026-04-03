@@ -73,9 +73,11 @@ router.get("/me", async (req, res) => {
       subscription: subscription
         ? {
             active: true,
-            plan: "monthly",
-            minutesRemaining: subscription.minutesRemaining,
-            smsRemaining: subscription.smsRemaining,
+            plan: subscription.planType || "monthly",
+            planType: subscription.planType || null,
+            displayUnlimited: Boolean(subscription.displayUnlimited),
+            minutesRemaining: subscription.displayUnlimited ? "∞" : subscription.minutesRemaining,
+            smsRemaining: subscription.displayUnlimited ? "∞" : subscription.smsRemaining,
             number: subscription.numbers.length
               ? subscription.numbers[0].phoneNumber
               : null

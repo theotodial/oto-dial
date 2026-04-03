@@ -3,6 +3,12 @@ import { getTelnyx } from "../../config/telnyx.js";
 import SMS from "../models/SMS.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import Subscription from "../models/Subscription.js";
+import {
+  checkUnlimitedUsageBeforeAction,
+  createSuspiciousActivityErrorPayload,
+  incrementUnlimitedUsageAfterSuccess,
+  isUnlimitedSubscription
+} from "../services/unlimitedUsageService.js";
 
 const router = express.Router();
 
@@ -39,8 +45,23 @@ router.post("/send", async (req, res) => {
       return res.status(403).json({ error: "Subscription is not active" });
     }
 
-    // 🔒 USAGE GUARD: Check remaining SMS > 0 before allowing outgoing SMS
-    if (req.subscription.smsRemaining <= 0) {
+    const unlimitedGate = await checkUnlimitedUsageBeforeAction({
+      subscriptionId: req.subscription.id,
+      userId: req.userId,
+      channel: "sms_outbound",
+      smsIncrement: 1
+    });
+
+    if (!unlimitedGate.allowed) {
+      return res.status(403).json(createSuspiciousActivityErrorPayload());
+    }
+
+    const unlimitedPlan = isUnlimitedSubscription(
+      unlimitedGate.subscription || req.subscription
+    );
+
+    // Legacy plans keep existing remaining-SMS guard behavior.
+    if (!unlimitedPlan && req.subscription.smsRemaining <= 0) {
       return res.status(403).json({ 
         error: "No SMS remaining. Please upgrade your plan or wait for your next billing cycle." 
       });
@@ -109,6 +130,20 @@ router.post("/send", async (req, res) => {
 
     // ✅ Usage tracking - deduct usage for outbound SMS
     if (req.subscription.id) {
+      if (unlimitedPlan) {
+        const usageResult = await incrementUnlimitedUsageAfterSuccess({
+          subscriptionId: req.subscription.id,
+          userId: req.userId,
+          channel: "sms_outbound",
+          smsIncrement: 1
+        });
+
+        if (!usageResult.success && usageResult.limitReached) {
+          console.warn(
+            `⚠️ Outbound SMS usage increment hit Unlimited plan threshold for user ${req.userId}`
+          );
+        }
+      } else {
       // Get subscription before update to log remaining balance
       const subscription = await Subscription.findById(req.subscription.id);
       
@@ -133,6 +168,7 @@ router.post("/send", async (req, res) => {
         console.log(`   User: ${req.userId}`);
         console.log(`   Before: ${smsUsedBefore} SMS used, ${smsRemainingBefore} SMS remaining`);
         console.log(`   After: ${smsUsedAfter} SMS used, ${smsRemainingAfter} SMS remaining`);
+      }
       }
     }
 

@@ -52,6 +52,22 @@ const subscriptionSchema = new mongoose.Schema(
       index: true
     },
 
+    planType: {
+      type: String,
+      default: null,
+      index: true
+    },
+
+    planName: {
+      type: String,
+      default: null
+    },
+
+    displayUnlimited: {
+      type: Boolean,
+      default: false
+    },
+
     status: {
       type: String,
       enum: ["active", "suspended", "cancelled", "past_due", "incomplete", "pending_activation"],
@@ -105,14 +121,40 @@ const subscriptionSchema = new mongoose.Schema(
       required: true,
       default: 0.0065
     },
+
+    monthlySmsLimit: {
+      type: Number,
+      default: null
+    },
+
+    monthlyMinutesLimit: {
+      type: Number,
+      default: null
+    },
+
+    dailySmsLimit: {
+      type: Number,
+      default: null
+    },
+
     dailyMinutesLimit: {
       type: Number,
-      default: 500
+      default: null
+    },
+
+    dailySmsUsed: {
+      type: Number,
+      default: 0
     },
     
     dailyMinutesUsed: {
       type: Number,
       default: 0
+    },
+
+    usageWindowDateKey: {
+      type: String,
+      default: null
     },
     
     lastUsageReset: {

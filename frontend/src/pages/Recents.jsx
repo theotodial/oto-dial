@@ -166,6 +166,11 @@ function Recents() {
     planName: 'No Plan',
   });
   const messagesEndRef = useRef(null);
+  const suspiciousActivityText =
+    'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
+
+  const isSuspiciousActivityError = (message) =>
+    String(message || '').toLowerCase().includes('suspicious activity detected');
   
   // Dialer state - MUST be declared before any conditional returns
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -287,8 +292,6 @@ function Recents() {
             minutesRemaining: subRes.data?.minutesRemaining ?? 0,
             planName: subRes.data?.planName || 'No Plan',
           });
-          // Initialize WebRTC client when subscription is active
-          initializeClient();
         }
       } catch (err) {
         console.warn('Failed to fetch dialer data:', err);
@@ -297,7 +300,7 @@ function Recents() {
       }
     };
     fetchDialerData();
-  }, [initializeClient]);
+  }, []);
 
   // Normalize phone number for comparison (used by fetchChatMessages)
   const normalizePhone = (num) => {
@@ -1435,7 +1438,24 @@ function Recents() {
                 )}
                 <div ref={messagesEndRef} />
               </div>
-              {sendError && <div className="px-4 py-2 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-sm flex-shrink-0">{sendError}</div>}
+              {sendError && (
+                <div className="px-4 py-2 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-sm flex-shrink-0">
+                  {isSuspiciousActivityError(sendError) ? (
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <span>{suspiciousActivityText}</span>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/support')}
+                        className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
+                      >
+                        Contact Support
+                      </button>
+                    </div>
+                  ) : (
+                    sendError
+                  )}
+                </div>
+              )}
               <div className="p-3 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex-shrink-0">
                 <form onSubmit={handleSendMessage} className="flex items-center gap-2">
                   <input type="text" value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} placeholder="Type a message..." className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-full text-gray-900 dark:text-white placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" disabled={sending} />
@@ -1759,7 +1779,20 @@ function Recents() {
               {/* Input Area */}
               {sendError && (
                 <div className="px-4 py-2 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-sm">
-                  {sendError}
+                  {isSuspiciousActivityError(sendError) ? (
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <span>{suspiciousActivityText}</span>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/support')}
+                        className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
+                      >
+                        Contact Support
+                      </button>
+                    </div>
+                  ) : (
+                    sendError
+                  )}
                 </div>
               )}
               <div className="border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">

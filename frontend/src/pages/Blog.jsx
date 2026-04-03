@@ -21,6 +21,99 @@ function Blog() {
     fetchMeta();
   }, [filters]);
 
+  const normalizeImageUrl = (rawUrl) => {
+    if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+    const value = rawUrl.trim();
+    if (!value) return value;
+    const toPreferredUploadPath = (pathname = '') => {
+      if (pathname.startsWith('/api/uploads/')) return pathname;
+      if (pathname.startsWith('/uploads/')) return `/api${pathname}`;
+      return pathname;
+    };
+
+    if (value.startsWith('/api/uploads/') || value.startsWith('/uploads/')) {
+      return toPreferredUploadPath(value);
+    }
+
+    try {
+      const parsed = new URL(value);
+      if (!parsed.pathname.startsWith('/uploads/') && !parsed.pathname.startsWith('/api/uploads/')) return value;
+      const host = parsed.hostname.toLowerCase();
+      const currentHost = window.location.hostname.toLowerCase();
+      if (host === 'localhost' || host === '127.0.0.1' || host === currentHost) {
+        const normalizedPath = toPreferredUploadPath(parsed.pathname);
+        return `${normalizedPath}${parsed.search || ''}`;
+      }
+    } catch {
+      return value;
+    }
+
+    return value;
+  };
+
+  const buildUploadFallbackCandidates = (url = '') => {
+    const value = String(url || '').trim();
+    if (!value) return [];
+
+    const fixLegacyName = (input) =>
+      String(input || '')
+        .replace(/\.{2,}/g, '.')
+        .replace(/\.pn(\.[a-z0-9]+)(?=[?#]|$)/i, '$1');
+
+    const candidates = new Set();
+    const push = (candidate) => {
+      const normalized = String(candidate || '').trim();
+      if (normalized) candidates.add(normalized);
+    };
+
+    push(value);
+    push(value.replace('/api/uploads/', '/uploads/'));
+    push(value.replace('/uploads/', '/api/uploads/'));
+
+    const fixedValue = fixLegacyName(value);
+    push(fixedValue);
+    push(fixedValue.replace('/api/uploads/', '/uploads/'));
+    push(fixedValue.replace('/uploads/', '/api/uploads/'));
+
+    return Array.from(candidates);
+  };
+
+  const handleImageError = (event) => {
+    const img = event.currentTarget;
+    if (!img) return;
+
+    let fallbackList = [];
+    try {
+      fallbackList = JSON.parse(img.dataset.fallbackList || '[]');
+    } catch {
+      fallbackList = [];
+    }
+
+    if (!Array.isArray(fallbackList) || fallbackList.length === 0) {
+      fallbackList = buildUploadFallbackCandidates(img.dataset.originalSrc || img.currentSrc || img.src);
+    }
+
+    let nextIndex = Number(img.dataset.fallbackIndex || 0);
+    while (nextIndex < fallbackList.length) {
+      const nextCandidate = fallbackList[nextIndex];
+      nextIndex += 1;
+      if (nextCandidate && nextCandidate !== img.currentSrc && nextCandidate !== img.src) {
+        img.dataset.fallbackList = JSON.stringify(fallbackList);
+        img.dataset.fallbackIndex = String(nextIndex);
+        img.src = nextCandidate;
+        return;
+      }
+    }
+
+    if (img.dataset.placeholderApplied !== 'true') {
+      img.dataset.placeholderApplied = 'true';
+      img.src = '/logo.svg';
+      return;
+    }
+
+    img.style.display = 'none';
+  };
+
   const fetchBlogs = async () => {
     try {
       setLoading(true);
@@ -40,7 +133,12 @@ function Blog() {
       }
       
       if (response.data?.success) {
-        setBlogs(response.data.blogs || []);
+        const normalizedBlogs = (response.data.blogs || []).map((blog) => ({
+          ...blog,
+          featuredImage: normalizeImageUrl(blog.featuredImage),
+          ogImage: normalizeImageUrl(blog.ogImage)
+        }));
+        setBlogs(normalizedBlogs);
         setPagination(response.data.pagination || { page: 1, pages: 1, total: 0 });
       } else {
         console.error('Blog fetch failed:', response.data);
@@ -192,13 +290,18 @@ function Blog() {
                       <Link
                         key={blog._id}
                         to={`/blog/${blog.slug}`}
-                        className="block bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg transition-shadow overflow-hidden"
+                        className="block bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg transition-shadow overflow-hidden h-fit"
                       >
                         {blog.featuredImage && (
                           <img
                             src={blog.featuredImage}
                             alt={blog.title}
-                            className="w-full h-48 object-cover"
+                            className="w-full h-auto object-contain bg-gray-50 dark:bg-slate-900/50"
+                            loading="lazy"
+                            data-original-src={blog.featuredImage}
+                            data-fallback-index="0"
+                            data-placeholder-applied="false"
+                            onError={handleImageError}
                           />
                         )}
                         <div className="p-6">

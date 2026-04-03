@@ -326,6 +326,26 @@ router.post("/", async (req, res) => {
       // minutesUsed field stores SECONDS internally
       // ===============================
       if (billableSeconds > 0 && call.user) {
+        const usageCountLock = await Call.updateOne(
+          {
+            _id: call._id,
+            usageCountedAt: null
+          },
+          {
+            $set: {
+              usageCountedAt: new Date(),
+              usageCountedSeconds: billableSeconds
+            }
+          }
+        );
+
+        if (usageCountLock.modifiedCount === 0) {
+          console.log(
+            `⏭️ Usage already counted for call ${call._id}, skipping duplicate webhook charge`
+          );
+          return res.sendStatus(200);
+        }
+
         // Get subscription before update to log remaining balance
         const subscription = await Subscription.findOne({
           userId: call.user,
@@ -333,35 +353,50 @@ router.post("/", async (req, res) => {
         });
 
         if (subscription) {
-          const secondsUsedBefore = subscription.usage?.minutesUsed || 0;
-          const minutesTotal = (subscription.limits?.minutesTotal || 2500) + (subscription.addons?.minutes || 0);
-          const secondsTotal = minutesTotal * 60;
-          const secondsRemainingBefore = Math.max(0, secondsTotal - secondsUsedBefore);
-          const minutesRemainingBefore = secondsRemainingBefore / 60;
+          if (isUnlimitedSubscription(subscription)) {
+            const usageResult = await incrementUnlimitedUsageAfterSuccess({
+              subscriptionId: subscription._id,
+              userId: call.user,
+              channel: "voice_hangup",
+              minutesIncrementSeconds: billableSeconds
+            });
 
-          // Deduct usage
-          await Subscription.findOneAndUpdate(
-            { userId: call.user, status: "active" },
-            {
-              $inc: {
-                "usage.minutesUsed": billableSeconds, // Store seconds in minutesUsed field
-              },
+            if (!usageResult.success && usageResult.limitReached) {
+              console.warn(
+                `⚠️ Voice usage increment hit Unlimited threshold for user ${call.user}`
+              );
             }
-          );
+          } else {
+            const secondsUsedBefore = subscription.usage?.minutesUsed || 0;
+            const minutesTotal = (subscription.limits?.minutesTotal || 2500) + (subscription.addons?.minutes || 0);
+            const secondsTotal = minutesTotal * 60;
+            const secondsRemainingBefore = Math.max(0, secondsTotal - secondsUsedBefore);
+            const minutesRemainingBefore = secondsRemainingBefore / 60;
 
-          // Calculate remaining after deduction
-          const secondsUsedAfter = secondsUsedBefore + billableSeconds;
-          const secondsRemainingAfter = Math.max(0, secondsTotal - secondsUsedAfter);
-          const minutesRemainingAfter = secondsRemainingAfter / 60;
+            // Deduct usage
+            await Subscription.findOneAndUpdate(
+              { userId: call.user, status: "active" },
+              {
+                $inc: {
+                  "usage.minutesUsed": billableSeconds // Store seconds in minutesUsed field
+                }
+              }
+            );
 
-          // Enhanced logging for debugging and cost tracking
-          console.log(`📊 USAGE DEDUCTED:`);
-          console.log(`   Call: ${call.direction} ${call.fromNumber} -> ${call.toNumber}`);
-          console.log(`   Duration: ${billableSeconds} seconds (${(billableSeconds / 60).toFixed(3)} minutes)`);
-          console.log(`   Status: ${finalStatus}${!call.callStartedAt ? ' (unanswered/ringing)' : ''}`);
-          console.log(`   User: ${call.user}`);
-          console.log(`   Before: ${secondsUsedBefore}s used, ${minutesRemainingBefore.toFixed(2)} minutes remaining`);
-          console.log(`   After: ${secondsUsedAfter}s used, ${minutesRemainingAfter.toFixed(2)} minutes remaining`);
+            // Calculate remaining after deduction
+            const secondsUsedAfter = secondsUsedBefore + billableSeconds;
+            const secondsRemainingAfter = Math.max(0, secondsTotal - secondsUsedAfter);
+            const minutesRemainingAfter = secondsRemainingAfter / 60;
+
+            // Enhanced logging for debugging and cost tracking
+            console.log(`📊 USAGE DEDUCTED:`);
+            console.log(`   Call: ${call.direction} ${call.fromNumber} -> ${call.toNumber}`);
+            console.log(`   Duration: ${billableSeconds} seconds (${(billableSeconds / 60).toFixed(3)} minutes)`);
+            console.log(`   Status: ${finalStatus}${!call.callStartedAt ? ' (unanswered/ringing)' : ''}`);
+            console.log(`   User: ${call.user}`);
+            console.log(`   Before: ${secondsUsedBefore}s used, ${minutesRemainingBefore.toFixed(2)} minutes remaining`);
+            console.log(`   After: ${secondsUsedAfter}s used, ${minutesRemainingAfter.toFixed(2)} minutes remaining`);
+          }
         } else {
           console.warn(`⚠️ No active subscription found for user ${call.user} - usage not deducted`);
         }

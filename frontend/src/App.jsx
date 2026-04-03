@@ -38,6 +38,11 @@ import Support from './pages/Support';
 import Contact from './pages/Contact';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
+import AffiliateLanding from './pages/AffiliateLanding';
+import AffiliateSignup from './pages/AffiliateSignup';
+import AffiliateLogin from './pages/AffiliateLogin';
+import AffiliateOAuthSuccess from './pages/AffiliateOAuthSuccess';
+import AffiliateDashboard from './pages/AffiliateDashboard';
 import AdminLogin from './pages/admin/AdminLogin';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminDashboardEnhanced from './pages/admin/AdminDashboardEnhanced';
@@ -136,6 +141,43 @@ function App() {
                   <Navbar />
                   <Terms />
                 </>
+              }
+            />
+
+            <Route
+              path="/affiliate"
+              element={
+                <>
+                  <Navbar />
+                  <AffiliateLanding />
+                </>
+              }
+            />
+            <Route
+              path="/affiliate/signup"
+              element={
+                <>
+                  <Navbar />
+                  <AffiliateSignup />
+                </>
+              }
+            />
+            <Route
+              path="/affiliate/login"
+              element={
+                <>
+                  <Navbar />
+                  <AffiliateLogin />
+                </>
+              }
+            />
+            <Route path="/affiliate/oauth-success" element={<AffiliateOAuthSuccess />} />
+            <Route
+              path="/affiliate/dashboard"
+              element={
+                <AffiliateProtectedRoute>
+                  <AffiliateDashboard />
+                </AffiliateProtectedRoute>
               }
             />
             

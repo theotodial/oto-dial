@@ -5,6 +5,7 @@ import express from "express";
 import cors from "cors";
 import passport from "passport";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 import connectDB from "./config/db.js";
@@ -14,6 +15,7 @@ import { ensureStripeCatalogConsistency } from "./src/services/stripeCatalogBoot
 import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
 
 import authenticateUser from "./src/middleware/authenticateUser.js";
+import requireAdmin from "./src/middleware/requireAdmin.js";
 import loadSubscription from "./src/middleware/loadSubscription.js";
 
 // ========================
@@ -25,6 +27,8 @@ validateEnv();
 // ROUTES
 // ========================
 import authRoutes from "./src/routes/auth.js";
+import affiliateAuthRoutes from "./src/routes/affiliateAuth.js";
+import affiliateRoutes from "./src/routes/affiliateRoutes.js";
 import callRoutes from "./src/routes/callRoutes.js";
 import dialerRoutes from "./src/routes/dialerRoutes.js";
 import numberRoutes from "./src/routes/numberRoutes.js";
@@ -53,8 +57,91 @@ import telnyxWebhookRoutes from "./src/routes/webhooks/telnyx.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || "25mb";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const backendUploadsDir = path.join(__dirname, "uploads");
+const cwdUploadsDir = path.resolve(process.cwd(), "uploads");
+const projectRootUploadsDir = path.resolve(__dirname, "..", "uploads");
+const legacyUploadsDir = path.resolve(process.env.HOME || "/home/ubuntu", "uploads");
+const rootUploadsDir = path.resolve("/root/uploads");
+const commonUploadsDirs = [
+  path.resolve("/var/www/oto-dial/uploads"),
+  path.resolve("/var/www/oto-dial/backend/uploads"),
+  path.resolve("/var/www/oto-dial/frontend/uploads"),
+  path.resolve("/var/www/oto-dial/frontend/dist/uploads"),
+  path.resolve("/var/www/oto-dial/shared/uploads"),
+  path.resolve("/var/www/uploads")
+];
+const uploadSearchRoots = Array.from(
+  new Set(
+    [
+      backendUploadsDir,
+      cwdUploadsDir,
+      projectRootUploadsDir,
+      legacyUploadsDir,
+      rootUploadsDir,
+      ...commonUploadsDirs,
+      process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : null
+    ].filter(Boolean)
+  )
+);
+
+function sanitizeUploadRequestPath(rawPath = "") {
+  const decoded = decodeURIComponent(String(rawPath || "")).replace(/\\/g, "/");
+  const normalized = path.posix.normalize(`/${decoded}`).replace(/^\/+/, "");
+  const segments = normalized.split("/").filter(Boolean);
+  const hasTraversal = segments.some((segment) => segment === "..");
+  if (!normalized || hasTraversal) {
+    return null;
+  }
+  return normalized;
+}
+
+function isFilePath(filePath) {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function findExistingUploadFile(relativePath) {
+  const safeRelativePath = sanitizeUploadRequestPath(relativePath);
+  if (!safeRelativePath) return null;
+
+  const baseName = path.basename(safeRelativePath);
+  const normalizedBaseName = baseName.replace(/\.{2,}/g, ".");
+  const normalizedRelativePath = safeRelativePath.replace(/\.{2,}/g, ".");
+  const candidateRelativePaths = Array.from(
+    new Set([
+      safeRelativePath,
+      normalizedRelativePath,
+      safeRelativePath.startsWith("blog/") ? baseName : `blog/${baseName}`,
+      normalizedRelativePath.startsWith("blog/") ? normalizedBaseName : `blog/${normalizedBaseName}`,
+      baseName,
+      normalizedBaseName,
+      `uploads/${safeRelativePath}`,
+      `uploads/${normalizedRelativePath}`,
+      `uploads/blog/${baseName}`,
+      `uploads/blog/${normalizedBaseName}`
+    ])
+  );
+
+  for (const root of uploadSearchRoots) {
+    for (const candidate of candidateRelativePaths) {
+      const absolute = path.resolve(root, candidate);
+      const normalizedRoot = path.resolve(root);
+      if (!absolute.startsWith(normalizedRoot + path.sep) && absolute !== normalizedRoot) {
+        continue;
+      }
+      if (isFilePath(absolute)) {
+        return absolute;
+      }
+    }
+  }
+  return null;
+}
 
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', true);
@@ -97,9 +184,47 @@ app.use(
   stripeWebhookRoutes
 );
 
-app.use(express.json({ limit: '10mb' })); // Increased limit for image uploads
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
+app.use("/uploads", express.static(backendUploadsDir));
+app.use("/api/uploads", express.static(backendUploadsDir));
+
+// Support deployments where PM2 cwd differs from backend directory.
+if (cwdUploadsDir !== backendUploadsDir) {
+  app.use("/uploads", express.static(cwdUploadsDir));
+  app.use("/api/uploads", express.static(cwdUploadsDir));
+}
+
+// Support legacy/root-level uploads storage used by some VPS deploy setups.
+if (
+  projectRootUploadsDir !== backendUploadsDir &&
+  projectRootUploadsDir !== cwdUploadsDir
+) {
+  app.use("/uploads", express.static(projectRootUploadsDir));
+  app.use("/api/uploads", express.static(projectRootUploadsDir));
+}
+
+app.get("/api/uploads", (_req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Upload root is available. Request a full file path under /api/uploads/<subdir>/<filename>."
+  });
+});
+
+// Fallback resolver for deployments where upload storage path moved.
+const uploadsFallbackHandler = (req, res, next) => {
+  const requestedPath = req.params?.[0] || "";
+  const filePath = findExistingUploadFile(requestedPath);
+  if (!filePath) {
+    return next();
+  }
+  return res.sendFile(filePath, (err) => {
+    if (err) return next(err);
+    return undefined;
+  });
+};
+app.get("/uploads/*", uploadsFallbackHandler);
+app.get("/api/uploads/*", uploadsFallbackHandler);
 
 // ========================
 // WEBHOOKS
@@ -112,6 +237,7 @@ app.use("/webhooks/telnyx", telnyxWebhookRoutes);
 // PUBLIC
 // ========================
 app.use("/api/auth", authRoutes);
+app.use("/api/affiliate/auth", affiliateAuthRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/admin/auth", adminAuthRoutes); // Admin auth (no auth middleware needed for login)
 
@@ -136,8 +262,9 @@ app.use("/api/usage", authenticateUser, loadSubscription, usageStatisticsRoutes)
 app.use("/api/support", supportRoutes); // Support routes (authenticateUser is in the route file)
 app.use("/api/blog", blogRoutes); // Blog routes (public and admin routes inside)
 app.use("/api/analytics", analyticsRoutes); // Analytics routes (public and admin routes inside)
+app.use("/api/affiliate", affiliateRoutes);
 // Admin routes: Only require authentication, NOT subscription (admins don't need subscriptions)
-app.use("/api/admin", authenticateUser, adminRoutes);
+app.use("/api/admin", authenticateUser, requireAdmin, adminRoutes);
 
 // ========================
 // HEALTH
@@ -179,6 +306,17 @@ app.get("/api/webhook-info", (req, res) => {
 
 app.get("/", (req, res) => {
   res.json({ success: true, message: "OTO DIAL API" });
+});
+
+// Friendly payload-too-large response for clients (instead of raw HTML 413 pages).
+app.use((err, req, res, next) => {
+  if (err?.type === "entity.too.large" || err?.status === 413) {
+    return res.status(413).json({
+      success: false,
+      error: "Request payload too large. Please upload smaller images or use image URLs."
+    });
+  }
+  return next(err);
 });
 
 // ========================
