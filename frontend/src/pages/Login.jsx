@@ -40,7 +40,7 @@ function Login() {
   const [success, setSuccess] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const from = location.state?.from?.pathname || '/dashboard';
+  const from = location.state?.from?.pathname || '/recents';
 
   useEffect(() => {
     if (isAuthenticated) {

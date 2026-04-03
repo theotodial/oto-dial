@@ -85,6 +85,8 @@ function buildDays(startDate, endDate) {
 
 router.get("/", requireAdmin, async (req, res) => {
   try {
+    const wantsStripeSync =
+      req.query.stripeSync === "1" || req.query.liveSync === "1";
     const { filter = "30d" } = req.query;
     const { startDate, endDate } = getDateRange(filter);
     const days = buildDays(startDate, endDate);
@@ -187,16 +189,23 @@ router.get("/", requireAdmin, async (req, res) => {
       });
     }
 
-    // Sync and aggregate Stripe revenue from Mongo ledger.
-    let stripeSync = { skipped: true, synced: 0, scanned: 0, pages: 0 };
-    try {
-      stripeSync = await syncPaidInvoicesFromStripe({
-        startDate,
-        endDate,
-        maxPages: filter === "all" ? 20 : 6
-      });
-    } catch (syncErr) {
-      console.warn("Stripe invoice sync warning:", syncErr.message);
+    let stripeSync = {
+      skipped: true,
+      synced: 0,
+      scanned: 0,
+      pages: 0,
+      reason: wantsStripeSync ? undefined : "dashboard_uses_mongo_only"
+    };
+    if (wantsStripeSync) {
+      try {
+        stripeSync = await syncPaidInvoicesFromStripe({
+          startDate,
+          endDate,
+          maxPages: filter === "all" ? 10 : 4
+        });
+      } catch (syncErr) {
+        console.warn("Stripe invoice sync warning:", syncErr.message);
+      }
     }
 
     const revenueByDay = await getStripeRevenueByDayFromMongo({

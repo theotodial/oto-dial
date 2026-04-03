@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../../api';
 import {
@@ -7,6 +7,20 @@ import {
 } from 'recharts';
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6'];
+const REALTIME_WINDOW_OPTIONS = [
+  { value: '15m', label: 'Last 15m' },
+  { value: '30m', label: 'Last 30m' },
+  { value: '45m', label: 'Last 45m' },
+  { value: '1h', label: 'Last 1h' },
+  { value: '2h', label: 'Last 2h' },
+  { value: '4h', label: 'Last 4h' },
+  { value: '6h', label: 'Last 6h' },
+  { value: '8h', label: 'Last 8h' },
+  { value: '12h', label: 'Last 12h' },
+  { value: '24h', label: 'Last 24h' },
+  { value: '28h', label: 'Last 28h' },
+  { value: '72h', label: 'Last 72h' }
+];
 
 // Chevron icon for expand/collapse
 const ChevronDownIcon = () => (
@@ -26,66 +40,90 @@ function AdminAnalytics() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [meta, setMeta] = useState(null);
+  const hasLoadedOnceRef = useRef(false);
+  const [realtimeWindow, setRealtimeWindow] = useState('15m');
   const [dateRange, setDateRange] = useState({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
   });
 
-  useEffect(() => {
-    fetchAnalytics();
-  }, [dateRange]);
-
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async ({ background = false } = {}) => {
+    const shouldBlockRender = !background && !hasLoadedOnceRef.current;
     try {
-      setLoading(true);
+      if (shouldBlockRender) {
+        setLoading(true);
+      }
       const params = new URLSearchParams();
       if (dateRange.startDate) params.append('startDate', dateRange.startDate);
       if (dateRange.endDate) params.append('endDate', dateRange.endDate);
+      params.append('realtimeWindow', realtimeWindow);
+      const adminToken = localStorage.getItem('adminToken');
 
-      const response = await API.get(`/api/analytics/admin/dashboard?${params.toString()}`);
+      const response = await API.get(`/api/analytics/admin/dashboard?${params.toString()}`, {
+        headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
+      });
       
       console.log('Analytics API Response:', response);
       
       if (response.error) {
         console.error('Error fetching analytics:', response.error);
-        // Set empty data structure so cards still show
-        setData(null);
-        setMeta({
-          source: 'unavailable',
-          googleAnalytics: {
-            warnings: [response.error]
-          }
-        });
+        if (response.status === 401) {
+          localStorage.removeItem('adminToken');
+          navigate('/adminbobby');
+          return;
+        }
+        hasLoadedOnceRef.current = true;
+        if (!background) {
+          // Set empty data structure so cards still show
+          setData(null);
+          setMeta({
+            source: 'unavailable',
+            googleAnalytics: {
+              warnings: [response.error]
+            }
+          });
+        }
         return;
       }
 
       if (response.data?.success) {
         console.log('Analytics data received:', response.data.data);
+        hasLoadedOnceRef.current = true;
         setData(response.data.data);
         setMeta(response.data.meta || null);
       } else {
         console.warn('Unexpected response format:', response.data);
-        // Set null so we can still show cards with defaults
-        setData(null);
-        setMeta(null);
+        hasLoadedOnceRef.current = true;
+        if (!background) {
+          // Set null so we can still show cards with defaults
+          setData(null);
+          setMeta(null);
+        }
       }
     } catch (error) {
       console.error('Error fetching analytics:', error);
-      setData(null);
-      setMeta({
-        source: 'unavailable',
-        googleAnalytics: {
-          warnings: [error.message]
-        }
-      });
+      hasLoadedOnceRef.current = true;
+      if (!background) {
+        setData(null);
+        setMeta({
+          source: 'unavailable',
+          googleAnalytics: {
+            warnings: [error.message]
+          }
+        });
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateRange.endDate, dateRange.startDate, navigate, realtimeWindow]);
+
+  useEffect(() => {
+    fetchAnalytics({ background: hasLoadedOnceRef.current });
+  }, [fetchAnalytics]);
 
   const handleCardClick = (cardId) => {
     navigate(`/adminbobby/analytics/${cardId}`, {
-      state: { data, dateRange, meta }
+      state: { data, dateRange, realtimeWindow, meta }
     });
   };
 
@@ -94,6 +132,42 @@ function AdminAnalytics() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+  };
+
+  const getSourceIcon = (source) => {
+    const key = String(source || '').toLowerCase();
+    if (key.includes('snapchat')) return '👻';
+    if (key.includes('instagram')) return '📸';
+    if (key.includes('facebook')) return '📘';
+    if (key === 'x' || key.includes('twitter') || key.includes('x.com')) return 'X';
+    if (key.includes('threads')) return '🧵';
+    if (key.includes('tiktok')) return '🎵';
+    if (key.includes('linkedin')) return '💼';
+    if (key.includes('youtube')) return '▶';
+    if (key.includes('reddit')) return '👽';
+    if (key.includes('pinterest')) return '📌';
+    if (key.includes('telegram') || key.includes('t.me')) return '✈';
+    if (key.includes('whatsapp')) return '🟢';
+    if (key.includes('discord')) return '🎮';
+    if (key.includes('google')) return '🔎';
+    return '🔗';
+  };
+
+  const formatSourceLabel = (source) => {
+    const value = String(source || '').trim();
+    if (!value) return 'direct';
+    if (value === 'x') return 'X';
+    return value
+      .split(/[_\-\s]+/)
+      .filter(Boolean)
+      .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+      .join(' ');
+  };
+
+  const buildSourceDisplayLabel = (source, handle = null) => {
+    const icon = getSourceIcon(source);
+    const base = formatSourceLabel(source || 'direct');
+    return `${icon} ${base}${handle ? ` @${handle}` : ''}`;
   };
 
   if (loading) {
@@ -114,8 +188,14 @@ function AdminAnalytics() {
     newVisitors: 0,
     signUps: 0,
     usersWithSubscription: 0,
-    avgTimeSpent: 0
+    avgTimeSpent: 0,
+    realtimeActiveUsers: 0
   };
+  const realtimeActiveUsers = Number.isFinite(overview.realtimeActiveUsers)
+    ? overview.realtimeActiveUsers
+    : Number.isFinite(meta?.googleAnalytics?.realtimeActiveUsers)
+      ? meta.googleAnalytics.realtimeActiveUsers
+      : null;
 
   const funnel = data?.funnel || {
     totalVisitors: 0,
@@ -133,6 +213,21 @@ function AdminAnalytics() {
   const pages = data?.pages || [];
   const dailyVisitors = data?.dailyVisitors || [];
   const topIPs = data?.topIPs || [];
+  const uniqueIpVisitors = Number(overview?.uniqueIpVisitors || 0);
+  const realtimeData = data?.realtime || {};
+  const realtimeSummary = realtimeData?.summary || {
+    totalUsers: 0,
+    activeNow: 0,
+    signedUpUsers: 0,
+    subscribedUsers: 0,
+    windowKey: realtimeWindow
+  };
+  const realtimePreviewUsers = (realtimeData?.users || []).slice(0, 3);
+  const trafficSources = data?.trafficSources || { channels: [], topSources: [], summary: {} };
+  const topSource = trafficSources.topSources?.[0];
+  const topSourceSubtitle = topSource
+    ? `Top source: ${buildSourceDisplayLabel(topSource.socialPlatform || topSource.source, topSource.influencerHandle || null)}`
+    : `${(trafficSources.summary?.totalVisits || 0).toLocaleString()} tracked visits`;
 
   // Card component - navigates to detail page
   const MetricCard = ({ id, title, icon, value, subtitle, color, gradient }) => {
@@ -196,9 +291,9 @@ function AdminAnalytics() {
               GA4 Property ID: {meta.googleAnalytics.propertyId}
             </p>
           )}
-          {meta.source === 'google_analytics' && Number.isFinite(data?.overview?.realtimeActiveUsers) && (
+          {Number.isFinite(realtimeActiveUsers) && (
             <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1">
-              Realtime active users: {data.overview.realtimeActiveUsers}
+              Realtime active users: {realtimeActiveUsers}
             </p>
           )}
           {Array.isArray(meta.googleAnalytics?.warnings) && meta.googleAnalytics.warnings.length > 0 && (
@@ -216,7 +311,18 @@ function AdminAnalytics() {
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Analytics Dashboard</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Track your audience and performance metrics</p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex gap-3 flex-wrap justify-end">
+          <select
+            value={realtimeWindow}
+            onChange={(e) => setRealtimeWindow(e.target.value)}
+            className="px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
+          >
+            {REALTIME_WINDOW_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
           <input
             type="date"
             value={dateRange.startDate}
@@ -229,6 +335,50 @@ function AdminAnalytics() {
             onChange={(e) => setDateRange(prev => ({ ...prev, endDate: e.target.value }))}
             className="px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
           />
+        </div>
+      </div>
+
+      <div className="mb-6">
+        <div
+          onClick={() => handleCardClick('realtime')}
+          className="bg-gradient-to-r from-emerald-50 to-cyan-50 dark:from-emerald-900/20 dark:to-cyan-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl shadow-sm hover:shadow-lg hover:scale-[1.01] transition-all duration-300 cursor-pointer p-6"
+        >
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Realtime Active Users ({realtimeSummary.windowKey || realtimeWindow})</p>
+              <p className="mt-1 text-4xl font-bold text-emerald-700 dark:text-emerald-300">
+                {(Number(realtimeSummary.totalUsers) || 0).toLocaleString()}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-600 dark:text-gray-300">
+                <span>Active now (5m): <strong>{Number(realtimeSummary.activeNow || 0).toLocaleString()}</strong></span>
+                <span>Conversions: <strong>{Number(realtimeSummary.signedUpUsers || 0).toLocaleString()}</strong></span>
+                <span>Subscribers: <strong>{Number(realtimeSummary.subscribedUsers || 0).toLocaleString()}</strong></span>
+              </div>
+            </div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              View realtime users by device, IP, geo, source, and conversion
+            </div>
+          </div>
+          {realtimePreviewUsers.length > 0 && (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+              {realtimePreviewUsers.map((user, idx) => (
+                <div key={`${user.sessionId || idx}-${idx}`} className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-white/70 dark:bg-slate-900/40 p-3">
+                  <p className="text-xs font-semibold text-gray-900 dark:text-white truncate">
+                    {user.userEmail || user.userName || 'Anonymous'}
+                  </p>
+                  <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                    {user.device || 'unknown'} • {user.browser || 'unknown'}
+                  </p>
+                  <p className="text-xs text-gray-600 dark:text-gray-300">
+                    {user.ipAddress || 'unknown'} • {user.city && user.country ? `${user.city}, ${user.country}` : (user.country || 'Unknown')}
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {buildSourceDisplayLabel(user.socialPlatform || user.source || user.sourceChannel || 'direct', user.influencerHandle || null)} • {formatTime(user.timeSpent || 0)} • {user.conversion || 'none'}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -293,6 +443,21 @@ function AdminAnalytics() {
           gradient="bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20"
         />
 
+        {/* Traffic Sources Card */}
+        <MetricCard
+          id="sources"
+          title="Traffic Sources"
+          icon={
+            <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          }
+          value={(trafficSources.channels?.length || 0).toLocaleString()}
+          subtitle={topSourceSubtitle}
+          color="text-emerald-600 dark:text-emerald-400"
+          gradient="bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20"
+        />
+
         {/* Device Analytics Card */}
         <MetricCard
           id="devices"
@@ -332,8 +497,8 @@ function AdminAnalytics() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
           }
-          value={topIPs.length}
-          subtitle="IP Addresses"
+          value={(uniqueIpVisitors || topIPs.length || overview.uniqueVisitors || 0).toLocaleString()}
+          subtitle="Unique Visitor IPs"
           color="text-cyan-600 dark:text-cyan-400"
           gradient="bg-gradient-to-br from-cyan-50 to-teal-50 dark:from-cyan-900/20 dark:to-teal-900/20"
         />

@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { useAuth } from '../context/AuthContext';
-import { useCall, CALL_STATES } from '../context/CallContext';
-import CallWindow from '../components/CallWindow';
+import { useCall } from '../context/CallContext';
+import ActiveCallChrome from '../components/ActiveCallChrome';
 
 const ClockIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -116,6 +116,11 @@ const getAvatarColor = (name) => {
   return colors[index];
 };
 
+/** Plan + usage strip — hidden everywhere on Voice (use Billing / subscription for details). */
+function VoiceSubscriptionStrip() {
+  return null;
+}
+
 // Avatar component
 const Avatar = ({ name, phoneNumber, size = 'w-10 h-10', className = '' }) => {
   const displayName = name || phoneNumber || 'Unknown';
@@ -137,13 +142,8 @@ function Recents() {
   // WebRTC call context - with safe defaults
   const callContext = useCall();
   const isInCall = callContext?.isInCall || false;
-  const hasIncomingCall = callContext?.hasIncomingCall || false;
-  const callState = callContext?.callState;
   const webrtcMakeCall = callContext?.makeCall || (async () => false);
   const callError = callContext?.error || null;
-  const isMinimized = callContext?.isMinimized || false;
-  const minimizeCall = callContext?.minimizeCall || (() => {});
-  const remoteNumber = callContext?.remoteNumber || '';
   const initializeClient = callContext?.initializeClient || (async () => false);
   const answerCall = callContext?.answerCall || (() => {});
   const rejectCall = callContext?.rejectCall || (() => {});
@@ -160,7 +160,11 @@ function Recents() {
   const [inputMessage, setInputMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
-  const [subscriptionData, setSubscriptionData] = useState({ remainingSMS: 0, planName: 'No Plan' });
+  const [subscriptionData, setSubscriptionData] = useState({
+    remainingSMS: 0,
+    minutesRemaining: 0,
+    planName: 'No Plan',
+  });
   const messagesEndRef = useRef(null);
   
   // Dialer state - MUST be declared before any conditional returns
@@ -173,6 +177,29 @@ function Recents() {
   
   // Mobile navigation state
   const [mobileTab, setMobileTab] = useState('chats'); // 'chats', 'recents', 'dialer'
+
+  const [isXlViewport, setIsXlViewport] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1280px)');
+    setIsXlViewport(mq.matches);
+    const fn = () => setIsXlViewport(mq.matches);
+    mq.addEventListener('change', fn);
+    return () => mq.removeEventListener('change', fn);
+  }, []);
+
+  const callIdleRef = useRef(true);
+  useEffect(() => {
+    const IDLE = callContext?.CALL_STATES?.IDLE ?? 'idle';
+    const idle = (callContext?.callState ?? IDLE) === IDLE;
+    if (!idle && callIdleRef.current) {
+      if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1279px)').matches) {
+        setMobileTab('dialer');
+      }
+    }
+    callIdleRef.current = idle;
+  }, [callContext?.callState, callContext?.CALL_STATES?.IDLE]);
   
   // New chat modal state
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -257,7 +284,8 @@ function Recents() {
           setSubscriptionActive(true);
           setSubscriptionData({
             remainingSMS: subRes.data?.smsRemaining || 0,
-            planName: subRes.data?.planName || 'No Plan'
+            minutesRemaining: subRes.data?.minutesRemaining ?? 0,
+            planName: subRes.data?.planName || 'No Plan',
           });
           // Initialize WebRTC client when subscription is active
           initializeClient();
@@ -1157,7 +1185,12 @@ function Recents() {
         {/* Left Panel - Recent Chats (same as mobile Chats/Recents tabs) */}
         <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-slate-700 flex flex-col bg-white dark:bg-slate-800 min-h-0">
           <div className="p-4 border-b border-gray-200 dark:border-slate-700 flex-shrink-0">
-            <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-3">Voice</h1>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Voice</h1>
+            <VoiceSubscriptionStrip
+              active={subscriptionActive}
+              data={subscriptionData}
+              onOpenDetails={() => navigate('/subscription-details')}
+            />
             <div className="flex gap-2 mb-3">
               <button onClick={() => setActiveTab('chats')} className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${activeTab === 'chats' ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-600'}`}>Chats</button>
               <button onClick={() => setActiveTab('all')} className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${activeTab === 'all' ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 shadow-md' : 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-600'}`}>Recents</button>
@@ -1423,27 +1456,10 @@ function Recents() {
           )}
         </div>
 
-        {/* Right Panel - Dialer or in-call UI (desktop: call stays in this panel only) */}
-        <div className="hidden xl:flex w-80 flex-col bg-gray-50 dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 min-h-0 overflow-hidden">
-          {/* Show call window for any active call (including incoming) when not minimized */}
-          {/* Only show for non-IDLE states to prevent duplicate windows with GlobalCallOverlay */}
-          {(() => {
-            const shouldShow = !isMinimized && callState && (callState === CALL_STATES.INCOMING || callState !== CALL_STATES.IDLE);
-            if (callState === CALL_STATES.INCOMING) {
-              console.log('📞 Recents: Incoming call detected, shouldShow:', shouldShow, 'isMinimized:', isMinimized, 'callState:', callState);
-            }
-            return shouldShow;
-          })() ? (
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              <CallWindow
-                contactName={remoteNumber || 'Unknown'}
-                contactAvatar={null}
-                onCallEnd={() => {}}
-                onMinimize={minimizeCall}
-              />
-            </div>
-          ) : (
+        {/* Right panel: dialer + in-column call UI (xl+); GlobalCallOverlay skips /recents at this width */}
+        <div className="hidden xl:flex w-80 flex-col bg-gray-50 dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 min-h-0 overflow-hidden relative">
             <>
+          {isXlViewport && <ActiveCallChrome isDesktop dockMode />}
           {(!subscriptionActive || userNumbers.length === 0) && (
             <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 flex-shrink-0">
               <p className="text-xs text-amber-700 dark:text-amber-300">
@@ -1459,6 +1475,12 @@ function Recents() {
                 {userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || 'None'}
               </div>
             </div>
+            <VoiceSubscriptionStrip
+              active={subscriptionActive}
+              data={subscriptionData}
+              onOpenDetails={() => navigate('/subscription-details')}
+              variant="inline"
+            />
           </div>
           <div className="px-4 py-3 bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 flex-shrink-0">
             <div className="flex items-center gap-2">
@@ -1589,7 +1611,6 @@ function Recents() {
             </div>
           </div>
             </>
-          )}
         </div>
       </div>
 
@@ -1941,7 +1962,8 @@ function Recents() {
           )}
 
           {mobileTab === 'dialer' && (
-            <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900">
+            <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900 relative min-h-0">
+              <ActiveCallChrome isDesktop={false} dockMode />
               {/* Debug Info - Shows why calling might be blocked */}
               {(!subscriptionActive || userNumbers.length === 0) && (
                 <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800">
@@ -1960,6 +1982,12 @@ function Recents() {
                     {userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || 'None'}
                   </div>
                 </div>
+                <VoiceSubscriptionStrip
+                  active={subscriptionActive}
+                  data={subscriptionData}
+                  onOpenDetails={() => navigate('/subscription-details')}
+                  variant="inline"
+                />
               </div>
 
               {/* Phone Number Display with Back Button - Compact Professional Header */}

@@ -52,6 +52,53 @@ function AdminBlog() {
     }
   }, [page, filters, isEdit, isNew]);
 
+  const normalizeImageUrl = (rawUrl) => {
+    if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+    const value = rawUrl.trim();
+    if (!value) return value;
+    const toPreferredUploadPath = (pathname = '') => {
+      if (pathname.startsWith('/api/uploads/')) return pathname;
+      if (pathname.startsWith('/uploads/')) return `/api${pathname}`;
+      return pathname;
+    };
+
+    if (value.startsWith('/api/uploads/') || value.startsWith('/uploads/')) {
+      return toPreferredUploadPath(value);
+    }
+
+    try {
+      const parsed = new URL(value);
+      if (!parsed.pathname.startsWith('/uploads/') && !parsed.pathname.startsWith('/api/uploads/')) return value;
+      const host = parsed.hostname.toLowerCase();
+      const currentHost = window.location.hostname.toLowerCase();
+      if (host === 'localhost' || host === '127.0.0.1' || host === currentHost) {
+        const normalizedPath = toPreferredUploadPath(parsed.pathname);
+        return `${normalizedPath}${parsed.search || ''}`;
+      }
+    } catch {
+      return value;
+    }
+
+    return value;
+  };
+
+  const getAlternateUploadUrl = (url = '') => {
+    const value = String(url || '').trim();
+    if (!value) return '';
+    if (value.includes('/api/uploads/')) return value.replace('/api/uploads/', '/uploads/');
+    if (value.includes('/uploads/')) return value.replace('/uploads/', '/api/uploads/');
+    return '';
+  };
+
+  const handleImageError = (event) => {
+    const img = event.currentTarget;
+    if (!img || img.dataset.fallbackAttempted === 'true') return;
+    const alternate = getAlternateUploadUrl(img.currentSrc || img.src);
+    if (!alternate || alternate === img.src) return;
+    img.dataset.fallbackAttempted = 'true';
+    img.src = alternate;
+  };
+
   const fetchBlogs = async () => {
     setLoading(true);
     try {
@@ -64,7 +111,11 @@ function AdminBlog() {
       const response = await API.get(`/api/blog/admin/all?${params.toString()}`);
 
       if (response.data?.success) {
-        setBlogs(response.data.blogs || []);
+        setBlogs((response.data.blogs || []).map((blog) => ({
+          ...blog,
+          featuredImage: normalizeImageUrl(blog.featuredImage),
+          ogImage: normalizeImageUrl(blog.ogImage)
+        })));
         setTotalPages(response.data.pagination?.pages || 1);
       }
     } catch (err) {
@@ -88,12 +139,12 @@ function AdminBlog() {
           slug: blog.slug || '',
           excerpt: blog.excerpt || '',
           content: blog.content || '',
-          featuredImage: blog.featuredImage || '',
+          featuredImage: normalizeImageUrl(blog.featuredImage) || '',
           status: blog.status || 'draft',
           metaTitle: blog.metaTitle || '',
           metaDescription: blog.metaDescription || '',
           metaKeywords: Array.isArray(blog.metaKeywords) ? blog.metaKeywords.join(', ') : '',
-          ogImage: blog.ogImage || '',
+          ogImage: normalizeImageUrl(blog.ogImage) || '',
           category: blog.category || '',
           tags: Array.isArray(blog.tags) ? blog.tags.join(', ') : '',
           adsenseEnabled: blog.adsenseEnabled !== false,
@@ -127,11 +178,74 @@ function AdminBlog() {
     e.preventDefault();
     setSaving(true);
     try {
+      const uploadInlineImagesToServer = async (htmlContent) => {
+        if (!htmlContent || typeof htmlContent !== 'string') return htmlContent;
+        const hasInlineDataImage = /data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(htmlContent);
+        if (!hasInlineDataImage) return htmlContent;
+
+        const dataUrlRegex = /src=(["'])(data:image\/(?:png|jpe?g|webp|gif);base64,[^"']+)\1/gi;
+        const replacementMap = new Map();
+        let match;
+        let imageIndex = 0;
+
+        while ((match = dataUrlRegex.exec(htmlContent)) !== null) {
+          const dataUrl = match[2];
+          if (replacementMap.has(dataUrl)) continue;
+
+          imageIndex += 1;
+          const uploadResponse = await API.post('/api/blog/admin/upload-image', {
+            imageData: dataUrl,
+            fileName: `inline-image-${imageIndex}`
+          });
+
+          if (uploadResponse.error || !uploadResponse.data?.success || !uploadResponse.data?.imageUrl) {
+            const errorMsg = uploadResponse.error || uploadResponse.data?.error || 'Failed to upload inline image';
+            throw new Error(errorMsg);
+          }
+
+          replacementMap.set(dataUrl, uploadResponse.data.imageUrl);
+        }
+
+        let normalizedHtml = htmlContent;
+        replacementMap.forEach((uploadedUrl, dataUrl) => {
+          normalizedHtml = normalizedHtml.split(dataUrl).join(uploadedUrl);
+        });
+        return normalizedHtml;
+      };
+
+      const uploadSingleInlineImageField = async (value, fileLabel) => {
+        if (!value || typeof value !== 'string') return value;
+        if (!/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(value)) return value;
+
+        const uploadResponse = await API.post('/api/blog/admin/upload-image', {
+          imageData: value,
+          fileName: fileLabel
+        });
+
+        if (uploadResponse.error || !uploadResponse.data?.success || !uploadResponse.data?.imageUrl) {
+          const errorMsg = uploadResponse.error || uploadResponse.data?.error || `Failed to upload ${fileLabel}`;
+          throw new Error(errorMsg);
+        }
+
+        return uploadResponse.data.imageUrl;
+      };
+
+      const normalizeBlogErrorMessage = (responseLike) => {
+        if (responseLike?.status === 413) {
+          return 'Blog content is too large. Use Media Library/Upload for images instead of embedding huge inline image data.';
+        }
+        return responseLike?.error || responseLike?.data?.error || 'Failed to save blog';
+      };
+
       const payload = {
         ...formData,
         metaKeywords: formData.metaKeywords.split(',').map(k => k.trim()).filter(k => k),
         tags: formData.tags.split(',').map(t => t.trim()).filter(t => t)
       };
+
+      payload.content = await uploadInlineImagesToServer(payload.content);
+      payload.featuredImage = await uploadSingleInlineImageField(normalizeImageUrl(payload.featuredImage), 'featured-image');
+      payload.ogImage = await uploadSingleInlineImageField(normalizeImageUrl(payload.ogImage), 'og-image');
 
       let response;
       if (isEdit) {
@@ -149,7 +263,7 @@ function AdminBlog() {
           navigate('/adminbobby');
           return;
         }
-        const errorMsg = response.error || response.data?.error || 'Failed to save blog';
+        const errorMsg = normalizeBlogErrorMessage(response);
         alert(`Error: ${errorMsg}`);
         return;
       }
@@ -179,7 +293,7 @@ function AdminBlog() {
           navigate('/adminbobby/blog');
         }
       } else {
-        const errorMsg = response.data?.error || response.error || 'Failed to save blog';
+        const errorMsg = normalizeBlogErrorMessage(response);
         console.error('Blog save failed:', response);
         alert(`Error: ${errorMsg}`);
       }
@@ -190,7 +304,9 @@ function AdminBlog() {
         localStorage.removeItem('adminToken');
         navigate('/adminbobby');
       } else {
-        const errorMessage = err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to save blog';
+        const errorMessage = err.response?.status === 413
+          ? 'Blog content is too large. Use Media Library/Upload for images instead of embedding huge inline image data.'
+          : (err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to save blog');
         alert(`Error: ${errorMessage}`);
       }
     } finally {
@@ -367,9 +483,7 @@ function AdminBlog() {
                       src={formData.featuredImage}
                       alt="Featured"
                       className="max-w-xs h-32 object-cover rounded-lg border border-gray-300 dark:border-slate-600"
-                      onError={(e) => {
-                        e.target.style.display = 'none';
-                      }}
+                      onError={handleImageError}
                     />
                   </div>
                 )}

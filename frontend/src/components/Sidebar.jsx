@@ -1,8 +1,19 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import API from '../api';
 import logo from '../assets/otodial-logo.png';
+
+function userInitials(u) {
+  if (!u) return 'U';
+  const f = u.firstName?.trim()?.[0];
+  const l = u.lastName?.trim()?.[0];
+  if (f && l) return `${f}${l}`.toUpperCase();
+  if (f) return f.toUpperCase();
+  const email = u.email || '';
+  return email.charAt(0).toUpperCase() || 'U';
+}
 
 // Icon components
 const DashboardIcon = () => (
@@ -52,7 +63,33 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isDarkMode, toggleTheme } = useTheme();
-  const { logout } = useAuth();
+  const { logout, token, user: authUser } = useAuth();
+  const [profile, setProfile] = useState(null);
+
+  useEffect(() => {
+    if (!token) {
+      setProfile(null);
+      return;
+    }
+    let cancelled = false;
+    const loadProfile = async () => {
+      const res = await API.get('/api/users/profile');
+      if (cancelled || res.error) return;
+      const u = res.data?.user;
+      if (u) setProfile(u);
+    };
+    loadProfile();
+    const onProfileUpdated = () => {
+      loadProfile();
+    };
+    window.addEventListener('oto-profile-updated', onProfileUpdated);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('oto-profile-updated', onProfileUpdated);
+    };
+  }, [token]);
+
+  const display = profile || authUser || {};
 
   const handleLogout = async () => {
     await logout();
@@ -78,14 +115,17 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
         ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
       {/* Logo */}
-      <Link 
-        to="/recents" 
-        className="mb-8"
+      <Link
+        to="/recents"
+        className="mb-8 block px-1"
         onClick={() => setMobileMenuOpen(false)}
+        aria-label="OTO Dial home"
       >
-        <div className="w-14 h-14 bg-white/20 hover:bg-white/30 transition-all rounded-xl flex items-center justify-center group overflow-hidden p-2">
-          <img src={logo} alt="OTO Dial" className="w-full h-full object-contain group-hover:scale-110 transition-transform" />
-        </div>
+        <img
+          src={logo}
+          alt="OTO Dial"
+          className="w-14 h-14 object-contain mx-auto hover:opacity-90 transition-opacity"
+        />
       </Link>
 
       {/* Navigation Items */}
@@ -115,6 +155,34 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
           );
         })}
       </nav>
+
+      {/* Profile — compact round avatar */}
+      <div className="mt-3 flex flex-col items-center px-3 w-full">
+        <Link
+          to="/profile"
+          onClick={() => setMobileMenuOpen(false)}
+          className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full
+                     bg-white/20 text-white shadow-sm ring-1 ring-white/35
+                     hover:bg-white/30 hover:ring-white/50 hover:scale-105 transition-all duration-200"
+          title="Profile"
+          aria-label="View profile"
+        >
+          {display.profilePicture ? (
+            <img
+              src={display.profilePicture}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover object-center"
+            />
+          ) : (
+            <span className="relative z-10 text-xs font-bold leading-none drop-shadow-sm">
+              {userInitials(display)}
+            </span>
+          )}
+        </Link>
+        <span className="text-[8px] mt-0.5 font-semibold uppercase tracking-wide text-white/75 text-center max-w-[4.5rem] truncate">
+          Profile
+        </span>
+      </div>
 
       {/* Bottom section - Theme Toggle & Logout */}
       <div className="mt-auto flex flex-col items-center space-y-3 px-3 pt-4 border-t border-white/20">

@@ -19,6 +19,11 @@ function AdminUserDetail() {
   const [showPlansModal, setShowPlansModal] = useState(false);
   const [availablePlans, setAvailablePlans] = useState([]);
   const [selectedPlanId, setSelectedPlanId] = useState('');
+  const [loadedSms, setLoadedSms] = useState('');
+  const [loadedMinutes, setLoadedMinutes] = useState('');
+  const [loadedCreditsExpiry, setLoadedCreditsExpiry] = useState('');
+  const [loadedSmsExpiry, setLoadedSmsExpiry] = useState('');
+  const [loadedMinutesExpiry, setLoadedMinutesExpiry] = useState('');
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
@@ -184,12 +189,21 @@ function AdminUserDetail() {
       return;
     }
 
+    let loadedPayload = {};
+    try {
+      loadedPayload = buildLoadedCreditsPayload();
+    } catch (validationErr) {
+      alert(validationErr.message);
+      return;
+    }
+
     setActionLoading('assign-plan');
     try {
       const token = localStorage.getItem('adminToken');
       const response = await API.post('/api/admin/actions/subscription/assign', {
         userId: id,
-        planId: selectedPlanId
+        planId: selectedPlanId,
+        ...loadedPayload
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -198,8 +212,7 @@ function AdminUserDetail() {
         alert(response.error);
       } else if (response.data?.success) {
         alert('Subscription assigned successfully');
-        setShowPlansModal(false);
-        setSelectedPlanId('');
+        resetPlanForm();
         await fetchUser();
       } else {
         alert(response.data?.error || 'Failed to assign subscription');
@@ -217,12 +230,21 @@ function AdminUserDetail() {
       return;
     }
 
+    let loadedPayload = {};
+    try {
+      loadedPayload = buildLoadedCreditsPayload();
+    } catch (validationErr) {
+      alert(validationErr.message);
+      return;
+    }
+
     setActionLoading('change-plan');
     try {
       const token = localStorage.getItem('adminToken');
       const response = await API.post('/api/admin/actions/subscription/change-plan', {
         userId: id,
-        planId: selectedPlanId
+        planId: selectedPlanId,
+        ...loadedPayload
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -231,14 +253,122 @@ function AdminUserDetail() {
         alert(response.error);
       } else if (response.data?.success) {
         alert('Subscription plan changed successfully');
-        setShowPlansModal(false);
-        setSelectedPlanId('');
+        resetPlanForm();
         await fetchUser();
       } else {
         alert(response.data?.error || 'Failed to change plan');
       }
     } catch (err) {
       alert(err?.error || err?.response?.data?.error || 'Failed to change plan');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  const buildLoadedCreditsPayload = () => {
+    const payload = {};
+
+    const addNumericField = (rawValue, fieldName, label) => {
+      if (rawValue === '') return;
+      const parsed = Number(rawValue);
+      if (!Number.isFinite(parsed) || parsed < 0 || !Number.isInteger(parsed)) {
+        throw new Error(`${label} must be a non-negative whole number`);
+      }
+      payload[fieldName] = parsed;
+    };
+
+    const addDateField = (rawValue, fieldName, label) => {
+      if (!rawValue) return;
+      const parsed = new Date(rawValue);
+      if (Number.isNaN(parsed.getTime())) {
+        throw new Error(`${label} is invalid`);
+      }
+      payload[fieldName] = parsed.toISOString();
+    };
+
+    addNumericField(loadedSms, 'loadedSms', 'Loaded SMS');
+    addNumericField(loadedMinutes, 'loadedMinutes', 'Loaded minutes');
+    addDateField(loadedCreditsExpiry, 'loadedCreditsExpiry', 'Loaded credits expiry');
+    addDateField(loadedSmsExpiry, 'loadedSmsExpiry', 'Loaded SMS expiry');
+    addDateField(loadedMinutesExpiry, 'loadedMinutesExpiry', 'Loaded minutes expiry');
+
+    return payload;
+  };
+
+  const resetPlanForm = () => {
+    setShowPlansModal(false);
+    setSelectedPlanId('');
+    setLoadedSms('');
+    setLoadedMinutes('');
+    setLoadedCreditsExpiry('');
+    setLoadedSmsExpiry('');
+    setLoadedMinutesExpiry('');
+  };
+
+  const handleLoadCredits = async () => {
+    const smsInput = window.prompt('Enter SMS to load (leave blank for none):', '');
+    if (smsInput === null) return;
+
+    const minutesInput = window.prompt('Enter minutes to load (leave blank for none):', '');
+    if (minutesInput === null) return;
+
+    const expiryInput = window.prompt(
+      'Enter expiry date/time for loaded credits (e.g. 2026-03-31T23:59). Leave blank to auto-set.',
+      ''
+    );
+    if (expiryInput === null) return;
+
+    const payload = { userId: id };
+
+    if (smsInput.trim()) {
+      const parsedSms = Number(smsInput.trim());
+      if (!Number.isFinite(parsedSms) || parsedSms < 0 || !Number.isInteger(parsedSms)) {
+        alert('SMS amount must be a non-negative whole number');
+        return;
+      }
+      payload.loadedSms = parsedSms;
+    }
+
+    if (minutesInput.trim()) {
+      const parsedMinutes = Number(minutesInput.trim());
+      if (!Number.isFinite(parsedMinutes) || parsedMinutes < 0 || !Number.isInteger(parsedMinutes)) {
+        alert('Minutes amount must be a non-negative whole number');
+        return;
+      }
+      payload.loadedMinutes = parsedMinutes;
+    }
+
+    if (expiryInput.trim()) {
+      const parsedExpiry = new Date(expiryInput.trim());
+      if (Number.isNaN(parsedExpiry.getTime())) {
+        alert('Expiry date is invalid');
+        return;
+      }
+      payload.loadedCreditsExpiry = parsedExpiry.toISOString();
+    }
+
+    if (!('loadedSms' in payload) && !('loadedMinutes' in payload) && !('loadedCreditsExpiry' in payload)) {
+      alert('No credits or expiry value provided');
+      return;
+    }
+
+    setActionLoading('load-credits');
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.post('/api/admin/actions/subscription/load-credits', payload, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (response.error) {
+        alert(response.error);
+      } else if (response.data?.success) {
+        alert(response.data.message || 'Credits loaded successfully');
+        await fetchUser();
+      } else {
+        alert(response.data?.error || 'Failed to load credits');
+      }
+    } catch (err) {
+      alert(err?.error || err?.response?.data?.error || 'Failed to load credits');
     } finally {
       setActionLoading('');
     }
@@ -420,11 +550,25 @@ function AdminUserDetail() {
                       onClick={() => {
                         setShowPlansModal(true);
                         setSelectedPlanId('');
+                        setLoadedSms('');
+                        setLoadedMinutes('');
+                        setLoadedCreditsExpiry('');
+                        setLoadedSmsExpiry('');
+                        setLoadedMinutesExpiry('');
                       }}
                       className="px-3 py-1 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
                     >
                       {user.subscription ? 'Change Plan' : 'Assign Plan'}
                     </button>
+                    {user.subscription && (
+                      <button
+                        onClick={handleLoadCredits}
+                        disabled={actionLoading === 'load-credits'}
+                        className="px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {actionLoading === 'load-credits' ? 'Loading...' : 'Load SMS/Minutes'}
+                      </button>
+                    )}
                     <button
                       onClick={handleSetTrial}
                       disabled={actionLoading === 'trial'}
@@ -538,25 +682,43 @@ function AdminUserDetail() {
                   <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Usage</h2>
                   <dl className="grid grid-cols-2 gap-4">
                     <div>
-                      <dt className="text-sm text-gray-600 dark:text-gray-400">Call Minutes</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white">{user.usage.totalCallMinutes?.toFixed(2)}</dd>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Monthly Minutes Used</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">
+                        {Number(user.usage.monthlyMinutesUsed || 0).toFixed(2)}
+                      </dd>
                     </div>
                     <div>
-                      <dt className="text-sm text-gray-600 dark:text-gray-400">SMS Count</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white">{user.usage.totalSms}</dd>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Monthly SMS Used</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">{Number(user.usage.monthlySmsUsed || 0)}</dd>
                     </div>
-                    {user.usage.limits && (
-                      <>
-                        <div>
-                          <dt className="text-sm text-gray-600 dark:text-gray-400">Minutes Remaining</dt>
-                          <dd className="text-sm text-gray-900 dark:text-white">{user.usage.limits.minutesRemaining?.toFixed(2)}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-sm text-gray-600 dark:text-gray-400">SMS Remaining</dt>
-                          <dd className="text-sm text-gray-900 dark:text-white">{user.usage.limits.smsRemaining}</dd>
-                        </div>
-                      </>
-                    )}
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Loaded Minutes (active / total)</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">
+                        {Number(user.usage.loadedMinutesActive || 0)} / {Number(user.usage.loadedMinutesTotal || 0)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Loaded SMS (active / total)</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">
+                        {Number(user.usage.loadedSmsActive || 0)} / {Number(user.usage.loadedSmsTotal || 0)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Loaded Minutes Expiry</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">
+                        {user.usage.loadedMinutesExpiry
+                          ? new Date(user.usage.loadedMinutesExpiry).toLocaleString()
+                          : 'No expiry'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Loaded SMS Expiry</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">
+                        {user.usage.loadedSmsExpiry
+                          ? new Date(user.usage.loadedSmsExpiry).toLocaleString()
+                          : 'No expiry'}
+                      </dd>
+                    </div>
                   </dl>
                 </div>
               )}
@@ -806,14 +968,70 @@ function AdminUserDetail() {
                   ))}
                 </select>
               </div>
+
+              <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                  Optional credit load (admin top-up)
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Load SMS</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={loadedSms}
+                      onChange={(e) => setLoadedSms(e.target.value)}
+                      placeholder="e.g. 500"
+                      className="w-full px-3 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Load Minutes</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={loadedMinutes}
+                      onChange={(e) => setLoadedMinutes(e.target.value)}
+                      placeholder="e.g. 120"
+                      className="w-full px-3 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Shared expiry (applies to both if specific is empty)</label>
+                    <input
+                      type="datetime-local"
+                      value={loadedCreditsExpiry}
+                      onChange={(e) => setLoadedCreditsExpiry(e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">SMS expiry override</label>
+                    <input
+                      type="datetime-local"
+                      value={loadedSmsExpiry}
+                      onChange={(e) => setLoadedSmsExpiry(e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Minutes expiry override</label>
+                    <input
+                      type="datetime-local"
+                      value={loadedMinutesExpiry}
+                      onChange={(e) => setLoadedMinutesExpiry(e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+              </div>
               
               <div className="flex gap-4">
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowPlansModal(false);
-                    setSelectedPlanId('');
-                  }}
+                  onClick={resetPlanForm}
                   className="flex-1 px-4 py-2 bg-gray-200 dark:bg-slate-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-slate-600"
                 >
                   Cancel

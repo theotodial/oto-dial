@@ -26,6 +26,12 @@ router.get("/profile", async (req, res) => {
         name: user.name,
         phone: user.phone,
         company: user.company,
+        businessType: user.businessType || "",
+        country: user.country || "",
+        timezone: user.timezone || "",
+        language: user.language || "en",
+        profilePicture: user.profilePicture || null,
+        identityVerification: user.identityVerification || null,
         role: user.role,
         status: user.status,
         createdAt: user.createdAt,
@@ -89,19 +95,32 @@ router.get("/me", async (req, res) => {
  */
 router.patch("/profile", async (req, res) => {
   try {
-    const { firstName, lastName, name, phone, company } = req.body;
+    const {
+      firstName,
+      lastName,
+      name,
+      phone,
+      company,
+      businessType,
+      country,
+      timezone,
+      language,
+    } = req.body;
     const user = await User.findById(req.user._id);
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Update fields
     if (firstName !== undefined) user.firstName = firstName;
     if (lastName !== undefined) user.lastName = lastName;
     if (name !== undefined) user.name = name;
     if (phone !== undefined) user.phone = phone;
     if (company !== undefined) user.company = company;
+    if (businessType !== undefined) user.businessType = businessType;
+    if (country !== undefined) user.country = country;
+    if (timezone !== undefined) user.timezone = timezone;
+    if (language !== undefined) user.language = language;
 
     await user.save();
 
@@ -115,6 +134,11 @@ router.patch("/profile", async (req, res) => {
         name: user.name,
         phone: user.phone,
         company: user.company,
+        businessType: user.businessType || "",
+        country: user.country || "",
+        timezone: user.timezone || "",
+        language: user.language || "en",
+        profilePicture: user.profilePicture || null,
         role: user.role
       }
     });
@@ -145,8 +169,14 @@ router.post("/change-password", async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Check current password using bcrypt
-    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    const stored = user.password || "";
+    const looksBcrypt = /^\$2[aby]\$\d{2}\$/.test(stored);
+    let isPasswordValid = false;
+    if (looksBcrypt) {
+      isPasswordValid = await bcrypt.compare(currentPassword, stored);
+    } else {
+      isPasswordValid = currentPassword === stored;
+    }
     if (!isPasswordValid) {
       return res.status(401).json({ error: "Current password is incorrect" });
     }
@@ -183,9 +213,12 @@ router.delete("/account", async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
+    const stored = user.password || "";
+    const looksBcrypt = /^\$2[aby]\$\d{2}\$/.test(stored);
+    const ok = looksBcrypt
+      ? await bcrypt.compare(password, stored)
+      : password === stored;
+    if (!ok) {
       return res.status(401).json({ error: "Password is incorrect" });
     }
 

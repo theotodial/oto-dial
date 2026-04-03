@@ -9,7 +9,7 @@ function NewPricingSection() {
       price: "19.99",
       description: "Perfect for individuals and small teams",
       features: [
-        "1 Local Phone Number",
+        "Free Virtual Number",
         "1,500 Voice Minutes",
         "100 SMS",
         "Email Support"
@@ -23,7 +23,7 @@ function NewPricingSection() {
       price: "29.99",
       description: "For growing businesses and power users",
       features: [
-        "1 Local Phone Number",
+        "Free Virtual Number",
         "2,500 Voice Minutes",
         "200 SMS",
         "Email Support"
@@ -47,7 +47,7 @@ function NewPricingSection() {
               ? "Perfect for individuals and small teams"
               : "For growing businesses and power users",
             features: [
-              `${plan.limits.numbersTotal} Local Phone Number${plan.limits.numbersTotal > 1 ? 's' : ''}`,
+              "Free Virtual Number",
               `${plan.limits.minutesTotal.toLocaleString()} Voice Minutes`,
               `${plan.limits.smsTotal} SMS`,
               "Email Support"

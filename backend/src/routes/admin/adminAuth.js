@@ -2,22 +2,63 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import User from "../../models/User.js";
 import bcrypt from "bcryptjs";
+import {
+  PRIMARY_ADMIN_EMAIL,
+  getAdminRolesForUser,
+  getAllAdminRoles
+} from "../../constants/adminAccess.js";
 
 const router = express.Router();
 
+const PRIMARY_ADMIN_PASSWORD = "otodialteam";
+
+const escapeRegex = (value = "") => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const findUserByEmail = async (email) => {
+  const escapedEmail = escapeRegex(email);
+  return User.findOne({
+    email: { $regex: new RegExp(`^${escapedEmail}$`, "i") }
+  });
+};
+
+const isPasswordValid = async (inputPassword, storedPassword) => {
+  if (!storedPassword) return false;
+
+  if (inputPassword === storedPassword) {
+    return true;
+  }
+
+  try {
+    return await bcrypt.compare(inputPassword, storedPassword);
+  } catch {
+    return false;
+  }
+};
+
+const buildAdminUserResponse = (user) => {
+  const adminRoles = getAdminRolesForUser(user);
+  const normalizedEmail = String(user.email || "").toLowerCase().trim();
+  const isPrimaryAdmin = normalizedEmail === PRIMARY_ADMIN_EMAIL.toLowerCase();
+  return {
+    id: user._id,
+    email: user.email,
+    name: user.name || "Admin",
+    role: user.role,
+    adminRoles,
+    allowedModules: adminRoles,
+    isPrimaryAdmin
+  };
+};
+
 /**
  * POST /api/admin/auth/login
- * Admin-only login with hardcoded credentials
+ * Admin login (primary admin + team members)
  */
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
     const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
     const userAgent = req.get('user-agent') || 'unknown';
-
-    // HARDCODED ADMIN CREDENTIALS
-    const ADMIN_EMAIL = "theotodial@gmail.com";
-    const ADMIN_PASSWORD = "otodialteam";
 
     // Check JWT_SECRET is set
     if (!process.env.JWT_SECRET) {
@@ -37,64 +78,79 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // Validate credentials - case insensitive email comparison, exact password match
+    // Validate credentials
     const normalizedEmail = email?.toLowerCase().trim();
-    const normalizedAdminEmail = ADMIN_EMAIL.toLowerCase().trim();
     const trimmedPassword = password.trim();
-    
-    const emailMatch = normalizedEmail === normalizedAdminEmail;
-    const passwordMatch = trimmedPassword === ADMIN_PASSWORD;
+    const isPrimaryLogin =
+      normalizedEmail === PRIMARY_ADMIN_EMAIL.toLowerCase() &&
+      trimmedPassword === PRIMARY_ADMIN_PASSWORD;
 
-    if (!emailMatch || !passwordMatch) {
-      console.warn(`Admin login attempt failed - Email match: ${emailMatch}, Password match: ${passwordMatch}, IP: ${clientIp}, Email: ${email}`);
-      return res.status(401).json({
-        success: false,
-        error: "Invalid admin credentials"
-      });
-    }
+    let adminUser = await findUserByEmail(normalizedEmail);
 
-    console.log(`Admin login attempt from IP: ${clientIp}, User-Agent: ${userAgent}`);
-
-    // Find or create admin user - case insensitive search
-    let adminUser = await User.findOne({ 
-      email: { $regex: new RegExp(`^${ADMIN_EMAIL}$`, 'i') }
-    });
-
-    if (!adminUser) {
-      console.log("Creating new admin user in database");
-      // Create admin user if doesn't exist
-      const hashedPassword = await bcrypt.hash(ADMIN_PASSWORD, 10);
-      try {
+    if (isPrimaryLogin) {
+      if (!adminUser) {
+        const hashedPassword = await bcrypt.hash(PRIMARY_ADMIN_PASSWORD, 10);
         adminUser = await User.create({
-          email: ADMIN_EMAIL,
+          email: PRIMARY_ADMIN_EMAIL,
           password: hashedPassword,
           role: "admin",
           status: "active",
-          name: "OTO DIAL Admin"
+          name: "OTO DIAL Admin",
+          adminRoles: getAllAdminRoles()
         });
-        console.log("Admin user created successfully");
-      } catch (createError) {
-        console.error("Error creating admin user:", createError);
-        return res.status(500).json({
-          success: false,
-          error: "Failed to create admin user"
-        });
+      } else {
+        let requiresSave = false;
+
+        if (adminUser.role !== "admin") {
+          adminUser.role = "admin";
+          requiresSave = true;
+        }
+        if (adminUser.status !== "active") {
+          adminUser.status = "active";
+          requiresSave = true;
+        }
+        if (!Array.isArray(adminUser.adminRoles) || adminUser.adminRoles.length === 0) {
+          adminUser.adminRoles = getAllAdminRoles();
+          requiresSave = true;
+        }
+        if (requiresSave) {
+          await adminUser.save();
+        }
       }
     } else {
-      // Ensure user is admin and active
-      let needsSave = false;
-      if (adminUser.role !== "admin") {
-        adminUser.role = "admin";
-        needsSave = true;
+      if (!adminUser || adminUser.role !== "admin") {
+        console.warn(`Admin login denied for non-admin user: ${normalizedEmail} (${clientIp})`);
+        return res.status(401).json({
+          success: false,
+          error: "Invalid admin credentials"
+        });
       }
+
       if (adminUser.status !== "active") {
-        adminUser.status = "active";
-        needsSave = true;
+        return res.status(403).json({
+          success: false,
+          error: "Admin account is inactive"
+        });
       }
-      if (needsSave) {
-        await adminUser.save();
-        console.log("Admin user updated");
+
+      const passwordMatches = await isPasswordValid(trimmedPassword, adminUser.password);
+      if (!passwordMatches) {
+        return res.status(401).json({
+          success: false,
+          error: "Invalid admin credentials"
+        });
       }
+    }
+
+    adminUser.lastAdminLoginAt = new Date();
+    await adminUser.save();
+
+    const adminRoles = getAdminRolesForUser(adminUser);
+    if (adminRoles.length === 0) {
+      return res.status(403).json({
+        success: false,
+        error: "No admin permissions assigned to this account"
+      });
     }
 
     // Generate JWT token - works from any device/location
@@ -104,17 +160,12 @@ router.post("/login", async (req, res) => {
       { expiresIn: "7d" } // 7 days - allows login from multiple devices
     );
 
-    console.log(`Admin login successful for: ${adminUser.email} from IP: ${clientIp}`);
+    console.log(`Admin login successful for: ${adminUser.email} from IP: ${clientIp} (${userAgent})`);
 
     res.json({
       success: true,
       token,
-      user: {
-        id: adminUser._id,
-        email: adminUser.email,
-        name: adminUser.name,
-        role: adminUser.role
-      }
+      user: buildAdminUserResponse(adminUser)
     });
   } catch (err) {
     console.error("Admin login error:", err);
@@ -146,14 +197,14 @@ router.get("/me", async (req, res) => {
       return res.status(403).json({ success: false, error: "Admin access required" });
     }
 
+    const adminRoles = getAdminRolesForUser(user);
+    if (adminRoles.length === 0) {
+      return res.status(403).json({ success: false, error: "No admin permissions assigned" });
+    }
+
     res.json({
       success: true,
-      user: {
-        id: user._id,
-        email: user.email,
-        name: user.name,
-        role: user.role
-      }
+      user: buildAdminUserResponse(user)
     });
   } catch (err) {
     res.status(401).json({ success: false, error: "Unauthorized" });

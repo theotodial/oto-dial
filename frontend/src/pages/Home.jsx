@@ -13,6 +13,100 @@ function Home() {
       <NewHowItWorks />
       <NewPricingSection />
       
+      {/* Highlight unlimited calling plan */}
+      <section className="py-16 px-4 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500">
+        <div className="max-w-5xl mx-auto text-center text-emerald-50">
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">
+            Unlimited calling for just $39.99/month
+          </h2>
+          <p className="text-lg md:text-xl text-emerald-100 max-w-3xl mx-auto mb-8 leading-relaxed">
+            Call as much as you need with our unlimited calling plan. One simple monthly price
+            built for real callers, sales teams, and founders who live on the phone.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <Link
+              to="/billing"
+              className="inline-flex items-center justify-center px-8 py-3 rounded-xl bg-white text-emerald-700 font-semibold shadow-lg hover:bg-emerald-50 transition-transform duration-200 hover:-translate-y-0.5"
+            >
+              Choose Unlimited Plan
+              <svg className="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+            </Link>
+            <Link
+              to="/recents"
+              className="inline-flex items-center justify-center px-8 py-3 rounded-xl border border-emerald-100 text-emerald-50 font-semibold hover:bg-emerald-600/40 transition-colors duration-200"
+            >
+              See it in the app
+            </Link>
+          </div>
+        </div>
+      </section>
+      
+      {/* Free virtual number with every plan */}
+      <section className="py-16 px-4 bg-gray-50 dark:bg-slate-800">
+        <div className="max-w-6xl mx-auto grid gap-10 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] items-center">
+          <div>
+            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-4">
+              Free virtual number with every OTO DIAL plan
+            </h2>
+            <p className="text-lg text-gray-700 dark:text-gray-300 mb-4 leading-relaxed">
+              Every paid OTO DIAL plan now includes a free virtual number. No extra line rental,
+              no surprise fees—just pick your destination and start calling.
+            </p>
+            <ul className="space-y-3 text-gray-700 dark:text-gray-300 text-sm md:text-base">
+              <li className="flex items-start gap-2">
+                <span className="mt-1 h-5 w-5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-xs font-bold">
+                  ✓
+                </span>
+                <span>Free virtual number included with every subscription plan.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="mt-1 h-5 w-5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-xs font-bold">
+                  ✓
+                </span>
+                <span>Use your number from any device—no SIM card required.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="mt-1 h-5 w-5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-xs font-bold">
+                  ✓
+                </span>
+                <span>Perfect for remote work, outbound sales, and international callers.</span>
+              </li>
+            </ul>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link
+                to="/billing"
+                className="inline-flex items-center justify-center px-6 py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors"
+              >
+                View plans with free number
+              </Link>
+            </div>
+          </div>
+          <div className="relative">
+            <div className="rounded-3xl bg-white dark:bg-slate-900 shadow-xl border border-gray-200 dark:border-slate-700 p-6 md:p-7">
+              <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide mb-2">
+                INCLUDED IN EVERY PLAN
+              </p>
+              <p className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+                Free virtual number
+              </p>
+              <div className="space-y-3 text-sm text-gray-700 dark:text-gray-300">
+                <p>Pick a local number where your customers are, and make &amp; receive calls instantly.</p>
+                <p className="flex items-center gap-2">
+                  <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                  Live in-app calling with real-time call controls.
+                </p>
+                <p className="flex items-center gap-2">
+                  <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                  Works from browser, laptop, or phone.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      
       {/* SEO Content Sections - Visible but near footer */}
       <section className="py-16 px-4 bg-gray-50 dark:bg-slate-800">
         <div className="max-w-4xl mx-auto space-y-12">

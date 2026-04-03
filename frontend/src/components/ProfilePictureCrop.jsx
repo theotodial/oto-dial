@@ -130,7 +130,6 @@ function ProfilePictureCrop({ image, onCrop, onCancel }) {
           <div
             className="absolute inset-0 bg-black/50"
             style={{
-              clipPath: `circle(${crop.width / 2}px at ${crop.x + crop.width / 2}px ${crop.y + crop.height / 2}px)`,
               clipPath: `inset(${crop.y}px ${canvasRef.current?.width - crop.x - crop.width}px ${canvasRef.current?.height - crop.y - crop.height}px ${crop.x}px)`
             }}
           />

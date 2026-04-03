@@ -4,6 +4,10 @@ import authenticateUser from "../middleware/authenticateUser.js";
 import requireActiveSubscription from "../middleware/requireActiveSubscription.js";
 import Call from "../models/Call.js";
 import { validateCallCountryLock } from "../middleware/countryLock.js";
+import {
+  findRecentActiveCallForUser,
+  normalizeCallPartyNumber,
+} from "../utils/callLifecycle.js";
 
 const router = express.Router();
 
@@ -11,6 +15,13 @@ router.use(authenticateUser);
 
 router.post("/", requireActiveSubscription, async (req, res) => {
   const phoneNumber = req.body.phoneNumber || req.body.to;
+  const fromNumber = req.body.fromNumber ?? null;
+  const toNumber = req.body.toNumber ?? phoneNumber;
+  const direction = req.body.direction === "inbound" ? "inbound" : "outbound";
+  const status =
+    req.body.status && ["queued", "dialing"].includes(req.body.status)
+      ? req.body.status
+      : "dialing";
 
   if (!phoneNumber) {
     return res.status(400).json({
@@ -19,10 +30,34 @@ router.post("/", requireActiveSubscription, async (req, res) => {
     });
   }
 
+  const existing = await findRecentActiveCallForUser(req.userId);
+  if (existing) {
+    console.warn("[CALL FLOW] BLOCK duplicate POST /api/calls — call already in progress", {
+      userId: String(req.userId),
+      existingId: String(existing._id),
+      existingStatus: existing.status,
+    });
+    return res.status(409).json({
+      success: false,
+      error: "Call already in progress",
+    });
+  }
+
   const call = await Call.create({
     user: req.userId,
     phoneNumber,
-    status: "queued"
+    fromNumber,
+    toNumber: toNumber || phoneNumber,
+    direction,
+    status,
+  });
+
+  console.log("[CALL FLOW] CALL CREATED", {
+    callId: String(call._id),
+    userId: String(req.userId),
+    direction,
+    status: call.status,
+    to: normalizeCallPartyNumber(toNumber || phoneNumber),
   });
 
   res.json({ success: true, call });
@@ -49,6 +84,11 @@ router.post("/:id/start", requireActiveSubscription, validateCallCountryLock, as
 
     const fromNumber = numbers[0].phoneNumber;
 
+    console.log("[CALL FLOW] TELNYX REQUEST SENT (REST dial)", {
+      callId: String(call._id),
+      to: call.phoneNumber,
+    });
+
     const response = await axios.post(
       "https://api.telnyx.com/v2/calls",
       {
@@ -64,8 +104,13 @@ router.post("/:id/start", requireActiveSubscription, validateCallCountryLock, as
     );
 
     call.status = "dialing";
-    call.telnyxCallControlId = response.data.data.id;
+    call.telnyxCallControlId = response.data.data.call_control_id || response.data.data.id;
     await call.save();
+
+    console.log("[CALL FLOW] TELNYX CALL CONTROL ID stored", {
+      callId: String(call._id),
+      telnyxCallControlId: call.telnyxCallControlId,
+    });
 
     res.json({ success: true });
   } catch (err) {
@@ -150,10 +195,33 @@ router.get("/", async (req, res) => {
   }
 });
 
+/** Single call (for frontend sync with webhook-driven status) */
+router.get("/:id", async (req, res) => {
+  try {
+    const call = await Call.findOne({
+      _id: req.params.id,
+      user: req.userId,
+    }).lean();
+
+    if (!call) {
+      return res.status(404).json({ success: false, error: "Call not found" });
+    }
+
+    res.json({
+      success: true,
+      call: { ...call, id: call._id },
+    });
+  } catch (err) {
+    console.error("GET /api/calls/:id error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch call" });
+  }
+});
+
 // Update a call record
 router.patch("/:id", async (req, res) => {
   try {
-    const { status, durationSeconds, callEndedAt, callStartedAt } = req.body;
+    const { status, durationSeconds, callEndedAt, callStartedAt, telnyxCallControlId } =
+      req.body;
     
     const call = await Call.findOne({
       _id: req.params.id,
@@ -172,8 +240,16 @@ router.patch("/:id", async (req, res) => {
     if (durationSeconds !== undefined) call.durationSeconds = durationSeconds;
     if (callEndedAt) call.callEndedAt = new Date(callEndedAt);
     if (callStartedAt) call.callStartedAt = new Date(callStartedAt);
+    if (telnyxCallControlId !== undefined) {
+      call.telnyxCallControlId = telnyxCallControlId || null;
+    }
 
     await call.save();
+
+    console.log("[CALL FLOW] CALL STATE UPDATED (PATCH)", {
+      callId: String(call._id),
+      status: call.status,
+    });
 
     res.json({ success: true, call });
   } catch (err) {

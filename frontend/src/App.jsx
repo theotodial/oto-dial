@@ -7,7 +7,6 @@ import Navbar from './components/Navbar';
 import DashboardLayout from './components/DashboardLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
-import IncomingCallNotification from './components/IncomingCallNotification';
 import GlobalCallOverlay from './components/GlobalCallOverlay';
 import AnalyticsTracker from './components/AnalyticsTracker';
 import Home from './pages/Home';
@@ -53,6 +52,11 @@ import AdminTeam from './pages/admin/AdminTeam';
 import AdminBlog from './pages/admin/AdminBlog';
 import AdminAnalytics from './pages/admin/AdminAnalytics';
 import AdminAnalyticsDetail from './pages/admin/AdminAnalyticsDetail';
+import AdminAffiliates from './pages/admin/AdminAffiliates';
+import AdminNotifications from './pages/admin/AdminNotifications';
+import SiteBuilder from './pages/admin/site/SiteBuilder';
+import SiteSeo from './pages/admin/site/SiteSeo';
+import SiteEnvironment from './pages/admin/site/SiteEnvironment';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
 import AdminProtectedRoute from './components/AdminProtectedRoute';
@@ -68,10 +72,7 @@ function App() {
             {/* Analytics Tracker - tracks page views and user behavior */}
             <AnalyticsTracker />
             
-            {/* Global Incoming Call Notification - shows when call is incoming */}
-            <IncomingCallNotification />
-            
-            {/* Global Call Overlay - shows floating banner when call is minimized */}
+            {/* Single call UI: GlobalCallOverlay only — do not add a second incoming/embed layer */}
             <GlobalCallOverlay />
             
       <Routes>
@@ -300,6 +301,56 @@ function App() {
                 </AdminProtectedRoute>
               } 
             />
+            <Route
+              path="/adminbobby/affiliates"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <AdminAffiliates />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+            <Route
+              path="/adminbobby/notifications"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <AdminNotifications />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+            <Route
+              path="/adminbobby/site/builder"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <SiteBuilder />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+            <Route
+              path="/adminbobby/site/seo"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <SiteSeo />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
+            <Route
+              path="/adminbobby/site/environment"
+              element={
+                <AdminProtectedRoute>
+                  <AdminLayout>
+                    <SiteEnvironment />
+                  </AdminLayout>
+                </AdminProtectedRoute>
+              }
+            />
 
             {/* Protected Routes - Require authentication */}
           <Route
@@ -339,16 +390,17 @@ function App() {
             }
           />
             
+          {/* Billing is public marketing UI; checkout itself enforces auth in Billing page */}
           <Route
             path="/billing"
             element={
-              <ProtectedRoute>
-                <DashboardLayout>
-                  <Billing />
-                </DashboardLayout>
-              </ProtectedRoute>
+              <DashboardLayout>
+                <Billing />
+              </DashboardLayout>
             }
           />
+          {/* Public pricing URL – always routes to billing */}
+          <Route path="/pricing" element={<Navigate to="/billing" replace />} />
           
           <Route
             path="/buy-number"

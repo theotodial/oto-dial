@@ -33,12 +33,12 @@ function NewHeroSection() {
 
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <a
-                href="#pricing"
+              <Link
+                to="/billing"
                 className="inline-flex items-center justify-center px-8 py-4 bg-white dark:bg-slate-700 text-gray-900 dark:text-white font-semibold rounded-xl border-2 border-gray-200 dark:border-slate-600 hover:border-indigo-600 hover:text-indigo-600 dark:hover:border-indigo-400 dark:hover:text-indigo-400 transition-all duration-200"
               >
                 View Pricing
-              </a>
+              </Link>
             </div>
 
           </div>

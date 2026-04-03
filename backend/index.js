@@ -29,6 +29,7 @@ import callRoutes from "./src/routes/callRoutes.js";
 import dialerRoutes from "./src/routes/dialerRoutes.js";
 import numberRoutes from "./src/routes/numberRoutes.js";
 import telnyxNumbersRoutes from "./src/routes/telnyxNumbers.js";
+import subscriptionCatalogRoutes from "./src/routes/subscriptionCatalog.js";
 import subscriptionRoutes from "./src/routes/subscription.js";
 import smsRoutes from "./src/routes/smsRoutes.js";
 import stripeCheckoutRoutes from "./src/routes/stripeCheckoutRoutes.js";
@@ -118,6 +119,8 @@ app.use("/api/admin/auth", adminAuthRoutes); // Admin auth (no auth middleware n
 // PROTECTED
 // ========================
 app.use("/api/users", authenticateUser, loadSubscription, userRoutes);
+// Public plan & add-on catalog (no auth)
+app.use("/api/subscription", subscriptionCatalogRoutes);
 app.use("/api/subscription", authenticateUser, loadSubscription, subscriptionRoutes);
 app.use("/api/stripe", authenticateUser, stripeCheckoutRoutes);
 app.use("/api/dialer", authenticateUser, loadSubscription, dialerRoutes);

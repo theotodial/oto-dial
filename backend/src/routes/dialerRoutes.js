@@ -3,6 +3,7 @@ import { getTelnyx } from "../../config/telnyx.js";
 import Call from "../models/Call.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import { validateCallCountryLock } from "../middleware/countryLock.js";
+import { findRecentActiveCallForUser } from "../utils/callLifecycle.js";
 
 const router = express.Router();
 
@@ -32,6 +33,15 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
       });
     }
 
+    const inFlight = await findRecentActiveCallForUser(req.userId);
+    if (inFlight) {
+      console.warn("[CALL FLOW] BLOCK /api/dialer/call — call already in progress", {
+        userId: String(req.userId),
+        existingId: String(inFlight._id),
+      });
+      return res.status(409).json({ error: "Call already in progress" });
+    }
+
     const telnyx = getTelnyx();
     if (!telnyx) {
       return res.status(503).json({ error: "Telnyx not configured" });
@@ -56,6 +66,8 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
     const fromNumber = numbers[0].phoneNumber;
 
     // Telnyx SDK v4 uses calls.dial() not calls.create()
+    console.log("[CALL FLOW] TELNYX REQUEST SENT (dialer dial)", { to, from: fromNumber });
+
     const telnyxCall = await telnyx.calls.dial({
       to,
       from: fromNumber,

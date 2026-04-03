@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useMobileSidebar } from '../context/MobileSidebarContext';
 import API from '../api';
 import { getLocationFromAreaCode } from '../utils/areaCodeMapping';
 
@@ -49,11 +50,18 @@ const PlusIcon = () => (
   </svg>
 );
 
+const MenuIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+  </svg>
+);
+
 /* ================= DASHBOARD ================= */
 
 function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { toggleSidebar, isOpen: sidebarOpen } = useMobileSidebar();
 
   const [balance, setBalance] = useState(0);
   const [numbers, setNumbers] = useState([]);
@@ -66,6 +74,7 @@ function Dashboard() {
   const [addonPlans, setAddonPlans] = useState([]);
   const [buyingAddonId, setBuyingAddonId] = useState(null);
   const [activationIssue, setActivationIssue] = useState(null);
+  const [addonsDrawerOpen, setAddonsDrawerOpen] = useState(false);
   const isMountedRef = useRef(true);
 
   /* ================= FETCH DASHBOARD ================= */
@@ -243,20 +252,20 @@ function Dashboard() {
         </div>
       </div>
       
-      {/* Mobile header - Centered title with profile button */}
-      <div className="mb-6 lg:hidden flex items-center justify-between">
-        <div className="flex-1"></div>
-        <h1 className="flex-1 text-2xl font-bold text-gray-900 dark:text-white tracking-tight text-center">Dashboard</h1>
-        <div className="flex-1 flex justify-end">
-          <button
-            onClick={() => navigate('/profile')}
-            className="p-2 rounded-lg bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors"
-          >
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold text-sm">
-              {user?.email?.charAt(0).toUpperCase() || 'U'}
-            </div>
-          </button>
-        </div>
+      {/* Mobile header — menu + title (profile is in sidebar) */}
+      <div className="mb-6 lg:hidden flex items-center gap-2">
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-gray-300 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"
+          aria-expanded={sidebarOpen}
+          aria-label="Open menu"
+        >
+          <MenuIcon />
+        </button>
+        <h1 className="flex-1 min-w-0 text-xl font-bold text-gray-900 dark:text-white tracking-tight text-center truncate px-1">
+          Dashboard
+        </h1>
       </div>
 
       {actionLoading && (
@@ -277,7 +286,7 @@ function Dashboard() {
         </div>
       )}
 
-      {/* PACKAGE + NUMBERS CARDS */}
+      {/* PACKAGE CARD */}
       <div className={`grid grid-cols-1 ${(numbers || []).length === 0 ? 'md:grid-cols-2' : ''} gap-6 mb-8`}>
         <button
           onClick={() => navigate('/subscription-details')}
@@ -342,48 +351,73 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Add-on showcase - Only show if user has active subscription */}
+      {/* Add-ons — compact trigger + slide-over drawer */}
       {packageDetails.planName !== 'No Plan' && addonPlans.length > 0 && (
         <div className="mb-8">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm p-6">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-              Need more minutes or SMS?
-            </h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Top up your subscription with extra minutes or SMS. Each add-on lasts 30 days from purchase.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {addonPlans.map((addon) => (
-                <button
-                  key={addon._id}
-                  type="button"
-                  onClick={() => handleBuyAddon(addon)}
-                  disabled={buyingAddonId === addon._id}
-                  className="flex items-center justify-between px-4 py-3 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                >
-                  <span>
-                    <span className="font-semibold block">
-                      {addon.type === 'minutes'
-                        ? `${addon.quantity.toLocaleString()} extra minutes`
-                        : `${addon.quantity.toLocaleString()} extra SMS`}
-                    </span>
-                    <span className="text-xs opacity-80">
-                      Expires 30 days after purchase
-                    </span>
-                  </span>
-                  <span className="ml-3 whitespace-nowrap font-bold">
-                    {buyingAddonId === addon._id ? 'Processing…' : `$${addon.price}`}
-                  </span>
-                </button>
-              ))}
+          {addonsDrawerOpen && (
+            <div className="fixed inset-0 z-[60] flex justify-end" role="dialog" aria-modal="true" aria-labelledby="addons-drawer-title">
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/50 backdrop-blur-[1px]"
+                aria-label="Close add-ons"
+                onClick={() => setAddonsDrawerOpen(false)}
+              />
+              <div className="relative w-full max-w-md h-full max-h-[100dvh] sm:max-h-screen bg-white dark:bg-slate-900 shadow-2xl flex flex-col border-l border-gray-200 dark:border-slate-700 animate-[slideIn_0.2s_ease-out]">
+                <style>{`@keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }`}</style>
+                <div className="flex items-center justify-between px-4 py-4 border-b border-gray-200 dark:border-slate-700">
+                  <h2 id="addons-drawer-title" className="text-lg font-semibold text-gray-900 dark:text-white pr-2">
+                    Add-ons
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setAddonsDrawerOpen(false)}
+                    className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-gray-300"
+                    aria-label="Close"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                    Each add-on is active for 30 days from purchase.
+                  </p>
+                  {addonPlans.map((addon) => (
+                    <button
+                      key={addon._id}
+                      type="button"
+                      onClick={() => handleBuyAddon(addon)}
+                      disabled={buyingAddonId === addon._id}
+                      className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed transition-colors text-left"
+                    >
+                      <span>
+                        <span className="font-semibold block">
+                          {addon.type === 'minutes'
+                            ? `${addon.quantity.toLocaleString()} extra minutes`
+                            : `${addon.quantity.toLocaleString()} extra SMS`}
+                        </span>
+                        <span className="text-xs opacity-80">30 days after purchase</span>
+                      </span>
+                      <span className="ml-3 whitespace-nowrap font-bold">
+                        {buyingAddonId === addon._id ? '…' : `$${addon.price}`}
+                      </span>
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddonsDrawerOpen(false);
+                      navigate('/billing');
+                    }}
+                    className="w-full mt-2 px-4 py-3 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-800 dark:text-gray-200 text-sm font-medium transition-colors"
+                  >
+                    View all plans in Billing →
+                  </button>
+                </div>
+              </div>
             </div>
-            <button
-              onClick={() => navigate('/billing')}
-              className="mt-4 w-full text-center px-4 py-2 rounded-xl bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-300 text-sm font-medium transition-colors"
-            >
-              View all plans in Billing →
-            </button>
-          </div>
+          )}
         </div>
       )}
 
@@ -489,6 +523,72 @@ function Dashboard() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Billing overview + add-ons shortcut (below numbers) */}
+      <div className="mt-6 mb-8">
+        <div className="bg-white dark:bg-slate-700 rounded-2xl p-6 shadow-sm border border-gray-200 dark:border-slate-600 flex flex-col justify-between">
+          <div className="flex items-start justify-between mb-4 gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Billing &amp; usage
+              </p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white mt-1">
+                Manage your subscription
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/billing')}
+              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-100 dark:hover:bg-indigo-900/40"
+            >
+              Open billing
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+            </button>
+          </div>
+          <div className="space-y-2 text-sm text-gray-700 dark:text-gray-300 mb-4">
+            <p className="flex items-center justify-between">
+              <span>Current plan</span>
+              <span className="font-semibold">
+                {packageDetails.planName || 'No Plan'}
+              </span>
+            </p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              View plan limits and change your subscription from the Billing page.
+            </p>
+          </div>
+          {packageDetails.planName !== 'No Plan' && addonPlans.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setAddonsDrawerOpen(true)}
+              className="mb-3 w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-gray-50 dark:bg-slate-800 border border-dashed border-gray-300 dark:border-slate-600 text-left hover:border-indigo-300 dark:hover:border-indigo-600 transition-colors"
+            >
+              <div>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                  Need more minutes or SMS?
+                </p>
+                <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">
+                  Open add-ons — top up anytime. 30-day add-on window after purchase.
+                </p>
+              </div>
+              <span className="flex-shrink-0 text-indigo-600 dark:text-indigo-400 font-medium text-xs">
+                Shop add-ons →
+              </span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => navigate('/billing')}
+            className="mt-auto inline-flex items-center justify-center w-full px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-colors"
+          >
+            Open Billing
+            <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Copy Notification */}

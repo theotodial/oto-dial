@@ -7,6 +7,7 @@ import PhoneNumber from "../../models/PhoneNumber.js";
 import Call from "../../models/Call.js";
 import SMS from "../../models/SMS.js";
 import TelnyxCost from "../../models/TelnyxCost.js";
+import { getActiveAddonAmounts } from "../../services/subscriptionAddonCreditService.js";
 
 const router = express.Router();
 
@@ -86,6 +87,10 @@ router.get(
               accountStatus: user.status || "active"
             },
             subscriptionStatus: subscription?.status || "none",
+            subscriptionPlan:
+              subscription?.planName ||
+              subscription?.planKey ||
+              (subscription?.displayUnlimited ? "Unlimited" : "none"),
             phoneNumbers: phoneNumbers.map(pn => pn.phoneNumber),
             costs: {
               totalTelnyxCost: totalCost,
@@ -173,10 +178,38 @@ router.get(
       // Derive subscription summary expected by frontend
       const subscriptionSummary = subscription
         ? {
-            planName: subscription.planKey || "Active Plan",
+            planName: subscription.planName || subscription.planKey || "Active Plan",
+            planType: subscription.planType || null,
+            displayUnlimited: Boolean(subscription.displayUnlimited),
             status: subscription.status,
             nextBillingDate: subscription.periodEnd || null,
             raw: subscription
+          }
+        : null;
+
+      const usageSummary = subscription
+        ? {
+            ...(() => {
+              const addonCredits = getActiveAddonAmounts(subscription);
+              return {
+                loadedSmsTotal: addonCredits.smsTotal,
+                loadedSmsActive: addonCredits.smsActive,
+                loadedSmsExpiry: addonCredits.smsExpiry,
+                loadedMinutesTotal: addonCredits.minutesTotal,
+                loadedMinutesActive: addonCredits.minutesActive,
+                loadedMinutesExpiry: addonCredits.minutesExpiry
+              };
+            })(),
+            monthlySmsUsed: Number(subscription.usage?.smsUsed || 0),
+            monthlyMinutesUsed: Number(subscription.usage?.minutesUsed || 0) / 60,
+            dailySmsUsed: Number(subscription.dailySmsUsed || 0),
+            dailyMinutesUsed: Number(subscription.dailyMinutesUsed || 0) / 60,
+            monthlySmsLimit:
+              subscription.monthlySmsLimit ?? subscription.limits?.smsTotal ?? null,
+            monthlyMinutesLimit:
+              subscription.monthlyMinutesLimit ?? subscription.limits?.minutesTotal ?? null,
+            dailySmsLimit: subscription.dailySmsLimit ?? null,
+            dailyMinutesLimit: subscription.dailyMinutesLimit ?? null
           }
         : null;
 
@@ -206,7 +239,8 @@ router.get(
               oneTimeCost: 0
             },
             totalTelnyxCost: totalCost
-          }
+          },
+          usage: usageSummary
         }
       });
     } catch (err) {

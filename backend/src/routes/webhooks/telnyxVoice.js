@@ -3,8 +3,11 @@ import Call from "../../models/Call.js";
 import Subscription from "../../models/Subscription.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import { recordCallCost } from "../../services/telnyxCostCalculator.js";
+import { normalizeCallPartyNumber } from "../../utils/callLifecycle.js";
 
 const router = express.Router();
+
+const WEBHOOK_PENDING_WINDOW_MS = 120000;
 
 /**
  * TELNYX VOICE WEBHOOK
@@ -14,11 +17,13 @@ const router = express.Router();
 // Handler at root since we're mounted at /api/webhooks/telnyx/voice
 router.post("/", async (req, res) => {
   try {
-    console.log("📞 VOICE WEBHOOK RECEIVED");
-    console.log("📞 Headers:", JSON.stringify(req.headers, null, 2));
-    console.log("📞 Body:", JSON.stringify(req.body, null, 2));
-    
     const payload = req.body?.data;
+    const evt = payload?.event_type;
+    const ccId = payload?.payload?.call_control_id;
+    console.log("[CALL FLOW] WEBHOOK RECEIVED", {
+      event_type: evt,
+      call_control_id: ccId,
+    });
     if (!payload) {
       return res.sendStatus(200);
     }
@@ -39,6 +44,7 @@ router.post("/", async (req, res) => {
       const toNumber = callPayload.to;
       const fromNumber = callPayload.from;
       const isIncoming = callPayload.direction === "incoming";
+      const toNorm = normalizeCallPartyNumber(toNumber);
 
       // For inbound calls, find user who owns the receiving number
       // For outbound calls, find user who owns the calling number
@@ -50,10 +56,51 @@ router.post("/", async (req, res) => {
       });
 
       if (phoneNumber) {
-        // Check if call record already exists (for outbound calls created before webhook)
         let callRecord = await Call.findOne({
-          telnyxCallControlId: callControlId
+          telnyxCallControlId: callControlId,
         });
+        let mergedOutboundPending = false;
+
+        if (!callRecord && !isIncoming) {
+          const since = new Date(Date.now() - WEBHOOK_PENDING_WINDOW_MS);
+          const numberMatch = [{ toNumber: toNorm }, { phoneNumber: toNorm }];
+          if (toNumber && toNumber !== toNorm) {
+            numberMatch.push({ toNumber }, { phoneNumber: toNumber });
+          }
+          const pending = await Call.findOne({
+            user: phoneNumber.userId,
+            direction: "outbound",
+            status: { $in: ["queued", "dialing", "ringing"] },
+            updatedAt: { $gte: since },
+            $and: [
+              {
+                $or: [
+                  { telnyxCallControlId: null },
+                  { telnyxCallControlId: "" },
+                  { telnyxCallControlId: { $exists: false } },
+                ],
+              },
+              { $or: numberMatch },
+            ],
+          }).sort({ createdAt: -1 });
+
+          if (pending) {
+            pending.telnyxCallControlId = callControlId;
+            pending.fromNumber = fromNumber || pending.fromNumber;
+            pending.toNumber = toNumber || pending.toNumber;
+            if (toNorm) pending.phoneNumber = toNorm;
+            pending.status = "ringing";
+            pending.callInitiatedAt = new Date();
+            await pending.save();
+            callRecord = pending;
+            mergedOutboundPending = true;
+            console.log("[CALL FLOW] WEBHOOK merged call.initiated into pending WebRTC row", {
+              callId: String(callRecord._id),
+              call_control_id: callControlId,
+              to: toNorm,
+            });
+          }
+        }
 
         if (!callRecord) {
           callRecord = await Call.create({
@@ -64,13 +111,21 @@ router.post("/", async (req, res) => {
             toNumber: toNumber,
             direction: isIncoming ? "inbound" : "outbound",
             status: "ringing",
-            callInitiatedAt: new Date() // CRITICAL: Track initiation time for billing ring time
+            callInitiatedAt: new Date(),
           });
-          console.log(`✅ ${isIncoming ? 'Inbound' : 'Outbound'} call initiated: ${fromNumber} -> ${toNumber} (userId: ${phoneNumber.userId}, callId: ${callRecord._id})`);
-        } else {
-          // Update existing record with initiation time
+          console.log(
+            `[CALL FLOW] CALL CREATED (webhook) ${isIncoming ? "Inbound" : "Outbound"} ${fromNumber} -> ${toNumber} userId=${phoneNumber.userId} callId=${callRecord._id}`
+          );
+        } else if (!mergedOutboundPending) {
           callRecord.callInitiatedAt = new Date();
+          if (["queued", "dialing"].includes(callRecord.status)) {
+            callRecord.status = "ringing";
+          }
           await callRecord.save();
+          console.log("[CALL FLOW] CALL STATE UPDATED (webhook call.initiated)", {
+            callId: String(callRecord._id),
+            call_control_id: callControlId,
+          });
         }
         
         // Send Web Push notification for incoming call (when app is closed or tab in background)
@@ -95,13 +150,20 @@ router.post("/", async (req, res) => {
     // CALL ANSWERED
     // ===============================
     if (event === "call.answered") {
-      await Call.findOneAndUpdate(
+      const updated = await Call.findOneAndUpdate(
         { telnyxCallControlId: callControlId },
         {
           status: "in-progress",
           callStartedAt: new Date(),
-        }
+        },
+        { new: true }
       );
+      if (updated) {
+        console.log("[CALL FLOW] CALL STATE UPDATED (webhook call.answered)", {
+          callId: String(updated._id),
+          call_control_id: callControlId,
+        });
+      }
     }
 
     // ===============================

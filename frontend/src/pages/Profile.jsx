@@ -1,10 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import API from '../api';
 import ProfilePictureCrop from '../components/ProfilePictureCrop';
 
-const CheckIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+const BackChevronIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+  </svg>
+);
+
+const CheckIcon = ({ className = 'w-5 h-5' }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
   </svg>
 );
@@ -16,6 +23,7 @@ const UploadIcon = () => (
 );
 
 function Profile() {
+  const navigate = useNavigate();
   const { user: authUser } = useAuth();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -36,6 +44,7 @@ function Profile() {
 
   const [verificationData, setVerificationData] = useState({
     isVerified: false,
+    verificationStatus: 'not_submitted',
     verificationType: '',
     idDocument: null,
     businessDocument: null,
@@ -109,13 +118,26 @@ function Profile() {
         setProfilePicture(userData.profilePicture || null);
         const fullName = userData.name || 
           (userData.firstName ? `${userData.firstName} ${userData.lastName || ''}`.trim() : '');
+        const iv = userData.identityVerification;
         setProfileData(prev => ({
           ...prev,
           email: userData.email || prev.email || '',
           fullName: fullName || prev.fullName || '',
           phone: userData.phone || prev.phone || '',
           company: userData.company || prev.company || '',
+          businessType: userData.businessType || prev.businessType || '',
+          country: userData.country || prev.country || '',
+          timezone: userData.timezone || prev.timezone || '',
+          language: userData.language || prev.language || 'en',
         }));
+        if (iv) {
+          setVerificationData((vd) => ({
+            ...vd,
+            isVerified: iv.status === 'approved',
+            verificationStatus: iv.status || 'not_submitted',
+            verificationType: iv.verificationType || vd.verificationType,
+          }));
+        }
       }
     } catch (err) {
       if (!isMountedRef.current) return;
@@ -152,6 +174,10 @@ function Profile() {
         name: profileData?.fullName || '',
         phone: profileData.phone,
         company: profileData.company,
+        businessType: profileData.businessType,
+        country: profileData.country,
+        timezone: profileData.timezone,
+        language: profileData.language,
       });
 
       if (!isMountedRef.current) return;
@@ -188,19 +214,14 @@ function Profile() {
 
   const handleFileUpload = async (type, file) => {
     if (!file || !isMountedRef.current) return;
-    
-    const formData = new FormData();
-    formData.append('document', file);
-    formData.append('type', type);
-    
+
     setSaving(true);
     setError('');
     setSuccess('');
-    
-    try {
-      // Convert file to base64 for the new endpoint
-      const fileReader = new FileReader();
-      fileReader.onload = async (e) => {
+
+    const fileReader = new FileReader();
+    fileReader.onload = async (e) => {
+      try {
         const base64 = e.target.result;
         const payload = {
           verificationType: type === 'ID' ? 'individual' : 'business'
@@ -210,11 +231,11 @@ function Profile() {
         } else {
           payload.businessDocument = base64;
         }
-        
+
         const response = await API.post('/api/users/upload-verification', payload);
-        
+
         if (!isMountedRef.current) return;
-        
+
         if (response.error) {
           setError(response.error);
         } else {
@@ -226,31 +247,23 @@ function Profile() {
           }, 5000);
           await loadUserProfile();
         }
-      };
-      fileReader.readAsDataURL(file);
-      return;
-      
-      if (!isMountedRef.current) return;
-      
-      if (response.error) {
-        setError(response.error);
-      } else {
-        setSuccess(`${type} verification initiated. Our team will review your documents within 24-48 hours.`);
-        setTimeout(() => {
-          if (isMountedRef.current) {
-            setSuccess('');
-          }
-        }, 5000);
-        await loadUserProfile();
+      } catch (err) {
+        if (isMountedRef.current) {
+          setError('Failed to upload document');
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setSaving(false);
+        }
       }
-    } catch (err) {
-      if (!isMountedRef.current) return;
-      setError('Failed to upload document');
-    } finally {
+    };
+    fileReader.onerror = () => {
       if (isMountedRef.current) {
+        setError('Failed to read file');
         setSaving(false);
       }
-    }
+    };
+    fileReader.readAsDataURL(file);
   };
 
   const handleProfilePictureSelect = (e) => {
@@ -330,6 +343,7 @@ function Profile() {
           setError(response.error);
         } else {
           setProfilePicture(response.data?.url || base64);
+          window.dispatchEvent(new CustomEvent('oto-profile-updated'));
           setSuccess('Profile picture updated successfully!');
           setShowCropModal(false);
           setCropImage(null);
@@ -413,9 +427,29 @@ function Profile() {
 
   return (
     <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900">
-      <div className="max-w-5xl mx-auto p-6 lg:p-8 pt-20 lg:pt-8">
-        {/* Header - Centered */}
-        <div className="mb-8 text-center">
+      <div className="max-w-5xl mx-auto p-6 lg:p-8 pt-4 lg:pt-8">
+        {/* Mobile: back + title in one row (replaces floating layout button) */}
+        <div className="mb-6 lg:hidden flex items-start gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="flex-shrink-0 w-10 h-10 mt-0.5 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-gray-300 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"
+            aria-label="Go back"
+          >
+            <BackChevronIcon />
+          </button>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white leading-tight">
+              Profile Settings
+            </h1>
+            <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
+              Manage your account details and verification status
+            </p>
+          </div>
+        </div>
+
+        {/* Desktop header */}
+        <div className="mb-8 hidden lg:block text-center">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
             Profile Settings
           </h1>
@@ -575,6 +609,36 @@ function Profile() {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Timezone
+                  </label>
+                  <input
+                    type="text"
+                    name="timezone"
+                    value={profileData.timezone}
+                    onChange={handleInputChange}
+                    placeholder="America/New_York"
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Language
+                  </label>
+                  <select
+                    name="language"
+                    value={profileData.language}
+                    onChange={handleInputChange}
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                  >
+                    <option value="en">English</option>
+                    <option value="es">Español</option>
+                    <option value="fr">Français</option>
+                  </select>
+                </div>
+
                 <button
                   type="submit"
                   disabled={saving}
@@ -598,9 +662,13 @@ function Profile() {
               <div className="space-y-4">
                 {/* Verification Status */}
                 <div className={`p-4 rounded-xl border-2 ${
-                  verificationData.isVerified 
-                    ? 'bg-green-50 dark:bg-green-900/20 border-green-500' 
-                    : 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-500'
+                  verificationData.isVerified
+                    ? 'bg-green-50 dark:bg-green-900/20 border-green-500'
+                    : verificationData.verificationStatus === 'rejected'
+                      ? 'bg-red-50 dark:bg-red-900/20 border-red-500'
+                      : verificationData.verificationStatus === 'pending'
+                        ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-500'
+                        : 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-500'
                 }`}>
                   <div className="flex items-center">
                     {verificationData.isVerified ? (
@@ -610,26 +678,42 @@ function Profile() {
                           Verified Account
                         </span>
                       </>
+                    ) : verificationData.verificationStatus === 'rejected' ? (
+                      <>
+                        <span className="font-semibold text-red-700 dark:text-red-400">
+                          Verification rejected
+                        </span>
+                      </>
+                    ) : verificationData.verificationStatus === 'pending' ? (
+                      <>
+                        <span className="font-semibold text-amber-800 dark:text-amber-200">
+                          Under review
+                        </span>
+                      </>
                     ) : (
                       <>
                         <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                         <span className="font-semibold text-yellow-700 dark:text-yellow-400">
-                          Verification Pending
+                          Not verified yet
                         </span>
                       </>
                     )}
                   </div>
                   <p className="text-sm mt-2 text-gray-600 dark:text-gray-400">
-                    {verificationData.isVerified 
-                      ? 'Your identity has been verified successfully.' 
-                      : 'Upload your documents to verify your identity and unlock all features.'}
+                    {verificationData.isVerified
+                      ? 'Your identity has been verified successfully.'
+                      : verificationData.verificationStatus === 'rejected'
+                        ? 'Please upload new documents or contact support if you need help.'
+                        : verificationData.verificationStatus === 'pending'
+                          ? 'We are reviewing your documents (typically 24–48 hours).'
+                          : 'Upload your documents to verify your identity and unlock all features.'}
                   </p>
                 </div>
 
                 {/* Document Upload */}
-                {!verificationData.isVerified && (
+                {!verificationData.isVerified && verificationData.verificationStatus !== 'pending' && (
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">

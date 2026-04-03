@@ -76,6 +76,15 @@ function AdminDashboardEnterprise() {
   const fetchTimeoutRef = useRef(null);
   const isFetchingRef = useRef(false);
 
+  const normalizeLoadError = useCallback((message) => {
+    if (!message) return 'Failed to load analytics';
+    const s = String(message);
+    if (/timeout|exceeded|aborted/i.test(s)) {
+      return 'Request timed out. Try a shorter time range or refresh the page.';
+    }
+    return s;
+  }, []);
+
   const fetchActivationFailures = useCallback(async (token) => {
     const response = await API.get('/api/admin/subscriptions/activation-failures?status=open&limit=5', {
       headers: { Authorization: `Bearer ${token}` }
@@ -158,20 +167,20 @@ function AdminDashboardEnterprise() {
       
       // OPTIMIZED: Add timeout and only fetch essential data
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+      const mainTimeoutMs = 85000;
+      const timeoutId = setTimeout(() => controller.abort(), mainTimeoutMs + 8000);
       
       try {
-        // Fetch main analytics first (critical)
         const enhancedRes = await API.get(`/api/admin/analytics/enhanced?filter=${filterParam}`, {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
-          timeout: 20000
+          timeout: mainTimeoutMs
         });
         
         clearTimeout(timeoutId);
 
         if (enhancedRes.error) {
-          setError(enhancedRes.error);
+          setError(normalizeLoadError(enhancedRes.error));
         } else if (enhancedRes.data?.success) {
           setAnalytics(enhancedRes.data);
         }
@@ -185,7 +194,7 @@ function AdminDashboardEnterprise() {
         // Don't wait for it - load it in background
         API.get(`/api/admin/analytics/time-series/enhanced?filter=${filterParam}`, {
           headers: { Authorization: `Bearer ${token}` },
-          timeout: 15000
+          timeout: 60000
         }).then(timeSeriesRes => {
           if (timeSeriesRes.data?.success) {
             setTimeSeries(timeSeriesRes.data);
@@ -197,7 +206,7 @@ function AdminDashboardEnterprise() {
       } catch (abortErr) {
         clearTimeout(timeoutId);
         if (abortErr.name === 'AbortError' || abortErr.message?.includes('timeout')) {
-          setError('Request timed out. Please try a shorter time period or refresh the page.');
+          setError(normalizeLoadError('timeout'));
         } else {
           throw abortErr; // Re-throw to be caught by outer catch
         }
@@ -207,15 +216,15 @@ function AdminDashboardEnterprise() {
         localStorage.removeItem('adminToken');
         navigate('/adminbobby');
       } else if (err.name === 'AbortError' || err.message?.includes('timeout')) {
-        setError('Request timed out. The admin panel is processing a large amount of data. Please try a shorter time period.');
+        setError(normalizeLoadError('timeout'));
       } else {
-        setError(err.response?.data?.error || 'Failed to load analytics');
+        setError(normalizeLoadError(err.response?.data?.error || err.message || 'Failed to load analytics'));
       }
     } finally {
       setLoading(false);
       isFetchingRef.current = false;
     }
-  }, [timeFilter, navigate, fetchActivationFailures]);
+  }, [timeFilter, navigate, fetchActivationFailures, normalizeLoadError]);
 
   useEffect(() => {
     // Debounce rapid filter changes

@@ -3,7 +3,6 @@ import requireAdmin from "../../middleware/requireAdmin.js";
 import Subscription from "../../models/Subscription.js";
 import Call from "../../models/Call.js";
 import SMS from "../../models/SMS.js";
-import User from "../../models/User.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import TelnyxCost from "../../models/TelnyxCost.js";
 import { getStripe } from "../../../config/stripe.js";
@@ -85,15 +84,32 @@ function getDateRange(filter) {
  * Enterprise-grade analytics with FULL cost breakdown
  */
 router.get("/", requireAdmin, async (req, res) => {
-  // Set timeout to prevent hanging
-  const timeout = setTimeout(() => {
-    if (!res.headersSent) {
-      res.status(504).json({
-        success: false,
-        error: "Request timeout - analytics query took too long. Please try a shorter time period."
-      });
+  const wantsStripeSync =
+    req.query.stripeSync === "1" || req.query.liveSync === "1";
+  const timeoutMs = wantsStripeSync ? 120000 : 90000;
+
+  let settled = false;
+  const finish = (status, body) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    try {
+      if (!res.headersSent) {
+        res.status(status).json(body);
+      }
+    } catch (e) {
+      console.error("Analytics finish error:", e.message);
     }
-  }, 20000); // 20 second timeout (reduced from 30s)
+  };
+
+  const timeout = setTimeout(() => {
+    finish(504, {
+      success: false,
+      error: wantsStripeSync
+        ? "Stripe sync timed out. Open the dashboard without live sync or narrow the date range."
+        : "Request timeout - analytics query took too long. Please try a shorter time period."
+    });
+  }, timeoutMs);
 
   try {
     const { filter = "7d" } = req.query; // Default to 7d instead of 30d for faster queries
@@ -114,25 +130,64 @@ router.get("/", requireAdmin, async (req, res) => {
       eventTimestamp: { $gte: effectiveStartDate, $lte: effectiveEndDate } 
     };
 
-    // CALL COSTS - Aggregate from TelnyxCost ledger
-    const callCosts = await TelnyxCost.aggregate([
-      {
-        $match: {
-          resourceType: "call",
-          ...costDateFilter
+    const callCostMatch = { resourceType: "call", ...costDateFilter };
+    const smsCostMatch = { resourceType: "sms", ...costDateFilter };
+    const numberCostMatch = { resourceType: "number", ...costDateFilter };
+
+    const [
+      callCosts,
+      smsCosts,
+      numberCosts,
+      mongoRevenueSummary
+    ] = await Promise.all([
+      TelnyxCost.aggregate([
+        { $match: callCostMatch },
+        {
+          $group: {
+            _id: "$direction",
+            totalCost: { $sum: "$totalCostUsd" },
+            totalSeconds: { $sum: "$billedSeconds" },
+            totalRingingSeconds: { $sum: "$ringingSeconds" },
+            totalAnsweredSeconds: { $sum: "$answeredSeconds" },
+            count: { $sum: 1 }
+          }
         }
-      },
-      {
-        $group: {
-          _id: "$direction",
-          totalCost: { $sum: "$totalCostUsd" },
-          totalSeconds: { $sum: "$billedSeconds" },
-          totalRingingSeconds: { $sum: "$ringingSeconds" },
-          totalAnsweredSeconds: { $sum: "$answeredSeconds" },
-          count: { $sum: 1 }
+      ]),
+      TelnyxCost.aggregate([
+        { $match: smsCostMatch },
+        {
+          $group: {
+            _id: "$direction",
+            totalCost: { $sum: "$totalCostUsd" },
+            count: { $sum: 1 }
+          }
         }
-      }
+      ]),
+      TelnyxCost.aggregate([
+        { $match: numberCostMatch },
+        {
+          $group: {
+            _id: null,
+            totalCost: { $sum: "$totalCostUsd" },
+            count: { $sum: 1 }
+          }
+        }
+      ]),
+      getStripeRevenueSummaryFromMongo({
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate
+      }).catch(() => ({
+        grossRevenue: 0,
+        invoiceCount: 0,
+        subscriptionRevenue: 0,
+        addonRevenue: 0
+      }))
     ]);
+
+    let grossRevenue = Number(mongoRevenueSummary.grossRevenue) || 0;
+    let stripeInvoiceCount = Number(mongoRevenueSummary.invoiceCount) || 0;
+    let subscriptionRevenue = Number(mongoRevenueSummary.subscriptionRevenue) || 0;
+    let addonRevenue = Number(mongoRevenueSummary.addonRevenue) || 0;
 
     let telnyxCallCost = 0;
     let telnyxCallCostInbound = 0;
@@ -158,15 +213,35 @@ router.get("/", requireAdmin, async (req, res) => {
       }
     });
 
-    // Calculate pending costs (calls without cost records) - OPTIMIZED
-    const callsWithCosts = await TelnyxCost.distinct("resourceId", {
-      resourceType: "call",
-      ...costDateFilter
+    const [callCostResourceIds, smsCostResourceIds, allCalls, allSms, allNumbers] = await Promise.all([
+      TelnyxCost.distinct("resourceId", { resourceType: "call", ...costDateFilter }),
+      TelnyxCost.distinct("resourceId", { resourceType: "sms", ...costDateFilter }),
+      Call.find(dateFilter).sort({ createdAt: -1 }).limit(5000).lean(),
+      SMS.find(dateFilter).sort({ createdAt: -1 }).limit(5000).lean(),
+      PhoneNumber.find({ status: "active" }).limit(1000).lean()
+    ]);
+
+    const callCostIdSet = new Set(callCostResourceIds.map((id) => String(id)));
+    const smsCostIdSet = new Set(smsCostResourceIds.map((id) => String(id)));
+    pendingCallCosts = allCalls.filter((c) => !callCostIdSet.has(String(c._id))).length;
+
+    let telnyxSmsCost = 0;
+    let telnyxSmsCostInbound = 0;
+    let telnyxSmsCostOutbound = 0;
+    let totalSmsCarrierFees = 0;
+    let avgCostPerSms = 0;
+    let pendingSmsCosts = 0;
+
+    smsCosts.forEach(cost => {
+      telnyxSmsCost += cost.totalCost;
+      if (cost._id === "inbound") {
+        telnyxSmsCostInbound += cost.totalCost;
+      } else if (cost._id === "outbound") {
+        telnyxSmsCostOutbound += cost.totalCost;
+      }
     });
-    const allCalls = await Call.find(dateFilter).limit(5000).lean();
-    // Only check first 5000 calls to prevent blocking
-    const callsToCheck = allCalls.slice(0, 5000);
-    pendingCallCosts = callsToCheck.filter(c => !callsWithCosts.includes(c._id.toString())).length;
+
+    pendingSmsCosts = allSms.filter((s) => !smsCostIdSet.has(String(s._id))).length;
 
     totalCallMinutes = totalBilledSeconds / 60;
     if (totalBilledSeconds > 0) {
@@ -217,49 +292,6 @@ router.get("/", requireAdmin, async (req, res) => {
         avgCostPerMinute = avgCostPerSecond * 60;
       }
     }
-
-    // SMS COSTS - Aggregate from TelnyxCost ledger
-    const smsCosts = await TelnyxCost.aggregate([
-      {
-        $match: {
-          resourceType: "sms",
-          ...costDateFilter
-        }
-      },
-      {
-        $group: {
-          _id: "$direction",
-          totalCost: { $sum: "$totalCostUsd" },
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    let telnyxSmsCost = 0;
-    let telnyxSmsCostInbound = 0;
-    let telnyxSmsCostOutbound = 0;
-    let totalSmsCarrierFees = 0;
-    let avgCostPerSms = 0;
-    let pendingSmsCosts = 0;
-
-    smsCosts.forEach(cost => {
-      telnyxSmsCost += cost.totalCost;
-      if (cost._id === "inbound") {
-        telnyxSmsCostInbound += cost.totalCost;
-      } else if (cost._id === "outbound") {
-        telnyxSmsCostOutbound += cost.totalCost;
-      }
-    });
-
-    // Calculate pending costs (SMS without cost records) - OPTIMIZED
-    const smsWithCosts = await TelnyxCost.distinct("resourceId", {
-      resourceType: "sms",
-      ...costDateFilter
-    });
-    const allSms = await SMS.find(dateFilter).limit(5000).lean();
-    // Only check first 5000 SMS to prevent blocking
-    const smsToCheck = allSms.slice(0, 5000);
-    pendingSmsCosts = smsToCheck.filter(s => !smsWithCosts.includes(s._id.toString())).length;
 
     const totalSmsCount = smsCosts.reduce((sum, c) => sum + c.count, 0);
     if (totalSmsCount > 0) {
@@ -316,25 +348,8 @@ router.get("/", requireAdmin, async (req, res) => {
       pendingSmsCosts = 0;
     }
 
-    // PHONE NUMBER COSTS - Aggregate from TelnyxCost ledger
-    const numberCosts = await TelnyxCost.aggregate([
-      {
-        $match: {
-          resourceType: "number",
-          ...costDateFilter
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalCost: { $sum: "$totalCostUsd" },
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
+    // PHONE NUMBER COSTS (numberCosts + allNumbers loaded in parallel above)
     let totalNumberCost = numberCosts.length > 0 ? numberCosts[0].totalCost : 0;
-    const allNumbers = await PhoneNumber.find({ status: "active" }).limit(1000).lean();
     const activeNumbersCount = allNumbers.length;
 
     // Calculate monthly equivalent (for display)
@@ -405,55 +420,50 @@ router.get("/", requireAdmin, async (req, res) => {
     const totalTelnyxCost = telnyxCallCost + telnyxSmsCost + totalNumberCost;
 
     // ================================
-    // 2. STRIPE COSTS - FULL BREAKDOWN
+    // 2. STRIPE COSTS - FULL BREAKDOWN (revenue summary from Mongo loaded above)
     // ================================
-    let grossRevenue = 0;
     let stripeProcessingFees = 0;
     let refunds = 0;
     let netRevenue = 0;
-    let stripeInvoiceCount = 0;
-    let subscriptionRevenue = 0;
-    let addonRevenue = 0;
-    let stripeSync = { skipped: true, synced: 0, scanned: 0, pages: 0 };
+    let stripeSync = {
+      skipped: true,
+      synced: 0,
+      scanned: 0,
+      pages: 0,
+      reason: wantsStripeSync ? undefined : "dashboard_uses_mongo_only"
+    };
 
-    // Keep StripeInvoice Mongo ledger fresh from Stripe before calculations.
-    try {
-      stripeSync = await syncPaidInvoicesFromStripe({
-        startDate: effectiveStartDate,
-        endDate: effectiveEndDate,
-        maxPages: filter === "all" ? 20 : 6
-      });
-    } catch (syncErr) {
-      console.warn("Stripe invoice sync warning:", syncErr.message);
-    }
-
-    try {
-      const summary = await getStripeRevenueSummaryFromMongo({
-        startDate: effectiveStartDate,
-        endDate: effectiveEndDate
-      });
-      grossRevenue = summary.grossRevenue;
-      stripeInvoiceCount = summary.invoiceCount;
-      subscriptionRevenue = summary.subscriptionRevenue;
-      addonRevenue = summary.addonRevenue;
-    } catch (summaryErr) {
-      console.warn("Stripe revenue summary warning:", summaryErr.message);
+    if (wantsStripeSync) {
+      try {
+        stripeSync = await syncPaidInvoicesFromStripe({
+          startDate: effectiveStartDate,
+          endDate: effectiveEndDate,
+          maxPages: filter === "all" ? 10 : 4
+        });
+      } catch (syncErr) {
+        console.warn("Stripe invoice sync warning:", syncErr.message);
+      }
     }
 
     // Stripe fee estimate fallback (2.9% + $0.30 per paid invoice).
     stripeProcessingFees = (grossRevenue * 0.029) + (stripeInvoiceCount * 0.30);
 
-    // Pull recent refunds directly from Stripe when available.
     const stripe = getStripe();
     if (stripe) {
+      const REFUND_LIST_MS = 10000;
       try {
-        const refundList = await stripe.refunds.list({
-          limit: 100,
-          created: {
-            gte: Math.floor(effectiveStartDate.getTime() / 1000),
-            lte: Math.floor(effectiveEndDate.getTime() / 1000)
-          }
-        });
+        const refundList = await Promise.race([
+          stripe.refunds.list({
+            limit: 100,
+            created: {
+              gte: Math.floor(effectiveStartDate.getTime() / 1000),
+              lte: Math.floor(effectiveEndDate.getTime() / 1000)
+            }
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("stripe_refund_list_timeout")), REFUND_LIST_MS)
+          )
+        ]);
         refunds = refundList.data.reduce((sum, refund) => sum + (refund.amount || 0) / 100, 0);
       } catch (refundErr) {
         console.warn("Stripe refund sync warning:", refundErr.message);
@@ -471,8 +481,6 @@ router.get("/", requireAdmin, async (req, res) => {
     // ================================
     // 4. PER-USER METRICS (OPTIMIZED)
     // ================================
-    // Limit queries to prevent blocking
-    const users = await User.find().limit(1000).lean();
     const subscriptions = await Subscription.find().limit(1000).lean();
     const activeSubscriptions = subscriptions.filter(s => s.status === "active");
     
@@ -494,9 +502,7 @@ router.get("/", requireAdmin, async (req, res) => {
     const receivedSms = allSms.filter(s => s.direction === "inbound");
     const failedSms = allSms.filter(s => s.status === "failed");
 
-    clearTimeout(timeout); // Clear timeout on success
-    
-    res.json({
+    finish(200, {
       success: true,
       filter,
       period: {
@@ -580,9 +586,8 @@ router.get("/", requireAdmin, async (req, res) => {
       stripeSync
     });
   } catch (err) {
-    clearTimeout(timeout); // Clear timeout on error
     console.error("Enhanced analytics error:", err);
-    res.status(500).json({
+    finish(500, {
       success: false,
       error: err.message || "Failed to fetch enhanced analytics"
     });

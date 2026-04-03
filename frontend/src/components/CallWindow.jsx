@@ -63,6 +63,8 @@ const MinimizeIcon = () => (
 // Get call status text
 const getStatusText = (callState) => {
   switch (callState) {
+    case CALL_STATES.DIALING:
+      return 'Dialing...';
     case CALL_STATES.CONNECTING:
       return 'Connecting...';
     case CALL_STATES.RINGING:
@@ -234,8 +236,11 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
               {getInitials(remoteNumber)}
             </div>
           )}
-          {/* Pulsing ring when ringing/connecting/incoming */}
-          {(callState === CALL_STATES.RINGING || callState === CALL_STATES.CONNECTING || isIncoming) && (
+          {/* Pulsing ring when dialing/ringing/connecting/incoming */}
+          {(callState === CALL_STATES.DIALING ||
+            callState === CALL_STATES.RINGING ||
+            callState === CALL_STATES.CONNECTING ||
+            isIncoming) && (
             <div className="absolute inset-0 rounded-full border-4 border-emerald-400 animate-ping opacity-30" />
           )}
         </div>
