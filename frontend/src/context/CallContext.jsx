@@ -335,6 +335,15 @@ export const CallProvider = ({ children }) => {
     }
   }, []);
 
+  /** Clear outbound session bookkeeping (retry / early-fail paths; safe no-op extras after handleCallEnd). */
+  const resetOutboundRetryState = useCallback(() => {
+    outboundDialActiveRef.current = false;
+    outboundRingbackStartedRef.current = false;
+    outboundCallRecordIdRef.current = null;
+    outboundNewCallLegRef.current = null;
+    outboundLegArrivalMsRef.current = {};
+  }, []);
+
   // Handle call end
   const handleCallEnd = useCallback(
     async ({ preserveError = false, finalStatus = "completed" } = {}) => {
