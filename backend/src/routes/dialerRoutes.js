@@ -1,7 +1,6 @@
 import express from "express";
 import axios from "axios";
 import { getTelnyx } from "../../config/telnyx.js";
-import axios from "axios";
 import Call from "../models/Call.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import { validateCallCountryLock } from "../middleware/countryLock.js";
@@ -26,7 +25,7 @@ const CALL_STATUSES = new Set([
  */
 router.post("/call", validateCallCountryLock, async (req, res) => {
   try {
-    const { to, useWebrtc, callControlId } = req.body;
+    const { to, useWebrtc, callControlId: webrtcCallControlId } = req.body;
 
     if (!to) {
       return res.status(400).json({ error: "Destination number required" });
@@ -94,7 +93,7 @@ router.post("/call", validateCallCountryLock, async (req, res) => {
         toNumber: to,
         direction: "outbound",
         status: "dialing",
-        telnyxCallControlId: callControlId || null
+        telnyxCallControlId: webrtcCallControlId || null
       });
 
       return res.json({

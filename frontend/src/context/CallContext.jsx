@@ -725,7 +725,7 @@ export const CallProvider = ({ children }) => {
         }
       }
     }
-  }, [startDurationTimer, handleCallEnd, getCallDirection, getCallHangupCause, getCallUniqueId]); // Removed applyAudioRouting - use ref instead
+  }, [startDurationTimer, handleCallEnd]);
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
@@ -1054,7 +1054,7 @@ export const CallProvider = ({ children }) => {
     })();
 
     return initializationPromiseRef.current;
-  }, [getCallDirection]); // Stable - use refs for mutable callbacks/state
+  }, []);
 
   // Save call record to database
   const saveCallRecord = useCallback(async (toNumber, fromNumber, direction = 'outbound', status = 'dialing') => {
