@@ -95,16 +95,21 @@ export async function recordCallCost(callId, userId, callData) {
     const pricing = await getPricingFromDB("voice", destination, direction);
 
     // Calculate cost
-    const totalCost = totalSeconds * pricing.unitPriceUsd;
+    const unitPriceUsd = Number(pricing.unitPriceUsd);
+    if (!Number.isFinite(unitPriceUsd) || unitPriceUsd < 0) {
+      console.warn(
+        `recordCallCost: invalid unitPriceUsd for call ${callId}, skipping ledger row`
+      );
+      return { success: false, error: "Invalid unit price" };
+    }
+    const totalCost = totalSeconds * unitPriceUsd;
 
-    // Create cost record
-    const costRecord = await TelnyxCost.create({
+    const costPayload = {
       userId,
       resourceType: "call",
       resourceId: callId,
-      pricingRefId: pricing.pricingRefId,
       units: totalSeconds,
-      unitPriceUsd: pricing.unitPriceUsd,
+      unitPriceUsd,
       totalCostUsd: totalCost,
       destination,
       direction,
@@ -112,7 +117,12 @@ export async function recordCallCost(callId, userId, callData) {
       answeredSeconds,
       billedSeconds: totalSeconds,
       eventTimestamp: callStartTime || new Date()
-    });
+    };
+    if (pricing.pricingRefId != null) {
+      costPayload.pricingRefId = pricing.pricingRefId;
+    }
+
+    const costRecord = await TelnyxCost.create(costPayload);
 
     return {
       success: true,
@@ -141,22 +151,28 @@ export async function recordSmsCost(smsId, userId, smsData) {
     // Get pricing
     const pricing = await getPricingFromDB("sms", destination, direction);
 
-    // Calculate cost (1 message = 1 unit)
-    const totalCost = pricing.unitPriceUsd;
+    const unitPriceUsd = Number(pricing.unitPriceUsd);
+    if (!Number.isFinite(unitPriceUsd) || unitPriceUsd < 0) {
+      return { success: false, error: "Invalid unit price" };
+    }
+    const totalCost = unitPriceUsd;
 
-    // Create cost record
-    const costRecord = await TelnyxCost.create({
+    const smsPayload = {
       userId,
       resourceType: "sms",
       resourceId: smsId,
-      pricingRefId: pricing.pricingRefId,
       units: 1,
-      unitPriceUsd: pricing.unitPriceUsd,
+      unitPriceUsd,
       totalCostUsd: totalCost,
       destination,
       direction,
       eventTimestamp: timestamp || new Date()
-    });
+    };
+    if (pricing.pricingRefId != null) {
+      smsPayload.pricingRefId = pricing.pricingRefId;
+    }
+
+    const costRecord = await TelnyxCost.create(smsPayload);
 
     return {
       success: true,
@@ -183,8 +199,10 @@ export async function recordNumberDailyCost(numberId, userId, numberData) {
     // Get pricing
     const pricing = await getPricingFromDB("number", country, null, type);
 
-    // Daily cost
-    const dailyCost = pricing.unitPriceUsd;
+    const dailyCost = Number(pricing.unitPriceUsd);
+    if (!Number.isFinite(dailyCost) || dailyCost < 0) {
+      return { success: false, error: "Invalid unit price" };
+    }
 
     // Check if cost already recorded for this date
     const startOfDay = new Date(date);
@@ -206,18 +224,21 @@ export async function recordNumberDailyCost(numberId, userId, numberData) {
       return { success: true, costRecordId: existing._id, totalCost: existing.totalCostUsd };
     }
 
-    // Create cost record
-    const costRecord = await TelnyxCost.create({
+    const numberPayload = {
       userId,
       resourceType: "number",
       resourceId: numberId,
-      pricingRefId: pricing.pricingRefId,
       units: 1, // 1 day
       unitPriceUsd: dailyCost,
       totalCostUsd: dailyCost,
       destination: country,
       eventTimestamp: startOfDay
-    });
+    };
+    if (pricing.pricingRefId != null) {
+      numberPayload.pricingRefId = pricing.pricingRefId;
+    }
+
+    const costRecord = await TelnyxCost.create(numberPayload);
 
     return {
       success: true,

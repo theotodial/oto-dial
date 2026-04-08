@@ -27,11 +27,12 @@ const telnyxCostSchema = new mongoose.Schema(
       index: true
     },
 
-    // Reference to pricing used
+    // Reference to TelnyxPricing row when pricing came from DB; omitted when using config fallback
     pricingRefId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "TelnyxPricing",
-      required: true
+      required: false,
+      default: undefined
     },
 
     // Billing details
