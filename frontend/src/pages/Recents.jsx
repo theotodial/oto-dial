@@ -178,17 +178,21 @@ function Recents() {
   const [subscriptionActive, setSubscriptionActive] = useState(false);
   const [dialCountryCode, setDialCountryCode] = useState('+1');
   const [showDialCountryDropdown, setShowDialCountryDropdown] = useState(false);
-  
+  /** True while outbound makeCall is in flight (before isInCall may update). */
+  const [calling, setCalling] = useState(false);
+  const isCallBusy = calling || isInCall;
+
   // Mobile navigation state
   const [mobileTab, setMobileTab] = useState('chats'); // 'chats', 'recents', 'dialer'
 
-  const [isXlViewport, setIsXlViewport] = useState(() =>
-    typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches
+  /** Tailwind lg (1024px): 3-column Voice layout + in-column call UI (must match GlobalCallOverlay /recents skip). */
+  const [isLgDesktopVoice, setIsLgDesktopVoice] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
   );
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 1280px)');
-    setIsXlViewport(mq.matches);
-    const fn = () => setIsXlViewport(mq.matches);
+    const mq = window.matchMedia('(min-width: 1024px)');
+    setIsLgDesktopVoice(mq.matches);
+    const fn = () => setIsLgDesktopVoice(mq.matches);
     mq.addEventListener('change', fn);
     return () => mq.removeEventListener('change', fn);
   }, []);
@@ -198,7 +202,7 @@ function Recents() {
     const IDLE = callContext?.CALL_STATES?.IDLE ?? 'idle';
     const idle = (callContext?.callState ?? IDLE) === IDLE;
     if (!idle && callIdleRef.current) {
-      if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1279px)').matches) {
+      if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches) {
         setMobileTab('dialer');
       }
     }
@@ -806,20 +810,15 @@ function Recents() {
     const callerId = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
 
     try {
+      setCalling(true);
       const success = await webrtcMakeCall(targetNumber, callerId);
       if (!isMountedRef.current) return;
-      
-      // Clear phone number on success
+
       if (success && !number) {
         setPhoneNumber('');
       }
-      
-      // Always reset calling state - GlobalCallOverlay handles the call UI now
-      setCalling(false);
-      
-      // Only show error if call truly failed (success is false AND we're not in a call)
+
       if (!success && !isInCall) {
-        // Wait a moment to check if call actually started
         setTimeout(() => {
           if (!callContext?.isInCall) {
             // Error is already in context
@@ -827,8 +826,9 @@ function Recents() {
         }, 500);
       }
     } catch (err) {
-      setCalling(false);
       alert(err.message || 'Failed to place call');
+    } finally {
+      if (isMountedRef.current) setCalling(false);
     }
   };
 
@@ -1071,7 +1071,7 @@ function Recents() {
 
   // Mobile Bottom Navigation Component
   const MobileBottomNav = () => (
-    <div className="fixed bottom-0 left-0 right-0 safe-area-bottom z-40">
+    <div className="fixed bottom-0 left-0 right-0 safe-area-bottom z-40 lg:hidden">
       <div className="mx-3 mb-3 rounded-3xl bg-white/95 dark:bg-slate-900/95 border border-gray-200/80 dark:border-slate-700/80 shadow-[0_10px_30px_rgba(15,23,42,0.35)] backdrop-blur-xl">
         <div className="grid grid-cols-3 h-16 px-4">
           {/* Chats */}
@@ -1372,8 +1372,8 @@ function Recents() {
           </div>
         </div>
 
-        {/* Center Panel - Inline Chat (same as mobile) or Empty state */}
-        <div className="hidden lg:flex flex-1 flex-col bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 min-w-0 min-h-0">
+        {/* Center Panel - Inline Chat or empty (desktop lg+) */}
+        <div className="flex flex-1 flex-col bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 min-w-0 min-h-0">
           {selectedChat ? (
             <>
               <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between flex-shrink-0 gap-2">
@@ -1474,10 +1474,10 @@ function Recents() {
           )}
         </div>
 
-        {/* Right panel: dialer + in-column call UI (xl+); GlobalCallOverlay skips /recents at this width */}
-        <div className="hidden xl:flex w-80 flex-col bg-gray-50 dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 min-h-0 overflow-hidden relative">
+        {/* Right panel: dialer + in-column call UI (lg+); GlobalCallOverlay skips /recents at this width */}
+        <div className="flex w-72 flex-shrink-0 flex-col bg-gray-50 dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 min-h-0 overflow-hidden relative xl:w-80">
             <>
-          {isXlViewport && <ActiveCallChrome isDesktop dockMode />}
+          {isLgDesktopVoice && <ActiveCallChrome isDesktop dockMode />}
           {(!subscriptionActive || userNumbers.length === 0) && (
             <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 flex-shrink-0">
               <p className="text-xs text-amber-700 dark:text-amber-300">
@@ -1632,8 +1632,8 @@ function Recents() {
         </div>
       </div>
 
-      {/* Unified View (mobile layout for all sizes) */}
-      <div className="flex flex-col h-full">
+      {/* Mobile / tablet: single-column Voice (hidden on lg+ where 3-panel layout is used) */}
+      <div className="flex flex-1 min-h-0 flex-col lg:hidden">
         {/* Mobile Header - Hidden on dialer tab */}
         {mobileTab !== 'dialer' && (
           <div className="px-4 py-2 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between sticky top-0 z-20 h-14">
@@ -2181,7 +2181,7 @@ function Recents() {
                                  disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.96]
                                  shadow-sm hover:shadow-md"
                     >
-                      {isPlacingCall ? (
+                      {calling ? (
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                       ) : (
                         <PhoneIcon className="w-4 h-4" />
