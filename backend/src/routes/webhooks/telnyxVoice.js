@@ -1,182 +1,437 @@
 import express from "express";
+import mongoose from "mongoose";
 import Call from "../../models/Call.js";
 import Subscription from "../../models/Subscription.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import { recordCallCost } from "../../services/telnyxCostCalculator.js";
 import { normalizeCallPartyNumber } from "../../utils/callLifecycle.js";
+import {
+  findCallForTelnyxEvent,
+  mergeTelnyxCallIdentifiers,
+} from "../../utils/telnyxWebhookCallResolver.js";
+import {
+  isUnlimitedSubscription,
+  incrementUnlimitedUsageAfterSuccess,
+} from "../../services/unlimitedUsageService.js";
+import { TERMINAL_STATUSES, isTerminalStatus } from "../../utils/callStateMachine.js";
+import {
+  bridgeParkedWebRtcToPstn,
+  dialPstnForParkedWebRtcLeg,
+  isParkOutboundEnabled,
+  isWebhookParkedOutboundInitiated,
+  parseOtdFromTelnyxClientState,
+} from "../../services/telnyxParkedOutboundService.js";
 
 const router = express.Router();
 
 const WEBHOOK_PENDING_WINDOW_MS = 120000;
 
+const HANDLED_EVENTS = new Set([
+  "call.initiated",
+  "call.ringing",
+  "call.answered",
+  "call.bridged",
+  "call.hangup",
+]);
+
+function isOutboundWebRtcCall(doc) {
+  return (
+    doc &&
+    doc.direction === "outbound" &&
+    (doc.source === "webrtc" || doc.source == null || doc.source === "")
+  );
+}
+
 /**
- * TELNYX VOICE WEBHOOK
- * Handles call.initiated, call.answered, call.hangup events
- * Counts usage ONLY here (single source of truth)
+ * TELNYX VOICE WEBHOOK — inbound; outbound WebRTC is mostly client-driven, except
+ * parked outbound (call_parking_enabled): dial PSTN from agent leg then bridge on answer.
  */
-// Handler at root since we're mounted at /api/webhooks/telnyx/voice
 router.post("/", async (req, res) => {
   try {
+    const rawStr = JSON.stringify(req.body ?? {}, null, 2);
+    console.log(
+      "[WEBHOOK RECEIVED] raw",
+      rawStr.length > 64000 ? `${rawStr.slice(0, 64000)}…(truncated)` : rawStr
+    );
+
     const payload = req.body?.data;
-    const evt = payload?.event_type;
-    const ccId = payload?.payload?.call_control_id;
-    console.log("[CALL FLOW] WEBHOOK RECEIVED", {
-      event_type: evt,
-      call_control_id: ccId,
-    });
     if (!payload) {
       return res.sendStatus(200);
     }
 
     const event = payload.event_type;
-    const callControlId = payload.payload?.call_control_id;
     const callPayload = payload.payload || {};
+    const callControlId =
+      callPayload.call_control_id || payload.call_control_id || null;
+    const callSessionId = callPayload.call_session_id || null;
 
-    if (!callControlId) {
+    console.log("[WEBHOOK RECEIVED]", {
+      event_type: event,
+      call_control_id: callControlId,
+      call_session_id: callSessionId,
+    });
+
+    if (!HANDLED_EVENTS.has(event)) {
+      return res.sendStatus(200);
+    }
+
+    if (!callControlId && !callSessionId) {
+      console.warn(
+        "[WEBHOOK RECEIVED] no call_control_id or call_session_id; ack only"
+      );
       return res.sendStatus(200);
     }
 
     // ===============================
-    // CALL INITIATED (INBOUND OR OUTBOUND)
-    // Track initiation time for billing ring time
+    // call.initiated — INBOUND; outbound parked WebRTC → Dial PSTN (Call Control)
     // ===============================
     if (event === "call.initiated") {
       const toNumber = callPayload.to;
       const fromNumber = callPayload.from;
-      const isIncoming = callPayload.direction === "incoming";
-      const toNorm = normalizeCallPartyNumber(toNumber);
+      const isIncoming =
+        callPayload.direction === "incoming" ||
+        callPayload.direction === "inbound";
 
-      // For inbound calls, find user who owns the receiving number
-      // For outbound calls, find user who owns the calling number
-      const searchNumber = isIncoming ? toNumber : fromNumber;
-      
+      if (
+        !isIncoming &&
+        isParkOutboundEnabled() &&
+        callControlId &&
+        isWebhookParkedOutboundInitiated(callPayload)
+      ) {
+        const otd = parseOtdFromTelnyxClientState(callPayload.client_state);
+        const apiKey = process.env.TELNYX_API_KEY?.trim();
+        const connId = process.env.TELNYX_CONNECTION_ID?.trim();
+        if (
+          otd &&
+          mongoose.Types.ObjectId.isValid(otd) &&
+          apiKey &&
+          connId
+        ) {
+          const claimed = await Call.findOneAndUpdate(
+            {
+              _id: otd,
+              direction: "outbound",
+              webrtcParkDialAttempted: { $ne: true },
+            },
+            { $set: { webrtcParkDialAttempted: true } },
+            { new: true }
+          );
+          if (claimed) {
+            try {
+              await mergeTelnyxCallIdentifiers(claimed, {
+                callControlId,
+                callSessionId,
+              });
+              const to =
+                normalizeCallPartyNumber(callPayload.to) ||
+                normalizeCallPartyNumber(claimed.phoneNumber) ||
+                normalizeCallPartyNumber(claimed.toNumber);
+              const from =
+                normalizeCallPartyNumber(callPayload.from) ||
+                normalizeCallPartyNumber(claimed.fromNumber);
+              if (!to || !from) {
+                throw new Error("park outbound dial missing to/from");
+              }
+              const base = process.env.BACKEND_URL?.replace(/\/$/, "");
+              const wh = base ? `${base}/api/webhooks/telnyx/voice` : undefined;
+              const dial = await dialPstnForParkedWebRtcLeg({
+                agentCallControlId: callControlId,
+                to,
+                from,
+                connectionId: connId,
+                apiKey,
+                webhookUrl: wh,
+              });
+              if (!dial.pstnCallControlId) {
+                throw new Error("Telnyx dial returned no PSTN call_control_id");
+              }
+              await Call.updateOne(
+                { _id: claimed._id },
+                {
+                  $set: {
+                    webrtcParkPstnCallControlId: dial.pstnCallControlId,
+                  },
+                }
+              );
+              console.log("[PARK OUTBOUND] Dialed PSTN from parked WebRTC leg", {
+                otd,
+                agentCc: callControlId,
+                pstnCc: dial.pstnCallControlId,
+              });
+            } catch (parkErr) {
+              await Call.updateOne(
+                { _id: otd },
+                { $set: { webrtcParkDialAttempted: false } }
+              );
+              console.error(
+                "[PARK OUTBOUND] dial failed:",
+                parkErr?.response?.data || parkErr?.message || parkErr
+              );
+            }
+          }
+        }
+        return res.sendStatus(200);
+      }
+
+      if (!isIncoming) {
+        console.log(
+          "[WEBHOOK SKIP] outbound call.initiated — WebRTC client owns lifecycle"
+        );
+        return res.sendStatus(200);
+      }
+
+      const searchNumber = toNumber;
+
       const phoneNumber = await PhoneNumber.findOne({
         phoneNumber: searchNumber,
-        status: "active"
+        status: "active",
       });
 
-      if (phoneNumber) {
-        let callRecord = await Call.findOne({
-          telnyxCallControlId: callControlId,
-        });
-        let mergedOutboundPending = false;
-
-        if (!callRecord && !isIncoming) {
-          const since = new Date(Date.now() - WEBHOOK_PENDING_WINDOW_MS);
-          const numberMatch = [{ toNumber: toNorm }, { phoneNumber: toNorm }];
-          if (toNumber && toNumber !== toNorm) {
-            numberMatch.push({ toNumber }, { phoneNumber: toNumber });
-          }
-          const pending = await Call.findOne({
-            user: phoneNumber.userId,
-            direction: "outbound",
-            status: { $in: ["queued", "dialing", "ringing"] },
-            updatedAt: { $gte: since },
-            $and: [
-              {
-                $or: [
-                  { telnyxCallControlId: null },
-                  { telnyxCallControlId: "" },
-                  { telnyxCallControlId: { $exists: false } },
-                ],
-              },
-              { $or: numberMatch },
-            ],
-          }).sort({ createdAt: -1 });
-
-          if (pending) {
-            pending.telnyxCallControlId = callControlId;
-            pending.fromNumber = fromNumber || pending.fromNumber;
-            pending.toNumber = toNumber || pending.toNumber;
-            if (toNorm) pending.phoneNumber = toNorm;
-            pending.status = "ringing";
-            pending.callInitiatedAt = new Date();
-            await pending.save();
-            callRecord = pending;
-            mergedOutboundPending = true;
-            console.log("[CALL FLOW] WEBHOOK merged call.initiated into pending WebRTC row", {
-              callId: String(callRecord._id),
-              call_control_id: callControlId,
-              to: toNorm,
-            });
-          }
-        }
-
-        if (!callRecord) {
-          callRecord = await Call.create({
-            telnyxCallControlId: callControlId,
-            user: phoneNumber.userId,
-            phoneNumber: isIncoming ? fromNumber : toNumber,
-            fromNumber: fromNumber,
-            toNumber: toNumber,
-            direction: isIncoming ? "inbound" : "outbound",
-            status: "ringing",
-            callInitiatedAt: new Date(),
-          });
-          console.log(
-            `[CALL FLOW] CALL CREATED (webhook) ${isIncoming ? "Inbound" : "Outbound"} ${fromNumber} -> ${toNumber} userId=${phoneNumber.userId} callId=${callRecord._id}`
-          );
-        } else if (!mergedOutboundPending) {
-          callRecord.callInitiatedAt = new Date();
-          if (["queued", "dialing"].includes(callRecord.status)) {
-            callRecord.status = "ringing";
-          }
-          await callRecord.save();
-          console.log("[CALL FLOW] CALL STATE UPDATED (webhook call.initiated)", {
-            callId: String(callRecord._id),
-            call_control_id: callControlId,
-          });
-        }
-        
-        // Send Web Push notification for incoming call (when app is closed or tab in background)
-        if (isIncoming && phoneNumber.userId) {
-          try {
-            const { sendPushToUser } = await import("../../services/pushService.js");
-            await sendPushToUser(phoneNumber.userId, {
-              title: "Incoming call",
-              body: `Call from ${fromNumber}`,
-              data: { url: "/recents", type: "call", from: fromNumber, callId: callRecord._id.toString() }
-            });
-          } catch (pushErr) {
-            console.warn("Push notification error for incoming call:", pushErr?.message);
-          }
-        }
-      } else {
-        console.warn(`⚠️ Call ${isIncoming ? 'to' : 'from'} ${searchNumber} but no active phone number found in database`);
+      if (!phoneNumber) {
+        console.warn(
+          `[WEBHOOK RECEIVED] call.initiated — no active phone for to ${searchNumber}`
+        );
+        return res.sendStatus(200);
       }
+
+      const matchOr = [];
+      if (callSessionId) matchOr.push({ telnyxCallSessionId: callSessionId });
+      if (callControlId) {
+        matchOr.push({ telnyxCallControlId: callControlId });
+        matchOr.push({ telnyxLegControlIds: callControlId });
+      }
+
+      let callRecord = matchOr.length
+        ? await Call.findOne({ $or: matchOr })
+        : null;
+
+      if (!callRecord) {
+        callRecord = await Call.create({
+          user: phoneNumber.userId,
+          phoneNumber: fromNumber,
+          fromNumber: fromNumber,
+          toNumber: toNumber,
+          direction: "inbound",
+          source: "webrtc",
+          status: "dialing",
+          callInitiatedAt: new Date(),
+        });
+        await mergeTelnyxCallIdentifiers(callRecord, {
+          callControlId,
+          callSessionId,
+        });
+        callRecord = await Call.findById(callRecord._id);
+        console.log("[CALL CREATED] webhook inbound call.initiated", {
+          callId: String(callRecord._id),
+          userId: String(phoneNumber.userId),
+        });
+      } else {
+        if (isTerminalStatus(callRecord.status)) {
+          console.log("[WEBHOOK RECEIVED] call.initiated ignored (terminal)", {
+            callId: String(callRecord._id),
+          });
+          return res.sendStatus(200);
+        }
+        await mergeTelnyxCallIdentifiers(callRecord, {
+          callControlId,
+          callSessionId,
+        });
+        callRecord = await Call.findById(callRecord._id);
+        callRecord.callInitiatedAt = callRecord.callInitiatedAt || new Date();
+        if (["queued", "initiated"].includes(callRecord.status)) {
+          callRecord.status = "dialing";
+        }
+        await callRecord.save();
+      }
+
+      if (phoneNumber.userId && callRecord && !isTerminalStatus(callRecord.status)) {
+        try {
+          const { sendPushToUser } = await import("../../services/pushService.js");
+          await sendPushToUser(phoneNumber.userId, {
+            title: "Incoming call",
+            body: `Call from ${fromNumber}`,
+            data: {
+              url: "/recents",
+              type: "call",
+              from: fromNumber,
+              callId: callRecord._id.toString(),
+            },
+          });
+        } catch (pushErr) {
+          console.warn("Push notification error for incoming call:", pushErr?.message);
+        }
+      }
+
+      return res.sendStatus(200);
     }
 
     // ===============================
-    // CALL ANSWERED
+    // call.ringing — only dialing → ringing
     // ===============================
-    if (event === "call.answered") {
+    if (event === "call.ringing") {
+      let call = await findCallForTelnyxEvent({ callControlId, callPayload });
+      if (!call) {
+        console.warn("[WEBHOOK RECEIVED] call.ringing — no call row matched", {
+          call_control_id: callControlId,
+          call_session_id: callSessionId,
+        });
+        return res.sendStatus(200);
+      }
+      if (isOutboundWebRtcCall(call)) {
+        console.log("[WEBHOOK SKIP] outbound WebRTC call.ringing (client SDK)", {
+          callId: String(call._id),
+        });
+        return res.sendStatus(200);
+      }
+      await mergeTelnyxCallIdentifiers(call, {
+        callControlId,
+        callSessionId: callPayload.call_session_id,
+      });
+      const fresh = await Call.findById(call._id);
+      if (isTerminalStatus(fresh.status)) {
+        console.log("[WEBHOOK RECEIVED] call.ringing ignored (terminal)", {
+          callId: String(fresh._id),
+        });
+        return res.sendStatus(200);
+      }
+      const upd = await Call.updateOne(
+        { _id: fresh._id, status: "dialing" },
+        { $set: { status: "ringing" } }
+      );
+      if (upd.modifiedCount) {
+        console.log("[STATE TRANSITION] dialing → ringing", {
+          callId: String(fresh._id),
+        });
+      } else {
+        console.log("[WEBHOOK RECEIVED] call.ringing no-op", {
+          callId: String(fresh._id),
+          status: fresh.status,
+        });
+      }
+      return res.sendStatus(200);
+    }
+
+    // ===============================
+    // call.answered / call.bridged → in-progress
+    // ===============================
+    if (event === "call.answered" || event === "call.bridged") {
+      const apiKeyAns = process.env.TELNYX_API_KEY?.trim();
+      if (
+        event === "call.answered" &&
+        isParkOutboundEnabled() &&
+        apiKeyAns &&
+        callControlId
+      ) {
+        const parkedAns = await Call.findOne({
+          webrtcParkPstnCallControlId: callControlId,
+          webrtcParkBridgeAttempted: { $ne: true },
+          telnyxCallControlId: { $exists: true, $nin: [null, ""] },
+        });
+        if (parkedAns?.telnyxCallControlId) {
+          try {
+            await bridgeParkedWebRtcToPstn({
+              agentCallControlId: parkedAns.telnyxCallControlId,
+              pstnCallControlId: callControlId,
+              apiKey: apiKeyAns,
+            });
+            await Call.updateOne(
+              { _id: parkedAns._id },
+              { $set: { webrtcParkBridgeAttempted: true } }
+            );
+            console.log("[PARK OUTBOUND] Bridged WebRTC leg ↔ PSTN", {
+              callId: String(parkedAns._id),
+            });
+          } catch (brErr) {
+            console.error(
+              "[PARK OUTBOUND] bridge failed:",
+              brErr?.response?.data || brErr?.message || brErr
+            );
+          }
+          return res.sendStatus(200);
+        }
+      }
+
+      let call = await findCallForTelnyxEvent({ callControlId, callPayload });
+      if (!call) {
+        console.warn(`[WEBHOOK RECEIVED] ${event} — no call row matched`, {
+          call_control_id: callControlId,
+          call_session_id: callSessionId,
+        });
+        return res.sendStatus(200);
+      }
+      if (isOutboundWebRtcCall(call)) {
+        console.log(`[WEBHOOK SKIP] outbound WebRTC ${event} (client SDK)`, {
+          callId: String(call._id),
+        });
+        return res.sendStatus(200);
+      }
+      await mergeTelnyxCallIdentifiers(call, {
+        callControlId,
+        callSessionId: callPayload.call_session_id,
+      });
+      const fresh = await Call.findById(call._id);
+      if (isTerminalStatus(fresh.status)) {
+        console.log(`[WEBHOOK RECEIVED] ${event} ignored (terminal)`, {
+          callId: String(fresh._id),
+        });
+        return res.sendStatus(200);
+      }
+
+      const set = { status: "in-progress" };
+      if (!fresh.callStartedAt) {
+        set.callStartedAt = new Date();
+      }
       const updated = await Call.findOneAndUpdate(
-        { telnyxCallControlId: callControlId },
         {
-          status: "in-progress",
-          callStartedAt: new Date(),
+          _id: fresh._id,
+          status: { $in: ["queued", "initiated", "dialing", "ringing", "answered"] },
         },
+        { $set: set },
         { new: true }
       );
       if (updated) {
-        console.log("[CALL FLOW] CALL STATE UPDATED (webhook call.answered)", {
+        console.log(`[STATE TRANSITION] → in-progress (${event})`, {
           callId: String(updated._id),
-          call_control_id: callControlId,
+        });
+      } else {
+        console.log(`[WEBHOOK RECEIVED] ${event} no-op`, {
+          callId: String(fresh._id),
+          status: fresh.status,
         });
       }
+      return res.sendStatus(200);
     }
 
     // ===============================
-    // CALL HANGUP
-    // CRITICAL: Deduct usage for ALL calls, including unanswered/ringing
-    // Telnyx bills for ring time, so we must deduct usage for ring time too
+    // call.hangup — finalize (+ usage)
     // ===============================
     if (event === "call.hangup") {
-      const call = await Call.findOne({
-        telnyxCallControlId: callControlId,
-      });
-
+      let call = await findCallForTelnyxEvent({ callControlId, callPayload });
       if (!call) {
+        console.warn("[WEBHOOK RECEIVED] hangup — no call row matched", {
+          call_control_id: callControlId,
+        });
+        return res.sendStatus(200);
+      }
+
+      if (isOutboundWebRtcCall(call)) {
+        console.log("[WEBHOOK SKIP] outbound WebRTC call.hangup (client SDK + PATCH)", {
+          callId: String(call._id),
+        });
+        return res.sendStatus(200);
+      }
+
+      await mergeTelnyxCallIdentifiers(call, {
+        callControlId,
+        callSessionId: callPayload.call_session_id,
+      });
+      call = await Call.findById(call._id);
+
+      if (TERMINAL_STATUSES.includes(call.status)) {
+        console.log("[WEBHOOK RECEIVED] hangup ignored (already terminal)", {
+          callId: String(call._id),
+          status: call.status,
+        });
         return res.sendStatus(200);
       }
 
@@ -185,72 +440,67 @@ router.post("/", async (req, res) => {
       let billableSeconds = 0;
       let cost = 0;
 
-      // PRIORITY 1: Use Telnyx-provided billable_time or duration_seconds (most accurate)
-      // Telnyx webhook provides billable_time in seconds for what they actually bill
       if (callPayload.billable_time !== undefined) {
         billableSeconds = Number(callPayload.billable_time) || 0;
         durationSeconds = billableSeconds;
-        console.log(`📞 Telnyx billable_time: ${billableSeconds} seconds`);
+        console.log(`[CALL ENDED] Telnyx billable_time: ${billableSeconds}s`);
       } else if (callPayload.duration_seconds !== undefined) {
         durationSeconds = Number(callPayload.duration_seconds) || 0;
         billableSeconds = durationSeconds;
-        console.log(`📞 Telnyx duration_seconds: ${durationSeconds} seconds`);
-      } 
-      // PRIORITY 2: Calculate from call initiation to hangup (includes ring time)
-      else if (call.callInitiatedAt) {
+        console.log(`[CALL ENDED] Telnyx duration_seconds: ${durationSeconds}s`);
+      } else if (call.callInitiatedAt) {
         const totalSeconds = Math.floor((endedAt - call.callInitiatedAt) / 1000);
         durationSeconds = totalSeconds;
-        billableSeconds = totalSeconds; // Telnyx bills for ring time
-        console.log(`📞 Calculated duration from initiation: ${durationSeconds} seconds (includes ring time)`);
-      }
-      // PRIORITY 3: Fallback to answered time (if call was answered)
-      else if (call.callStartedAt) {
+        billableSeconds = totalSeconds;
+        console.log(`[CALL ENDED] duration from initiation: ${durationSeconds}s`);
+      } else if (call.callStartedAt) {
         durationSeconds = Math.floor((endedAt - call.callStartedAt) / 1000);
         billableSeconds = durationSeconds;
-        console.log(`📞 Calculated duration from answer: ${durationSeconds} seconds`);
-      }
-      // PRIORITY 4: Minimum 1 second for any call attempt (safety fallback)
-      else {
+        console.log(`[CALL ENDED] duration from answer: ${durationSeconds}s`);
+      } else {
         durationSeconds = 1;
         billableSeconds = 1;
-        console.log(`⚠️ No timestamps found, using minimum 1 second billing`);
+        console.log(`[CALL ENDED] no timestamps — minimum 1s billing`);
       }
 
-      // Calculate cost (for record keeping)
       if (billableSeconds > 0) {
         const rate = Number(process.env.CALL_RATE_PER_MINUTE || 0.0065);
-        const minutes = billableSeconds / 60; // Use exact decimal minutes
+        const minutes = billableSeconds / 60;
         cost = minutes * rate;
       }
 
-      // Determine final status
       const hangupCause = callPayload.hangup_cause || "unknown";
       let finalStatus = "completed";
-      
+
       if (!call.callStartedAt) {
-        // Call was never answered (ringing only)
         finalStatus = call.direction === "inbound" ? "missed" : "failed";
-        console.log(`📞 Call ${finalStatus}: ${billableSeconds} seconds of ring time billed`);
+        console.log(`[CALL ENDED] ${finalStatus} (never answered)`, {
+          callId: String(call._id),
+          billableSeconds,
+        });
       } else {
-        console.log(`📞 Call completed: ${billableSeconds} seconds billed`);
+        console.log(`[CALL ENDED] completed`, {
+          callId: String(call._id),
+          billableSeconds,
+        });
       }
 
-      // Calculate ringing vs answered duration
-      const ringingDuration = call.callStartedAt && call.callInitiatedAt
-        ? Math.floor((call.callStartedAt - call.callInitiatedAt) / 1000)
-        : (call.callInitiatedAt ? Math.floor((endedAt - call.callInitiatedAt) / 1000) : 0);
-      
+      const ringingDuration =
+        call.callStartedAt && call.callInitiatedAt
+          ? Math.floor((call.callStartedAt - call.callInitiatedAt) / 1000)
+          : call.callInitiatedAt
+            ? Math.floor((endedAt - call.callInitiatedAt) / 1000)
+            : 0;
+
       const answeredDuration = call.callStartedAt
         ? Math.floor((endedAt - call.callStartedAt) / 1000)
         : 0;
 
-      // Calculate cost per second
       const costPerSecond = billableSeconds > 0 ? cost / billableSeconds : 0;
 
-      // Update call record with enhanced cost tracking
       call.callEndedAt = endedAt;
       call.durationSeconds = durationSeconds;
-      call.billedMinutes = billableSeconds / 60; // Store as decimal minutes for display
+      call.billedMinutes = billableSeconds / 60;
       call.cost = cost;
       call.costPerSecond = costPerSecond;
       call.ringingDuration = ringingDuration;
@@ -262,13 +512,13 @@ router.post("/", async (req, res) => {
 
       await call.save();
 
-      // RECORD COST IN IMMUTABLE LEDGER (TELNYX COST ENGINE)
-      // This creates a permanent cost record based on admin-defined pricing
       if (billableSeconds > 0 && call.user) {
         try {
-          // Determine destination from phone numbers
-          const destination = call.toNumber?.startsWith('+1') || call.fromNumber?.startsWith('+1') ? 'US' : 'US'; // Default to US, can be enhanced
-          
+          const destination =
+            call.toNumber?.startsWith("+1") || call.fromNumber?.startsWith("+1")
+              ? "US"
+              : "US";
+
           const costResult = await recordCallCost(call._id, call.user, {
             telnyxCallId: call.telnyxCallId || callPayload.call_leg_id || callPayload.id,
             from: call.fromNumber,
@@ -280,62 +530,56 @@ router.post("/", async (req, res) => {
             billedSeconds: billableSeconds,
             callStartTime: call.callInitiatedAt || call.callStartedAt,
             callEndTime: endedAt,
-            callStatus: finalStatus
+            callStatus: finalStatus,
           });
 
           if (costResult.success) {
-            console.log(`✅ Recorded call cost in ledger: $${costResult.totalCost.toFixed(6)} (${billableSeconds}s)`);
+            console.log(
+              `✅ Recorded call cost in ledger: $${costResult.totalCost.toFixed(6)} (${billableSeconds}s)`
+            );
           } else {
             console.warn(`⚠️ Could not record call cost: ${costResult.error}`);
           }
         } catch (costErr) {
           console.error(`❌ Error recording call cost:`, costErr);
-          // Don't fail webhook - cost recording is non-blocking
         }
       }
 
-      // SYNC REAL COST FROM TELNYX (CRITICAL)
-      // This replaces hardcoded cost calculation with real Telnyx billing data
       if (call.telnyxCallId) {
         try {
           const { syncCallCost } = await import("../../services/telnyxCostService.js");
           const syncResult = await syncCallCost(call._id.toString(), call.telnyxCallId);
           if (syncResult.success) {
-            console.log(`✅ Synced real Telnyx cost for call ${call.telnyxCallId}: $${call.cost || 0}`);
+            console.log(
+              `✅ Synced real Telnyx cost for call ${call.telnyxCallId}: $${call.cost || 0}`
+            );
           } else {
-            console.warn(`⚠️ Could not sync Telnyx cost for call ${call.telnyxCallId}: ${syncResult.error}`);
+            console.warn(
+              `⚠️ Could not sync Telnyx cost for call ${call.telnyxCallId}: ${syncResult.error}`
+            );
           }
         } catch (costSyncErr) {
           console.error(`❌ Error syncing call cost:`, costSyncErr);
-          // Don't fail the webhook - mark as pending for later sync
           call.costPending = true;
           call.costSyncError = costSyncErr.message;
           await call.save();
         }
       } else {
-        // No Telnyx call ID yet - mark as pending
         call.costPending = true;
         await call.save();
       }
 
-      // ===============================
-      // UPDATE SUBSCRIPTION USAGE
-      // CRITICAL: Deduct usage for ALL calls (answered + unanswered/ringing)
-      // Telnyx bills for ring time, so we must deduct usage for ring time
-      // Deduct usage per SECOND (not per minute, not per call)
-      // minutesUsed field stores SECONDS internally
-      // ===============================
       if (billableSeconds > 0 && call.user) {
         const usageCountLock = await Call.updateOne(
           {
             _id: call._id,
-            usageCountedAt: null
+            usageCountedAt: null,
           },
           {
             $set: {
               usageCountedAt: new Date(),
-              usageCountedSeconds: billableSeconds
-            }
+              usageCountedSeconds: billableSeconds,
+            },
           }
         );
 
@@ -346,10 +590,9 @@ router.post("/", async (req, res) => {
           return res.sendStatus(200);
         }
 
-        // Get subscription before update to log remaining balance
         const subscription = await Subscription.findOne({
           userId: call.user,
-          status: "active"
+          status: "active",
         });
 
         if (subscription) {
@@ -358,7 +601,7 @@ router.post("/", async (req, res) => {
               subscriptionId: subscription._id,
               userId: call.user,
               channel: "voice_hangup",
-              minutesIncrementSeconds: billableSeconds
+              minutesIncrementSeconds: billableSeconds,
             });
 
             if (!usageResult.success && usageResult.limitReached) {
@@ -368,47 +611,60 @@ router.post("/", async (req, res) => {
             }
           } else {
             const secondsUsedBefore = subscription.usage?.minutesUsed || 0;
-            const minutesTotal = (subscription.limits?.minutesTotal || 2500) + (subscription.addons?.minutes || 0);
+            const minutesTotal =
+              (subscription.limits?.minutesTotal || 2500) +
+              (subscription.addons?.minutes || 0);
             const secondsTotal = minutesTotal * 60;
             const secondsRemainingBefore = Math.max(0, secondsTotal - secondsUsedBefore);
             const minutesRemainingBefore = secondsRemainingBefore / 60;
 
-            // Deduct usage
             await Subscription.findOneAndUpdate(
               { userId: call.user, status: "active" },
               {
                 $inc: {
-                  "usage.minutesUsed": billableSeconds // Store seconds in minutesUsed field
-                }
+                  "usage.minutesUsed": billableSeconds,
+                },
               }
             );
 
-            // Calculate remaining after deduction
             const secondsUsedAfter = secondsUsedBefore + billableSeconds;
             const secondsRemainingAfter = Math.max(0, secondsTotal - secondsUsedAfter);
             const minutesRemainingAfter = secondsRemainingAfter / 60;
 
-            // Enhanced logging for debugging and cost tracking
             console.log(`📊 USAGE DEDUCTED:`);
-            console.log(`   Call: ${call.direction} ${call.fromNumber} -> ${call.toNumber}`);
-            console.log(`   Duration: ${billableSeconds} seconds (${(billableSeconds / 60).toFixed(3)} minutes)`);
-            console.log(`   Status: ${finalStatus}${!call.callStartedAt ? ' (unanswered/ringing)' : ''}`);
+            console.log(
+              `   Call: ${call.direction} ${call.fromNumber} -> ${call.toNumber}`
+            );
+            console.log(
+              `   Duration: ${billableSeconds} seconds (${(billableSeconds / 60).toFixed(3)} minutes)`
+            );
+            console.log(
+              `   Status: ${finalStatus}${!call.callStartedAt ? " (unanswered/ringing)" : ""}`
+            );
             console.log(`   User: ${call.user}`);
-            console.log(`   Before: ${secondsUsedBefore}s used, ${minutesRemainingBefore.toFixed(2)} minutes remaining`);
-            console.log(`   After: ${secondsUsedAfter}s used, ${minutesRemainingAfter.toFixed(2)} minutes remaining`);
+            console.log(
+              `   Before: ${secondsUsedBefore}s used, ${minutesRemainingBefore.toFixed(2)} minutes remaining`
+            );
+            console.log(
+              `   After: ${secondsUsedAfter}s used, ${minutesRemainingAfter.toFixed(2)} minutes remaining`
+            );
           }
         } else {
-          console.warn(`⚠️ No active subscription found for user ${call.user} - usage not deducted`);
+          console.warn(
+            `⚠️ No active subscription found for user ${call.user} - usage not deducted`
+          );
         }
       } else if (!call.user) {
         console.warn(`⚠️ Call has no user associated - usage not deducted`);
       }
+
+      return res.sendStatus(200);
     }
 
     return res.sendStatus(200);
   } catch (err) {
     console.error("Telnyx voice webhook error:", err);
-    return res.sendStatus(200); // Never fail webhooks
+    return res.sendStatus(200);
   }
 });
 
