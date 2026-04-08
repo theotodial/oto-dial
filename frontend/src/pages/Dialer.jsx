@@ -92,6 +92,14 @@ function Dialer() {
     setPhoneNumber(prev => prev.slice(0, -1));
   };
 
+  const getLastDialableNumber = useCallback(() => {
+    const recent = (callLogs || []).find((call) => {
+      const value = call?.to_number || call?.toNumber || call?.phoneNumber || '';
+      return String(value).trim() !== '';
+    });
+    return recent?.to_number || recent?.toNumber || recent?.phoneNumber || '';
+  }, [callLogs]);
+
   // Fetch user's numbers, call logs, and subscription
   const fetchData = useCallback(async (isMounted = { current: true }) => {
     try {
@@ -160,10 +168,18 @@ function Dialer() {
 
   // Handle making a call with WebRTC
   const handleCall = async () => {
+    console.log('[CALL FLOW] Call button clicked');
     console.log('📞 Dialer handleCall triggered');
-    console.log('📞 State:', { phoneNumber, subscriptionActive, userNumbersCount: userNumbers.length, isClientReady, isInCall });
-    
-    if (!phoneNumber.trim()) {
+    console.log('📞 State:', {
+      phoneNumber,
+      subscriptionActive,
+      userNumbersCount: userNumbers.length,
+      isClientReady,
+      isInCall,
+    });
+
+    const autoDialNumber = !phoneNumber.trim() ? getLastDialableNumber() : '';
+    if (!phoneNumber.trim() && !autoDialNumber) {
       setError('Please enter a phone number');
       return;
     }
@@ -174,39 +190,49 @@ function Dialer() {
     }
 
     if (!subscriptionActive) {
-      setError('Active subscription required to make calls');
-      return;
+      console.warn(
+        '[CALL FLOW] UI subscription flag is false — still calling makeCall; server will enforce subscription'
+      );
     }
-
     if (userNumbers.length === 0) {
-      setError('You need to purchase a number first');
-      return;
+      console.warn(
+        '[CALL FLOW] No numbers in dialer state — makeCall may fail until /api/numbers loads a caller ID'
+      );
     }
 
     setError('');
     setSuccess('');
 
     // Build final destination number with country code if needed
-    const destination = phoneNumber.trim().startsWith('+')
-      ? phoneNumber.trim()
-      : `${dialCountryCode}${phoneNumber.trim()}`;
+    const rawDestination = autoDialNumber || phoneNumber.trim();
+    const destination = rawDestination.startsWith('+')
+      ? rawDestination
+      : `${dialCountryCode}${rawDestination}`;
 
     // Get caller ID
     const callerId = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
 
+    console.log('[CALL FLOW] Sending request path → makeCall → POST /api/calls', {
+      destinationNumber: destination,
+      callerNumber: callerId,
+    });
     console.log('📞 Dialer: Calling', destination, 'from', callerId);
-    
+
     try {
       const callSuccess = await makeCall(destination, callerId);
+      console.log('[CALL FLOW] makeCall finished', { callSuccess });
       console.log('📞 Dialer: makeCall returned:', callSuccess);
-      
+
       if (callSuccess) {
         setPhoneNumber('');
         setSuccess('Call initiated');
+      } else {
+        console.warn(
+          '[CALL FLOW] makeCall returned false — check CallContext error and console for POST /api/calls'
+        );
       }
-      // Don't show error immediately - the GlobalCallOverlay will show if call is connecting
     } catch (err) {
-      console.error('📞 Dialer: Call exception:', err);
+      console.error('[CALL ERROR FRONTEND] Dialer handleCall:', err?.response || err);
       setError(err.message || 'Failed to place call');
     }
   };
@@ -357,13 +383,13 @@ function Dialer() {
                 onPaste={handlePaste}
                 onKeyDown={(e) => {
                   handleKeyDown(e);
-                  if (e.key === 'Enter' && phoneNumber.trim()) {
+                  if (e.key === 'Enter' && (phoneNumber.trim() || getLastDialableNumber())) {
                     handleCall();
                   }
                 }}
                 placeholder="Enter phone number"
                 className="flex-1 text-xl sm:text-2xl lg:text-3xl font-semibold text-gray-900 dark:text-white min-h-[36px] sm:min-h-[40px] text-center bg-transparent border-none outline-none focus:outline-none placeholder:text-gray-400 dark:placeholder:text-gray-400 placeholder:text-base sm:placeholder:text-lg"
-                disabled={userNumbers.length === 0 || !subscriptionActive}
+                disabled={dialerDisabled}
               />
             </div>
           </div>
@@ -391,7 +417,7 @@ function Dialer() {
                         }
                       }}
                       onTouchEnd={() => pressTimer && clearTimeout(pressTimer)}
-                      disabled={userNumbers.length === 0 || !subscriptionActive}
+                      disabled={dialerDisabled}
                       className="w-full h-full bg-white dark:bg-slate-700 hover:bg-gray-50 dark:hover:bg-slate-600 
                                  rounded-lg sm:rounded-xl border border-gray-200 dark:border-slate-600 transition-all 
                                  active:scale-95 text-gray-900 dark:text-white shadow-sm hover:shadow-md
@@ -426,14 +452,14 @@ function Dialer() {
               </button>
               <button
                 onClick={handleCall}
-                disabled={!phoneNumber.trim() || userNumbers.length === 0 || !subscriptionActive || isInCall}
+                disabled={(!phoneNumber.trim() && !getLastDialableNumber()) || dialerDisabled}
                 className="flex-[2] py-2 sm:py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg
                            flex items-center justify-center gap-2 font-semibold shadow-md
                            disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
                            transition-all active:scale-95 text-sm sm:text-base"
               >
                 <PhoneIcon className="w-4 h-4 sm:w-5 sm:h-5" />
-                <span>Call</span>
+                <span>{phoneNumber.trim() ? 'Call' : 'Autodial'}</span>
               </button>
             </div>
           </div>

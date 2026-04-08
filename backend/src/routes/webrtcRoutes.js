@@ -177,7 +177,9 @@ function buildCredentialOutboundPatchPayload(connection, profileId, dialContext 
     ...existing,
     outbound_voice_profile_id: String(profileId),
   };
-  out.call_parking_enabled = isParkOutboundEnabled();
+  // Prefer direct WebRTC outbound by default. Parked outbound requires a fully working
+  // public webhook bridge and has been the source of pre-ringing production failures.
+  out.call_parking_enabled = false;
 
   if (!dialContext) {
     return { outbound: out };
