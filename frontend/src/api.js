@@ -5,9 +5,8 @@ import axios from "axios";
 // In production: uses VITE_API_URL if set, otherwise relative URLs
 const baseURL = import.meta.env.VITE_API_URL || "";
 
-const axiosInstance = axios.create({
-  baseURL: baseURL,
-});
+const axiosInstance = axios.create({ baseURL });
+const sameOriginAxios = axios.create({ baseURL: "" });
 
 const getRequestPath = (rawUrl = "") => {
   if (!rawUrl || typeof rawUrl !== "string") return "";
@@ -34,35 +33,61 @@ const isAdminRequest = (url = "") => {
   );
 };
 
-// Add request interceptor to include auth token
-axiosInstance.interceptors.request.use(
-  (config) => {
-    const isAdminRoute = isAdminRequest(config.url);
+const attachAuthHeaders = (config) => {
+  const isAdminRoute = isAdminRequest(config.url);
 
-    if (!config.headers) {
-      config.headers = {};
-    }
-    
-    if (isAdminRoute) {
-      // Admin routes: use adminToken only
-      const adminToken = localStorage.getItem('adminToken');
-      if (adminToken && !config.headers.Authorization) {
-        config.headers.Authorization = `Bearer ${adminToken}`;
-      }
-    } else {
-      // User routes: use userToken only (never adminToken)
-      const userToken = localStorage.getItem('token');
-      if (userToken && !config.headers.Authorization) {
-        config.headers.Authorization = `Bearer ${userToken}`;
-      }
-    }
-    
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
+  if (!config.headers) {
+    config.headers = {};
   }
-);
+
+  if (isAdminRoute) {
+    // Admin routes: use adminToken only
+    const adminToken = localStorage.getItem('adminToken');
+    if (adminToken && !config.headers.Authorization) {
+      config.headers.Authorization = `Bearer ${adminToken}`;
+    }
+  } else {
+    // User routes: use userToken only (never adminToken)
+    const userToken = localStorage.getItem('token');
+    if (userToken && !config.headers.Authorization) {
+      config.headers.Authorization = `Bearer ${userToken}`;
+    }
+  }
+
+  return config;
+};
+
+axiosInstance.interceptors.request.use(attachAuthHeaders, (error) => Promise.reject(error));
+sameOriginAxios.interceptors.request.use(attachAuthHeaders, (error) => Promise.reject(error));
+
+const canRetryOnSameOrigin = (error) => {
+  const path = getRequestPath(error?.config?.url || "");
+  if (!baseURL || !path.startsWith("/api/")) return false;
+  if (error?.config?._retriedSameOrigin) return false;
+
+  const status = Number(error?.response?.status || 0);
+  return !status || status === 502 || status === 503 || status === 504;
+};
+
+const retryOnSameOrigin = async (error) => {
+  const cfg = error?.config;
+  if (!cfg) throw error;
+
+  const retryConfig = {
+    ...cfg,
+    baseURL: "",
+    _retriedSameOrigin: true,
+    headers: { ...(cfg.headers || {}) },
+  };
+
+  console.warn(
+    "[API FALLBACK] Retrying against same-origin /api after upstream failure:",
+    cfg.url,
+    error?.response?.status || error?.message
+  );
+
+  return sameOriginAxios.request(retryConfig);
+};
 
 // Safe API wrapper that never throws - always returns response-like structure
 const safeRequest = async (requestFn) => {
@@ -70,10 +95,25 @@ const safeRequest = async (requestFn) => {
     const response = await requestFn();
     return response;
   } catch (error) {
-    // Log error for debugging but don't throw
-    console.error('API Error:', error.response?.data || error.message);
-    console.error('API Error Status:', error.response?.status);
-    console.error('API Error URL:', error.config?.url);
+    if (canRetryOnSameOrigin(error)) {
+      try {
+        return await retryOnSameOrigin(error);
+      } catch (retryError) {
+        error = retryError;
+      }
+    }
+
+    const url = error.config?.url || "";
+    const tag = url.includes("/api/calls") ? "[CALL ERROR FRONTEND] API" : "API Error";
+    if (error.code === "ERR_CANCELED" || error.message === "canceled") {
+      console.error(
+        tag + " (canceled — often React StrictMode remount, navigation, or duplicate request):",
+        url
+      );
+    }
+    console.error(tag + ":", error.response?.data || error.message);
+    console.error(tag + " Status:", error.response?.status);
+    console.error(tag + " URL:", url);
     
     // Return response-like structure that mimics axios response
     // Include the actual response data if available for better error messages
