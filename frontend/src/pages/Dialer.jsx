@@ -52,8 +52,12 @@ function Dialer() {
     { code: '+39', name: 'Italy', flag: '🇮🇹' },
     { code: '+34', name: 'Spain', flag: '🇪🇸' },
     { code: '+61', name: 'Australia', flag: '🇦🇺' },
+    { code: '+81', name: 'Japan', flag: '🇯🇵' },
+    { code: '+82', name: 'South Korea', flag: '🇰🇷' },
     { code: '+92', name: 'Pakistan', flag: '🇵🇰' },
     { code: '+91', name: 'India', flag: '🇮🇳' },
+    { code: '+27', name: 'South Africa', flag: '🇿🇦' },
+    { code: '+263', name: 'Zimbabwe', flag: '🇿🇼' },
   ];
 
   // Handle dialpad button clicks

@@ -244,7 +244,13 @@ function Recents() {
     { code: '+33', name: 'France', flag: '🇫🇷' },
     { code: '+39', name: 'Italy', flag: '🇮🇹' },
     { code: '+34', name: 'Spain', flag: '🇪🇸' },
-    { code: '+61', name: 'Australia', flag: '🇦🇺' }
+    { code: '+61', name: 'Australia', flag: '🇦🇺' },
+    { code: '+81', name: 'Japan', flag: '🇯🇵' },
+    { code: '+82', name: 'South Korea', flag: '🇰🇷' },
+    { code: '+92', name: 'Pakistan', flag: '🇵🇰' },
+    { code: '+91', name: 'India', flag: '🇮🇳' },
+    { code: '+27', name: 'South Africa', flag: '🇿🇦' },
+    { code: '+263', name: 'Zimbabwe', flag: '🇿🇼' }
   ];
 
   // Auto-scroll to bottom when messages change
@@ -627,6 +633,14 @@ function Recents() {
   };
 
   const filteredCalls = calls || [];
+  const getLastDialableNumber = useCallback(() => {
+    const recent = filteredCalls.find((call) => {
+      if (String(call?.direction || '').toLowerCase() === 'inbound') return false;
+      const value = call?.to_number || call?.toNumber || call?.phoneNumber || '';
+      return String(value).trim() !== '';
+    });
+    return recent?.to_number || recent?.toNumber || recent?.phoneNumber || '';
+  }, [filteredCalls]);
   const filteredChats = (chats || []).filter((chat) => {
     const lastMessage = String(chat?.lastMessage || chat?.message || '').trim();
     if (!lastMessage) return false;
@@ -759,7 +773,8 @@ function Recents() {
   };
 
   const handleCall = async (number = null) => {
-    const rawNumber = number || phoneNumber.trim();
+    const autoDialNumber = !number && !phoneNumber.trim() ? getLastDialableNumber() : '';
+    const rawNumber = number || autoDialNumber || phoneNumber.trim();
     
     if (!rawNumber) {
       alert('Please enter a phone number');
@@ -1523,7 +1538,7 @@ function Recents() {
                   onPaste={handlePaste}
                   onKeyDown={(e) => {
                     handleKeyDown(e);
-                    if (e.key === 'Enter' && phoneNumber.trim() && !calling && subscriptionActive && userNumbers.length > 0) handleCall();
+                    if (e.key === 'Enter' && (phoneNumber.trim() || getLastDialableNumber()) && !calling && subscriptionActive && userNumbers.length > 0) handleCall();
                   }}
                   placeholder="Enter phone number"
                   className="w-full text-lg font-semibold text-gray-900 dark:text-white h-10 px-3 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800 outline-none placeholder:text-gray-400 disabled:opacity-50"
@@ -1595,8 +1610,9 @@ function Recents() {
               )}
               <button
                 onClick={() => handleCall()}
-                disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
+                disabled={(!phoneNumber.trim() && !getLastDialableNumber()) || calling || userNumbers.length === 0 || !subscriptionActive}
                 className="w-12 h-12 bg-green-500 hover:bg-green-600 active:bg-green-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-[0.96] shadow-sm hover:shadow-md"
+                title={phoneNumber.trim() ? 'Call' : 'Autodial last number'}
               >
                 {calling ? (
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -2064,7 +2080,7 @@ function Recents() {
                       onPaste={handlePaste}
                       onKeyDown={(e) => {
                         handleKeyDown(e);
-                        if (e.key === 'Enter' && phoneNumber.trim() && !isCallBusy && subscriptionActive && userNumbers.length > 0) {
+                        if (e.key === 'Enter' && (phoneNumber.trim() || getLastDialableNumber()) && !isCallBusy && subscriptionActive && userNumbers.length > 0) {
                           handleCall();
                         }
                       }}
@@ -2153,11 +2169,12 @@ function Recents() {
                     </button>
                     <button
                       onClick={() => handleCall()}
-                      disabled={!phoneNumber.trim() || calling || userNumbers.length === 0 || !subscriptionActive}
+                      disabled={(!phoneNumber.trim() && !getLastDialableNumber()) || calling || userNumbers.length === 0 || !subscriptionActive}
                       className="w-12 h-12 bg-green-500 hover:bg-green-600 active:bg-green-700 
                                  text-white rounded-full flex items-center justify-center 
                                  disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.96]
                                  shadow-sm hover:shadow-md"
+                      title={phoneNumber.trim() ? 'Call' : 'Autodial last number'}
                     >
                       {calling ? (
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>

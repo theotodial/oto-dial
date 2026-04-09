@@ -12,6 +12,41 @@ import {
 
 const router = express.Router();
 
+const SMS_OPT_OUT_KEYWORDS = new Set([
+  "STOP",
+  "STOPALL",
+  "UNSUBSCRIBE",
+  "CANCEL",
+  "END",
+  "QUIT",
+  "HELP",
+  "START",
+  "UNSTOP"
+]);
+
+function normalizeSmsDestination(rawTo) {
+  const value = String(rawTo || "").trim();
+  if (!value) return null;
+
+  if (value.startsWith("+")) {
+    return value;
+  }
+
+  const digitsOnly = value.replace(/\D/g, "");
+  if (!digitsOnly) return null;
+
+  // Allow carrier short-code replies (e.g. STOP to 74843) without forcing E.164.
+  if (/^\d{3,8}$/.test(digitsOnly)) {
+    return digitsOnly;
+  }
+
+  return `+${digitsOnly}`;
+}
+
+function isLikelyShortCode(value) {
+  return /^\d{3,8}$/.test(String(value || "").trim());
+}
+
 /**
  * POST /api/sms/send
  * body: { to, text }
@@ -26,6 +61,12 @@ router.post("/send", async (req, res) => {
     const { to, text } = req.body;
     if (!to || !text) {
       return res.status(400).json({ error: "Missing to or text" });
+    }
+
+    const normalizedText = String(text || "").trim().toUpperCase();
+    const toFormatted = normalizeSmsDestination(to);
+    if (!toFormatted) {
+      return res.status(400).json({ error: "Invalid destination number" });
     }
 
     // Check subscription exists
@@ -73,9 +114,12 @@ router.post("/send", async (req, res) => {
       status: "active"
     });
     
-    if (phone && phone.lockedCountry !== false && phone.countryCode) {
+    const skipCountryLockForShortCode =
+      isLikelyShortCode(toFormatted) && SMS_OPT_OUT_KEYWORDS.has(normalizedText);
+
+    if (phone && phone.lockedCountry !== false && phone.countryCode && !skipCountryLockForShortCode) {
       const { validateCountryLock } = await import("../utils/countryUtils.js");
-      const validation = validateCountryLock(phone.countryCode, to);
+      const validation = validateCountryLock(phone.countryCode, toFormatted);
       
       if (!validation.valid) {
         console.log(`🚫 COUNTRY LOCK: Blocked SMS from ${phone.countryCode} to ${to}: ${validation.error}`);
@@ -98,9 +142,7 @@ router.post("/send", async (req, res) => {
     }
 
     const format = (n) => (n.startsWith("+") ? n : `+${n}`);
-
     const from = format(phone.phoneNumber);
-    const toFormatted = format(to);
 
     const response = await telnyx.messages.send({
       messaging_profile_id: phone.messagingProfileId,
