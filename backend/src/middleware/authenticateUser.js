@@ -2,7 +2,6 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
 const authenticateUser = async (req, res, next) => {
-  // OPTIMIZED: Removed excessive logging for performance
   const authHeader = req.headers.authorization;
 
   // Fail fast if no auth header
@@ -20,7 +19,7 @@ const authenticateUser = async (req, res, next) => {
     req.userId = decoded.userId;
 
     // 2️⃣ Load user from DB
-    const user = await User.findById(req.userId);
+    const user = await User.findById(req.userId).lean();
 
     if (!user) {
       return res.status(401).json({ error: "User not found" });

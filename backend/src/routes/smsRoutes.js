@@ -44,7 +44,7 @@ function normalizeSmsDestination(rawTo) {
 }
 
 function isLikelyShortCode(value) {
-  return /^\d{3,8}$/.test(String(value || "").trim());
+  return /^\d{3,8}$/.test(String(value || "").replace(/\D/g, ""));
 }
 
 /**

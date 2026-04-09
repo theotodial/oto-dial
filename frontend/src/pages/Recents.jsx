@@ -323,8 +323,8 @@ function Recents() {
     try {
       const normalizedSelected = normalizePhone(phoneNumber);
       const [messagesResponse, callsResponse] = await Promise.all([
-        API.get('/api/messages').catch(() => ({ error: true, data: null })),
-        API.get('/api/calls').catch(() => ({ error: true, data: null }))
+        API.get('/api/messages', { params: { thread: phoneNumber, limit: 100 } }).catch(() => ({ error: true, data: null })),
+        API.get('/api/calls', { params: { thread: phoneNumber, limit: 50 } }).catch(() => ({ error: true, data: null }))
       ]);
       const allItems = [];
       if (messagesResponse.data?.messages) {
@@ -399,13 +399,17 @@ function Recents() {
     const markRead = async () => {
       try {
         await API.post('/api/messages/read-state', { phoneNumber: selectedChat });
-        fetchReadStateAndUnread();
+        setUnreadCounts((prev) => {
+          const next = { ...(prev || {}) };
+          delete next[selectedChat];
+          return next;
+        });
       } catch (e) {
         // ignore
       }
     };
     markRead();
-  }, [selectedChat, fetchReadStateAndUnread]);
+  }, [selectedChat]);
 
   // Web Push subscribe helper (so we get notifications when app is closed)
   const subscribeToPush = useCallback(async () => {
@@ -500,8 +504,8 @@ function Recents() {
     }
     try {
       const [callsResponse, messagesResponse] = await Promise.all([
-        API.get('/api/calls'),
-        API.get('/api/messages').catch(() => ({ error: true, data: null }))
+        API.get('/api/calls', { params: { limit: 50 } }),
+        API.get('/api/messages', { params: { limit: 100 } }).catch(() => ({ error: true, data: null }))
       ]);
 
       if (!isMountedRef.current) return;

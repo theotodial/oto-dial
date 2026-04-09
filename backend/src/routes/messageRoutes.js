@@ -10,6 +10,16 @@ function normalizePhone(phone) {
   return phone.replace(/\D/g, "");
 }
 
+function buildPhoneCandidates(phone) {
+  const raw = String(phone || "").trim();
+  const digits = normalizePhone(raw);
+  return Array.from(
+    new Set(
+      [raw, digits, digits ? `+${digits}` : null].filter(Boolean)
+    )
+  );
+}
+
 /**
  * GET /api/messages
  * Get all messages (SMS) for the current user
@@ -18,11 +28,25 @@ function normalizePhone(phone) {
 router.get("/", async (req, res) => {
   try {
     const userId = req.userId;
+    const limitRaw = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 100;
+    const thread = String(req.query.thread || "").trim();
+    const query = { user: userId };
+
+    if (thread) {
+      const candidates = buildPhoneCandidates(thread);
+      query.$or = [
+        { to: { $in: candidates } },
+        { from: { $in: candidates } }
+      ];
+    }
     
     // Fetch SMS messages for this user
-    const messages = await SMS.find({ user: userId })
+    const messages = await SMS.find(query)
+      .select("to from body createdAt direction status")
       .sort({ createdAt: -1 })
-      .limit(100);
+      .limit(limit)
+      .lean();
 
     res.json({
       success: true,
@@ -118,7 +142,9 @@ router.get("/unread-counts", async (req, res) => {
   try {
     const userId = req.userId;
     const [messages, readStates] = await Promise.all([
-      SMS.find({ user: userId }).lean(),
+      SMS.find({ user: userId, direction: "inbound" })
+        .select("from createdAt direction")
+        .lean(),
       MessageReadState.find({ user: userId }).lean()
     ]);
     const lastReadByPhone = {};

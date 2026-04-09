@@ -232,11 +232,21 @@ router.get("/", async (req, res) => {
     if (req.query.direction) {
       query.direction = req.query.direction;
     }
+
+    const thread = String(req.query.thread || "").trim();
+    if (thread) {
+      query.$or = [
+        { phoneNumber: thread },
+        { toNumber: thread },
+        { fromNumber: thread }
+      ];
+    }
     
     // Support limit
     const limit = parseInt(req.query.limit) || 100;
     
     const calls = await Call.find(query)
+      .select("phoneNumber toNumber fromNumber direction status createdAt durationSeconds")
       .sort("-createdAt")
       .limit(limit)
       .lean();

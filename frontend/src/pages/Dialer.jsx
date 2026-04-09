@@ -162,13 +162,6 @@ function Dialer() {
     if (!isInCall && callState === 'idle') {
       fetchData(isMountedRef);
     }
-  }, [callState, fetchData, isInCall]);
-
-  // Refresh call logs when call ends
-  useEffect(() => {
-    if (!isInCall && callState === 'idle') {
-      fetchData(isMountedRef);
-    }
   }, [isInCall, callState]);
 
   // Handle making a call with WebRTC

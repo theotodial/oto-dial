@@ -1,6 +1,4 @@
 import express from "express";
-import authenticateUser from "../middleware/authenticateUser.js";
-import loadSubscription from "../middleware/loadSubscription.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 
 const router = express.Router();
@@ -11,15 +9,16 @@ const router = express.Router();
  */
 router.get(
   "/",
-  authenticateUser,
-  loadSubscription,
   async (req, res) => {
     try {
       // Fetch actual PhoneNumber documents from database to get all fields
       const phoneNumbers = await PhoneNumber.find({
         userId: req.user._id,
         status: "active"
-      }).sort({ purchaseDate: -1, createdAt: -1 });
+      })
+        .sort({ purchaseDate: -1, createdAt: -1 })
+        .select("phoneNumber status country state city regionInformation purchaseDate createdAt monthlyCost oneTimeFees carrierGroup")
+        .lean();
 
       // Format the response to include all relevant fields
       const formattedNumbers = phoneNumbers.map(num => ({
