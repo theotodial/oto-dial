@@ -31,6 +31,8 @@ export const SUPPORTED_COUNTRIES = [
   // Asia
   { code: "JP", name: "Japan", iso2: "JP", telnyxCode: "JP", numberProvisioningEnabled: false },
   { code: "KR", name: "South Korea", iso2: "KR", telnyxCode: "KR", numberProvisioningEnabled: false },
+  { code: "PK", name: "Pakistan", iso2: "PK", telnyxCode: "PK", numberProvisioningEnabled: false },
+  { code: "IN", name: "India", iso2: "IN", telnyxCode: "IN", numberProvisioningEnabled: false },
   { code: "SG", name: "Singapore", iso2: "SG", telnyxCode: "SG", numberProvisioningEnabled: false },
   { code: "CN", name: "China", iso2: "CN", telnyxCode: "CN", numberProvisioningEnabled: false },
   
@@ -39,7 +41,8 @@ export const SUPPORTED_COUNTRIES = [
   { code: "NZ", name: "New Zealand", iso2: "NZ", telnyxCode: "NZ", numberProvisioningEnabled: false },
   
   // Africa
-  { code: "ZA", name: "South Africa", iso2: "ZA", telnyxCode: "ZA", numberProvisioningEnabled: false }
+  { code: "ZA", name: "South Africa", iso2: "ZA", telnyxCode: "ZA", numberProvisioningEnabled: false },
+  { code: "ZW", name: "Zimbabwe", iso2: "ZW", telnyxCode: "ZW", numberProvisioningEnabled: false }
 ];
 
 // Country code to country mapping
@@ -70,11 +73,14 @@ const DIALING_CODES = {
   "974": "QA", // Qatar
   "81": "JP", // Japan
   "82": "KR", // South Korea
+  "92": "PK", // Pakistan
+  "91": "IN", // India
   "65": "SG", // Singapore
   "86": "CN", // China
   "61": "AU", // Australia
   "64": "NZ", // New Zealand
-  "27": "ZA" // South Africa
+  "27": "ZA", // South Africa
+  "263": "ZW" // Zimbabwe
 };
 
 /**
