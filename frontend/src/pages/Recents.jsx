@@ -530,32 +530,6 @@ function Recents() {
           }
         });
       }
-      const callsList = callsResponse.data?.calls || callsResponse.data || [];
-      callsList.forEach(call => {
-        const phoneNumber = call.to_number || call.toNumber || call.phoneNumber || 'Unknown';
-        const callDate = call.createdAt || call.created_at || call.timestamp || call.date || new Date();
-        if (!chatMap.has(phoneNumber)) {
-          chatMap.set(phoneNumber, {
-            id: phoneNumber,
-            phoneNumber,
-            lastMessage: `${call.direction === 'inbound' ? 'Inbound' : 'Outbound'} Call`,
-            date: callDate,
-            type: 'call',
-            direction: call.direction || 'outbound',
-            status: call.status || 'completed'
-          });
-        } else {
-          const existing = chatMap.get(phoneNumber);
-          const existingDate = new Date(existing.date || 0);
-          const callDateObj = new Date(callDate);
-          if (callDateObj > existingDate) {
-            if (existing.type === 'call' || !existing.lastMessage) {
-              existing.lastMessage = `${call.direction === 'inbound' ? 'Inbound' : 'Outbound'} Call`;
-            }
-            existing.date = callDate;
-          }
-        }
-      });
       setChats(Array.from(chatMap.values()));
       if (isMountedRef.current) fetchReadStateAndUnread();
     } catch (err) {
@@ -653,7 +627,11 @@ function Recents() {
   };
 
   const filteredCalls = calls || [];
-  const filteredChats = chats || [];
+  const filteredChats = (chats || []).filter((chat) => {
+    const lastMessage = String(chat?.lastMessage || chat?.message || '').trim();
+    if (!lastMessage) return false;
+    return !/^(inbound|outbound|incoming|outgoing)\s+call$/i.test(lastMessage);
+  });
 
   // Combine calls and chats into chronological timeline (backend: callType, createdAt, durationFormatted)
   const combinedRecents = [

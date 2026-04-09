@@ -94,6 +94,7 @@ function Dialer() {
 
   const getLastDialableNumber = useCallback(() => {
     const recent = (callLogs || []).find((call) => {
+      if (String(call?.direction || '').toLowerCase() === 'inbound') return false;
       const value = call?.to_number || call?.toNumber || call?.phoneNumber || '';
       return String(value).trim() !== '';
     });

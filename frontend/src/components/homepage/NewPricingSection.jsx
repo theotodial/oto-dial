@@ -2,37 +2,80 @@ import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import API from '../../api';
 
+/** Homepage should only show the three public marketing plans. */
+const ALLOWED_PRICING_PLAN_NAMES = new Set([
+  'Basic Plan',
+  'Super Plan',
+  'Unlimited Call',
+]);
+
+const DEFAULT_MARKETING_PLANS = [
+  {
+    name: "Basic Plan",
+    price: "19.99",
+    description: "Perfect for individuals and small teams",
+    features: [
+      "Free Virtual Number",
+      "1,500 Voice Minutes",
+      "100 SMS",
+      "Email Support"
+    ],
+    cta: "Get Started Instantly",
+    popular: true,
+    available: true
+  },
+  {
+    name: "Super Plan",
+    price: "29.99",
+    description: "For growing businesses and power users",
+    features: [
+      "Free Virtual Number",
+      "2,500 Voice Minutes",
+      "200 SMS",
+      "Email Support"
+    ],
+    cta: "Get Started Instantly",
+    popular: false,
+    available: true
+  },
+  {
+    name: 'Unlimited Call',
+    price: '39.99',
+    description: 'Maximum flexibility for teams that need more',
+    features: [
+      'Free Virtual Number',
+      '3,600 Voice Minutes',
+      '400 SMS',
+      'Email Support',
+    ],
+    cta: 'Get Started Instantly',
+    popular: false,
+    available: true,
+  },
+];
+
 function NewPricingSection() {
-  const [plans, setPlans] = useState([
-    {
-      name: "Basic Plan",
-      price: "19.99",
-      description: "Perfect for individuals and small teams",
-      features: [
-        "Free Virtual Number",
-        "1,500 Voice Minutes",
-        "100 SMS",
-        "Email Support"
-      ],
-      cta: "Get Started Instantly",
-      popular: true,
-      available: true
-    },
-    {
-      name: "Super Plan",
-      price: "29.99",
-      description: "For growing businesses and power users",
-      features: [
-        "Free Virtual Number",
-        "2,500 Voice Minutes",
-        "200 SMS",
-        "Email Support"
-      ],
-      cta: "Get Started Instantly",
-      popular: false,
-      available: true
-    }
-  ]);
+  const [plans, setPlans] = useState(DEFAULT_MARKETING_PLANS);
+
+  const toMarketingPlan = (plan) => ({
+    name: plan.name,
+    price: Number(plan.price || 0).toFixed(2),
+    description:
+      plan.name === 'Basic Plan'
+        ? 'Perfect for individuals and small teams'
+        : plan.name === 'Super Plan'
+          ? 'For growing businesses and power users'
+          : 'Maximum flexibility for teams that need more',
+    features: [
+      'Free Virtual Number',
+      `${plan.limits.minutesTotal.toLocaleString()} Voice Minutes`,
+      `${plan.limits.smsTotal} SMS`,
+      'Email Support',
+    ],
+    cta: 'Get Started Instantly',
+    popular: plan.name === 'Basic Plan',
+    available: true,
+  });
 
   useEffect(() => {
     // Fetch plans from API
@@ -40,23 +83,17 @@ function NewPricingSection() {
       try {
         const response = await API.get('/api/subscription/plans');
         if (response.data?.success && response.data?.plans) {
-          const transformedPlans = response.data.plans.map(plan => ({
-            name: plan.name,
-            price: plan.price.toFixed(2),
-            description: plan.name === "Basic Plan" 
-              ? "Perfect for individuals and small teams"
-              : "For growing businesses and power users",
-            features: [
-              "Free Virtual Number",
-              `${plan.limits.minutesTotal.toLocaleString()} Voice Minutes`,
-              `${plan.limits.smsTotal} SMS`,
-              "Email Support"
-            ],
-            cta: "Get Started Instantly",
-            popular: plan.name === "Basic Plan",
-            available: true
-          }));
-          setPlans(transformedPlans);
+          const transformedPlans = response.data.plans
+            .filter((plan) => ALLOWED_PRICING_PLAN_NAMES.has(plan.name))
+            .map(toMarketingPlan);
+          if (transformedPlans.length === ALLOWED_PRICING_PLAN_NAMES.size) {
+            setPlans(transformedPlans);
+          } else if (transformedPlans.length > 0) {
+            const merged = DEFAULT_MARKETING_PLANS.map((fallbackPlan) => {
+              return transformedPlans.find((plan) => plan.name === fallbackPlan.name) || fallbackPlan;
+            });
+            setPlans(merged);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch plans:', err);
@@ -81,10 +118,10 @@ function NewPricingSection() {
         </div>
 
         {/* Pricing Cards */}
-        <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-          {plans.map((plan, index) => (
+        <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
+          {plans.map((plan) => (
             <div
-              key={index}
+              key={plan.name}
               className={`relative bg-white dark:bg-slate-800 rounded-2xl ${
                 plan.popular
                   ? 'border-2 border-indigo-600 shadow-2xl md:scale-105'
