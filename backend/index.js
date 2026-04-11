@@ -369,7 +369,8 @@ app.use("/api/site", sitePublicRoutes);
 app.use("/api/users", authenticateUser, loadSubscription, userRoutes);
 // Public plan & add-on catalog (no auth)
 app.use("/api/subscription", subscriptionCatalogRoutes);
-app.use("/api/subscription", authenticateUser, loadSubscription, subscriptionRoutes);
+// Subscription GET handlers load their own lean doc — skip loadSubscription to avoid duplicate DB + phone scans
+app.use("/api/subscription", authenticateUser, subscriptionRoutes);
 app.use("/api/stripe", authenticateUser, stripeCheckoutRoutes);
 app.use("/api/dialer", authenticateUser, loadSubscription, dialerRoutes);
 app.use("/api/numbers", authenticateUser, loadSubscription, numberRoutes);

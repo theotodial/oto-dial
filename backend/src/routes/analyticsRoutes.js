@@ -930,8 +930,8 @@ function summarizeTrafficSources(sourceRows, internalHosts) {
   };
 }
 
-// Public route - Track page view
-router.post("/track", async (req, res) => {
+// Background work for /track — never block the HTTP response (SPA perf)
+async function processAnalyticsTrack(req) {
   try {
     const {
       sessionId,
@@ -1019,7 +1019,7 @@ router.post("/track", async (req, res) => {
 
     if (userId) {
       try {
-        const user = await User.findById(userId);
+        const user = await User.findById(userId).select("_id").lean();
         if (user) {
           signedUp = true;
           // Check if user has visited before
@@ -1028,7 +1028,9 @@ router.post("/track", async (req, res) => {
 
           // Check subscription
           try {
-            const subscription = await Subscription.findOne({ userId, status: 'active' });
+            const subscription = await Subscription.findOne({ userId, status: 'active' })
+              .select("_id")
+              .lean();
             if (subscription) {
               hasSubscription = true;
               subscriptionId = subscription._id;
@@ -1095,8 +1097,7 @@ router.post("/track", async (req, res) => {
     } else {
       // Only create new session if page is provided (required field)
       if (!page) {
-        // If no page provided, this is likely just a time update - skip creating new session
-        return res.json({ success: true });
+        return;
       }
       
       const analytics = new Analytics({
@@ -1142,16 +1143,19 @@ router.post("/track", async (req, res) => {
       });
       await analytics.save();
     }
-
-    res.json({ success: true });
   } catch (error) {
     console.error("Error tracking analytics:", error);
-    res.json({ success: false, error: error.message });
   }
+}
+
+router.post("/track", (req, res) => {
+  res.json({ success: true });
+  setImmediate(() => {
+    processAnalyticsTrack(req).catch((e) => console.error("Analytics track:", e));
+  });
 });
 
-// Public route - Track event
-router.post("/track/event", async (req, res) => {
+async function processAnalyticsEvent(req) {
   try {
     const {
       sessionId,
@@ -1174,12 +1178,16 @@ router.post("/track/event", async (req, res) => {
       });
       await analytics.save();
     }
-
-    res.json({ success: true });
   } catch (error) {
     console.error("Error tracking event:", error);
-    res.json({ success: false });
   }
+}
+
+router.post("/track/event", (req, res) => {
+  res.json({ success: true });
+  setImmediate(() => {
+    processAnalyticsEvent(req).catch((e) => console.error("Analytics event:", e));
+  });
 });
 
 // Admin route - Get analytics dashboard data

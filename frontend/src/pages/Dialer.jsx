@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import API from '../api';
 import { useCall } from '../context/CallContext';
+import { useSubscription } from '../context/SubscriptionContext';
 
 const PhoneIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -40,6 +41,16 @@ function Dialer() {
     isMinimized,
     isInitializing
   } = useCall();
+
+  const { subscription } = useSubscription();
+
+  useEffect(() => {
+    const active =
+      subscription &&
+      subscription.planName !== 'No Plan' &&
+      subscription.status !== 'inactive';
+    setSubscriptionActive(!!active);
+  }, [subscription]);
 
   const dialCountries = [
     { code: '+1', name: 'United States', flag: '🇺🇸' },
@@ -111,10 +122,9 @@ function Dialer() {
       setError('');
       setSuccess('');
       
-      const [numbersResponse, callsResponse, subscriptionResponse] = await Promise.all([
+      const [numbersResponse, callsResponse] = await Promise.all([
         API.get('/api/numbers'),
-        API.get('/api/calls'),
-        API.get('/api/subscription').catch(() => ({ error: true }))
+        API.get('/api/calls', { params: { limit: 20 } })
       ]);
 
       if (!isMounted.current) return;
@@ -129,12 +139,6 @@ function Dialer() {
         console.warn('Failed to load calls:', callsResponse.error);
       } else {
         setCallLogs(callsResponse.data?.calls || callsResponse.data || []);
-      }
-
-      if (!subscriptionResponse.error && subscriptionResponse.data?.planName !== "No Plan") {
-        setSubscriptionActive(true);
-      } else {
-        setSubscriptionActive(false);
       }
 
       setLoading(false);

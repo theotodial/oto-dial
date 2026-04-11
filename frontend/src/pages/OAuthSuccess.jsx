@@ -15,11 +15,7 @@ function OAuthSuccess() {
         // Set auth state via context and localStorage
         setAuthFromToken(token, {});
 
-        // Small delay to ensure localStorage is written, then hard redirect
-        // This ensures AuthProvider picks up the token on remount
-        setTimeout(() => {
-          window.location.href = '/recents';
-        }, 100);
+        navigate('/recents', { replace: true });
       } catch (e) {
         console.error('Failed to store OAuth token', e);
         navigate('/login', { replace: true });

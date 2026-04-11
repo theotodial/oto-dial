@@ -2,9 +2,7 @@ import express from "express";
 import Subscription from "../models/Subscription.js";
 import Plan from "../models/Plan.js";
 import StripeInvoice from "../models/StripeInvoice.js";
-import User from "../models/User.js";
 import authMiddleware from "../middleware/authenticateUser.js";
-import { scheduleBackgroundSelfHeal } from "../services/stripeSubscriptionService.js";
 import {
   buildPublicPlanPayload,
   applyPlanSnapshotToSubscription
@@ -27,13 +25,14 @@ const DEFAULT_LIMITS = {
 /**
  * GET /api/subscription and GET /api/subscription/current
  */
+const SUBSCRIPTION_READ_SELECT =
+  "planId status planType planName displayUnlimited usage limits addons addonsSmsExpiry addonsMinutesExpiry periodEnd periodStart monthlySmsLimit monthlyMinutesLimit dailySmsLimit dailyMinutesLimit";
+
 const getSubscriptionHandler = async (req, res) => {
   try {
     const userId = req.userId;
 
-    scheduleBackgroundSelfHeal(userId, "subscription_read");
-
-    // Get subscription - include both active and cancelled (cancelled subscriptions are still active until periodEnd)
+    // Hot path: no Stripe/self-heal — reconciliation + login handle repair
     let subscription = await Subscription.findOne({
       userId,
       $or: [
@@ -41,32 +40,10 @@ const getSubscriptionHandler = async (req, res) => {
         { status: "cancelled" }
       ]
     })
+      .select(SUBSCRIPTION_READ_SELECT)
       .populate({ path: "planId", select: "name displayUnlimited" })
       .sort({ createdAt: -1 })
       .lean();
-
-    // Self-heal legacy race-condition records:
-    // user is marked active, but subscription got reverted to pending_activation.
-    if (!subscription) {
-      const user = await User.findById(userId)
-        .select("subscriptionActive activeSubscriptionId")
-        .lean();
-      if (user?.subscriptionActive && user.activeSubscriptionId) {
-        const pendingSubscription = await Subscription.findOne({
-          _id: user.activeSubscriptionId,
-          userId,
-          status: "pending_activation"
-        });
-
-        if (pendingSubscription) {
-          pendingSubscription.status = "active";
-          await pendingSubscription.save();
-          subscription = await Subscription.findById(pendingSubscription._id)
-            .populate({ path: "planId", select: "name displayUnlimited" })
-            .lean();
-        }
-      }
-    }
 
     if (!subscription) {
       return res.json({

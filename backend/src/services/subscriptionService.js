@@ -1,8 +1,6 @@
 import Subscription from "../models/Subscription.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import Plan from "../models/Plan.js";
-import User from "../models/User.js";
-import { scheduleBackgroundSelfHeal } from "./stripeSubscriptionService.js";
 import { getActiveAddonAmounts } from "./subscriptionAddonCreditService.js";
 
 // Default limits if subscription doesn't have them set
@@ -21,10 +19,6 @@ export async function loadUserSubscription(userId) {
   }).lean();
 
   if (!subscription) {
-    const user = await User.findById(userId).select("stripeCustomerId").lean();
-    if (user?.stripeCustomerId) {
-      scheduleBackgroundSelfHeal(userId, "load_subscription");
-    }
     return null;
   }
 

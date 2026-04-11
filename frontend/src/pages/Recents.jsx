@@ -4,6 +4,7 @@ import API from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
 import ActiveCallChrome from '../components/ActiveCallChrome';
+import { fetchAllContacts } from '../utils/fetchAllContacts';
 
 const ClockIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -323,8 +324,8 @@ function Recents() {
     try {
       const normalizedSelected = normalizePhone(phoneNumber);
       const [messagesResponse, callsResponse] = await Promise.all([
-        API.get('/api/messages', { params: { thread: phoneNumber, limit: 100 } }).catch(() => ({ error: true, data: null })),
-        API.get('/api/calls', { params: { thread: phoneNumber, limit: 50 } }).catch(() => ({ error: true, data: null }))
+        API.get('/api/messages', { params: { thread: phoneNumber, limit: 20 } }).catch(() => ({ error: true, data: null })),
+        API.get('/api/calls', { params: { thread: phoneNumber, limit: 20 } }).catch(() => ({ error: true, data: null }))
       ]);
       const allItems = [];
       if (messagesResponse.data?.messages) {
@@ -504,8 +505,8 @@ function Recents() {
     }
     try {
       const [callsResponse, messagesResponse] = await Promise.all([
-        API.get('/api/calls', { params: { limit: 50 } }),
-        API.get('/api/messages', { params: { limit: 100 } }).catch(() => ({ error: true, data: null }))
+        API.get('/api/calls', { params: { limit: 20 } }),
+        API.get('/api/messages', { params: { limit: 20 } }).catch(() => ({ error: true, data: null }))
       ]);
 
       if (!isMountedRef.current) return;
@@ -555,8 +556,8 @@ function Recents() {
   const fetchContacts = useCallback(async () => {
     if (!isMountedRef.current) return;
     try {
-      const res = await API.get('/api/contacts');
-      if (res?.data?.contacts && isMountedRef.current) setContacts(res.data.contacts);
+      const list = await fetchAllContacts();
+      if (isMountedRef.current) setContacts(list);
     } catch (e) {
       // ignore
     }

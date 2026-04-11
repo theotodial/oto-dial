@@ -1,4 +1,4 @@
-// Analytics tracking utility
+// Analytics tracking utility — never block navigation (fire-and-forget to API)
 import API from '../api';
 
 // Generate or get session ID
@@ -11,7 +11,7 @@ const getSessionId = () => {
   return sessionId;
 };
 
-// Get Google Analytics client ID
+// Get Google Analytics client ID (non-blocking for callers)
 const getGAClientId = async () => {
   if (typeof window !== 'undefined' && window.gtag) {
     try {
@@ -19,7 +19,6 @@ const getGAClientId = async () => {
         window.gtag('get', 'G-X3WN8RYCQ5', 'client_id', (clientId) => {
           resolve(clientId || null);
         });
-        // Timeout after 1 second
         setTimeout(() => resolve(null), 1000);
       });
     } catch (error) {
@@ -29,8 +28,7 @@ const getGAClientId = async () => {
   return null;
 };
 
-// Track page view
-export const trackPageView = async (page, pageTitle, userId = null) => {
+async function trackPageViewWork(page, pageTitle, userId = null) {
   try {
     const sessionId = getSessionId();
     const referrer = document.referrer || '';
@@ -51,11 +49,9 @@ export const trackPageView = async (page, pageTitle, userId = null) => {
     const msclkid = searchParams.get('msclkid') || null;
     const twclid = searchParams.get('twclid') || null;
     const scid = searchParams.get('scid') || null;
-    
-    // Get GA client ID
+
     const gaClientId = await getGAClientId();
-    
-    // Track with Google Analytics
+
     if (typeof window !== 'undefined' && window.gtag) {
       window.gtag('config', 'G-X3WN8RYCQ5', {
         page_path: page,
@@ -63,8 +59,7 @@ export const trackPageView = async (page, pageTitle, userId = null) => {
       });
     }
 
-    // Track with our own system
-    await API.post('/api/analytics/track', {
+    void API.post('/api/analytics/track', {
       sessionId,
       page,
       pageTitle,
@@ -90,14 +85,18 @@ export const trackPageView = async (page, pageTitle, userId = null) => {
   } catch (error) {
     console.error('Error tracking page view:', error);
   }
+}
+
+export const trackPageView = (page, pageTitle, userId = null) => {
+  queueMicrotask(() => {
+    trackPageViewWork(page, pageTitle, userId).catch(() => {});
+  });
 };
 
-// Track event
-export const trackEvent = async (name, category, action, label, value) => {
+async function trackEventWork(name, category, action, label, value) {
   try {
     const sessionId = getSessionId();
-    
-    // Track with Google Analytics
+
     if (typeof window !== 'undefined' && window.gtag) {
       window.gtag('event', action, {
         event_category: category,
@@ -106,8 +105,7 @@ export const trackEvent = async (name, category, action, label, value) => {
       });
     }
 
-    // Track with our own system
-    await API.post('/api/analytics/track/event', {
+    void API.post('/api/analytics/track/event', {
       sessionId,
       name,
       category,
@@ -118,27 +116,30 @@ export const trackEvent = async (name, category, action, label, value) => {
   } catch (error) {
     console.error('Error tracking event:', error);
   }
+}
+
+export const trackEvent = (name, category, action, label, value) => {
+  queueMicrotask(() => {
+    trackEventWork(name, category, action, label, value).catch(() => {});
+  });
 };
 
-// Track time spent
 let timeSpentInterval = null;
 let currentPageStart = Date.now();
 
 export const startTimeTracking = () => {
   currentPageStart = Date.now();
-  
-  // Clear existing interval
+
   if (timeSpentInterval) {
     clearInterval(timeSpentInterval);
   }
 
-  // Track time every 30 seconds
-  timeSpentInterval = setInterval(async () => {
+  timeSpentInterval = setInterval(() => {
     const timeSpent = Math.floor((Date.now() - currentPageStart) / 1000);
     if (timeSpent > 0) {
       try {
         const sessionId = getSessionId();
-        await API.post('/api/analytics/track', {
+        void API.post('/api/analytics/track', {
           sessionId,
           timeSpent
         });
@@ -146,7 +147,7 @@ export const startTimeTracking = () => {
         console.error('Error tracking time:', error);
       }
     }
-  }, 30000); // Every 30 seconds
+  }, 30000);
 };
 
 export const stopTimeTracking = () => {
@@ -156,13 +157,11 @@ export const stopTimeTracking = () => {
   }
 };
 
-// Track conversion events
-export const trackSignUp = async (userId) => {
-  await trackEvent('signup', 'conversion', 'signup', 'user_signed_up', 1);
-  // Update analytics record
+export const trackSignUp = (userId) => {
+  trackEvent('signup', 'conversion', 'signup', 'user_signed_up', 1);
   try {
     const sessionId = getSessionId();
-    await API.post('/api/analytics/track', {
+    void API.post('/api/analytics/track', {
       sessionId,
       userId,
       signedUp: true
@@ -172,12 +171,11 @@ export const trackSignUp = async (userId) => {
   }
 };
 
-export const trackSubscription = async (userId, subscriptionId) => {
-  await trackEvent('subscription', 'conversion', 'subscription', 'user_subscribed', 1);
-  // Update analytics record
+export const trackSubscription = (userId, subscriptionId) => {
+  trackEvent('subscription', 'conversion', 'subscription', 'user_subscribed', 1);
   try {
     const sessionId = getSessionId();
-    await API.post('/api/analytics/track', {
+    void API.post('/api/analytics/track', {
       sessionId,
       userId,
       hasSubscription: true,

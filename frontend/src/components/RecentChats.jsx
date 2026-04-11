@@ -30,7 +30,7 @@ function RecentChats({ onSelectChat, selectedChatId, onNewChat }) {
 
   const fetchChatSessions = async () => {
     try {
-      const response = await API.get('/api/messages');
+      const response = await API.get('/api/messages', { params: { limit: 20 } });
       if (response.error) {
         setChatSessions([]);
         return;

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import API from '../api';
+import { useCall } from '../context/CallContext';
 
 // Icons
 const SendIcon = () => (
@@ -58,6 +59,7 @@ const CallIcon = () => (
 );
 
 function Chat() {
+  const { makeCall } = useCall();
   const suspiciousActivityText =
     'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
   const isSuspiciousActivityError = (message) =>
@@ -165,14 +167,9 @@ function Chat() {
         return;
       }
 
-      // Use correct API endpoint and payload per backend contract
-      // POST /api/dialer/call with { to: destinationNumber }
-      const response = await API.post('/api/dialer/call', {
-        to: selectedChat.phoneNumber
-      });
-
-      if (response.error) {
-        setCallError(response.error);
+      const ok = await makeCall(selectedChat.phoneNumber, fromNumber);
+      if (!ok) {
+        setCallError('Could not start the call. Open Recents to place calls, or try again.');
         setTimeout(() => setCallError(''), 5000);
       } else {
         setCallSuccess(`Calling ${selectedChat.phoneNumber}...`);
@@ -188,7 +185,7 @@ function Chat() {
   const fetchChatData = async () => {
     if (!isMountedRef.current) return;
     setError('');
-    const response = await API.get('/api/messages');
+    const response = await API.get('/api/messages', { params: { limit: 20 } });
     
     if (!isMountedRef.current) return;
     

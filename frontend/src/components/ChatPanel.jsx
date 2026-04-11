@@ -45,15 +45,21 @@ function ChatPanel({ selectedChat }) {
 
   const fetchMessages = async () => {
     try {
-      const response = await API.get('/api/messages');
+      const normalized = selectedChat?.phoneNumber
+        ? String(selectedChat.phoneNumber).replace(/\D/g, '')
+        : '';
+      const response = selectedChat?.phoneNumber
+        ? await API.get('/api/messages', {
+            params: { thread: selectedChat.phoneNumber, limit: 50 }
+          })
+        : await API.get('/api/messages', { params: { limit: 20 } });
       if (response.error) {
         setMessages([]);
         return;
       }
 
       let nextMessages = response.data?.messages || response.data || [];
-      if (selectedChat?.phoneNumber) {
-        const normalized = String(selectedChat.phoneNumber).replace(/\D/g, '');
+      if (normalized) {
         nextMessages = nextMessages.filter((msg) => {
           const candidate = msg.phone_number || msg.to || msg.from || '';
           return String(candidate).replace(/\D/g, '') === normalized;

@@ -817,7 +817,7 @@ function Profile() {
                 Our support team is here to assist you with verification and account issues.
               </p>
               <button
-                onClick={() => window.location.href = '/support'}
+                onClick={() => navigate('/support')}
                 className="block w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white text-center font-medium rounded-lg transition-colors"
               >
                 Contact Support

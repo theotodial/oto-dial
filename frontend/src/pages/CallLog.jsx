@@ -13,6 +13,7 @@ function CallLog() {
     const fetchCalls = async () => {
       try {
         const res = await API.get('/api/calls', {
+          params: { limit: 20 },
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
         });
         setCalls(res.data || []);

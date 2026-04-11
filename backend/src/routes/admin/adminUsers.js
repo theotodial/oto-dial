@@ -21,7 +21,7 @@ router.get(
   async (req, res) => {
     try {
       const page = parseInt(req.query.page, 10) || 1;
-      const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+      const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
       const search = req.query.search || "";
       const skip = (page - 1) * limit;
 

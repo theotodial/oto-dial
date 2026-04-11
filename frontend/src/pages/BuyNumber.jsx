@@ -2,10 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { getMyNumbers, searchNumbersDetailed, purchaseNumber } from '../services/numberService';
+import { useSubscription } from '../context/SubscriptionContext';
 import { SUPPORTED_COUNTRIES, getDefaultCountry } from '../utils/supportedCountries';
 
 function BuyNumber() {
   const navigate = useNavigate();
+  const { subscription } = useSubscription();
   const [userNumbers, setUserNumbers] = useState([]);
   const [availableNumbers, setAvailableNumbers] = useState([]);
   const [selectedNumber, setSelectedNumber] = useState(null);
@@ -48,6 +50,21 @@ function BuyNumber() {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!subscription) return;
+    const active =
+      subscription.planName !== 'No Plan' && subscription.status !== 'inactive';
+    setSubscriptionActive(!!active);
+    if (userNumbers.length > 0) return;
+    if (!active) {
+      setError('Active subscription required to buy a number');
+    } else {
+      setError((prev) =>
+        prev === 'Active subscription required to buy a number' ? '' : prev
+      );
+    }
+  }, [subscription, userNumbers.length]);
 
   // Load default numbers when subscription becomes active or country changes
   useEffect(() => {
@@ -107,25 +124,13 @@ function BuyNumber() {
     setError('');
 
     try {
-      const [numbersRes, subscriptionRes] = await Promise.all([
-        getMyNumbers(),
-        API.get('/api/subscription').catch(() => ({ error: true }))
-      ]);
+      const numbersRes = await getMyNumbers();
 
       if (!isMountedRef.current) return;
 
       const numbers = Array.isArray(numbersRes) ? numbersRes : [];
       setUserNumbers(numbers);
 
-      // Check subscription
-      if (subscriptionRes.error || !subscriptionRes.data) {
-        setError('Active subscription required to buy a number');
-        setSubscriptionActive(false);
-      } else {
-        setSubscriptionActive(true);
-      }
-
-      // If user already has a number, show message
       if ((numbers || []).length > 0) {
         setError('You already have a phone number. Maximum 1 number allowed.');
       }

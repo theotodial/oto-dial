@@ -29,7 +29,7 @@ router.get("/", async (req, res) => {
   try {
     const userId = req.userId;
     const limitRaw = Number.parseInt(req.query.limit, 10);
-    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 100;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 20;
     const thread = String(req.query.thread || "").trim();
     const query = { user: userId };
 

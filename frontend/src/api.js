@@ -126,10 +126,33 @@ const safeRequest = async (requestFn) => {
   }
 };
 
+/** Deduplicate concurrent identical GETs (e.g. StrictMode + multiple mounts) */
+const inFlightGet = new Map();
+
+function getDedupeKey(path, config = {}) {
+  const params = config.params;
+  if (params && typeof params === "object" && Object.keys(params).length > 0) {
+    const entries = Object.entries(params)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .sort(([a], [b]) => String(a).localeCompare(String(b)));
+    const qs = new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString();
+    return qs ? `${path}?${qs}` : path;
+  }
+  return path;
+}
+
 // Create safe API wrapper
 const API = {
   get: async (path, config = {}) => {
-    return safeRequest(() => axiosInstance.get(path, config));
+    const key = getDedupeKey(path, config);
+    if (inFlightGet.has(key)) {
+      return inFlightGet.get(key);
+    }
+    const promise = safeRequest(() => axiosInstance.get(path, config)).finally(() => {
+      inFlightGet.delete(key);
+    });
+    inFlightGet.set(key, promise);
+    return promise;
   },
   post: async (path, data, config = {}) => {
     return safeRequest(() => axiosInstance.post(path, data, config));

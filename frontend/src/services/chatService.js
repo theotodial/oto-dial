@@ -1,7 +1,11 @@
 import API from '../api';
 
 export const getChat = async (phoneNumber) => {
-  const response = await API.get('/api/messages');
+  const response = phoneNumber
+    ? await API.get('/api/messages', {
+        params: { thread: phoneNumber, limit: 50 }
+      })
+    : await API.get('/api/messages', { params: { limit: 20 } });
   if (response.error) {
     throw new Error(response.error || 'Failed to fetch chat messages');
   }

@@ -73,7 +73,7 @@ function Dashboard() {
     planName: 'No Plan',
     displayUnlimited: false
   });
-  const [loading, setLoading] = useState(true);
+  const [extrasLoading, setExtrasLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
@@ -117,8 +117,10 @@ function Dashboard() {
 
   const fetchData = async () => {
     if (!isMountedRef.current) return;
+    setExtrasLoading(true);
     setError('');
     setSuccess('');
+    try {
 
     const [walletRes, numbersRes, addonsRes] = await Promise.all([
       API.get('/api/wallet'),
@@ -155,10 +157,6 @@ function Dashboard() {
       setAddonPlans([]);
     }
 
-    if (isMountedRef.current) {
-      setLoading(false);
-    }
-
     const activationHealthRes = await API.get('/api/subscription/activation-health').catch(() => ({
       error: true
     }));
@@ -169,30 +167,45 @@ function Dashboard() {
     } else {
       setActivationIssue(null);
     }
+    } finally {
+      if (isMountedRef.current) setExtrasLoading(false);
+    }
   };
 
   useEffect(() => {
     isMountedRef.current = true;
     const verified = new URLSearchParams(window.location.search).get("verified");
 
-    (async () => {
-      await fetchData();
-      if (!isMountedRef.current) return;
-      if (verified === "1") {
-        setSuccess("Email verified successfully.");
-        await refreshUser();
-        await refreshSubscription();
-      } else if (verified === "0") {
-        setError(
-          "Email verification failed or the link expired. Try resending verification from the banner on your account."
-        );
-      }
-      if (verified === "1" || verified === "0") {
-        navigate("/dashboard", { replace: true });
-      }
-    })();
+    const run = () => {
+      (async () => {
+        await fetchData();
+        if (!isMountedRef.current) return;
+        if (verified === "1") {
+          setSuccess("Email verified successfully.");
+          await refreshUser();
+          await refreshSubscription();
+        } else if (verified === "0") {
+          setError(
+            "Email verification failed or the link expired. Try resending verification from the banner on your account."
+          );
+        }
+        if (verified === "1" || verified === "0") {
+          navigate("/dashboard", { replace: true });
+        }
+      })();
+    };
+
+    const idleId =
+      typeof requestIdleCallback !== "undefined"
+        ? requestIdleCallback(run, { timeout: 600 })
+        : null;
+    const tmo = typeof requestIdleCallback === "undefined" ? setTimeout(run, 0) : null;
 
     return () => {
+      if (idleId !== null && typeof cancelIdleCallback !== "undefined") {
+        cancelIdleCallback(idleId);
+      }
+      if (tmo) clearTimeout(tmo);
       isMountedRef.current = false;
     };
   }, [navigate, refreshUser, refreshSubscription]);
@@ -247,21 +260,6 @@ function Dashboard() {
       setBuyingAddonId(null);
     }
   };
-
-  /* ================= LOADING ================= */
-
-  if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-500 dark:text-gray-400">Loading dashboard...</p>
-        </div>
-      </div>
-    );
-  }
-
-  /* ================= UI (UNCHANGED) ================= */
 
   return (
     <div className="h-full overflow-auto px-4 py-3 max-w-7xl mx-auto">
@@ -474,7 +472,13 @@ function Dashboard() {
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">My Phone Numbers</h2>
         </div>
 
-        {(numbers || []).length === 0 ? (
+        {extrasLoading && (numbers || []).length === 0 ? (
+          <div className="p-8 space-y-4 animate-pulse" aria-hidden>
+            <div className="h-4 bg-gray-200 dark:bg-slate-600 rounded w-2/3" />
+            <div className="h-12 bg-gray-100 dark:bg-slate-600/80 rounded-xl" />
+            <div className="h-12 bg-gray-100 dark:bg-slate-600/80 rounded-xl" />
+          </div>
+        ) : (numbers || []).length === 0 ? (
           <div className="p-8 text-center text-gray-500 dark:text-gray-400">No numbers purchased yet</div>
         ) : (
           <div className="divide-y divide-gray-200 dark:divide-slate-600">

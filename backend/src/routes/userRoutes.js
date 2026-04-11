@@ -2,8 +2,6 @@ import express from "express";
 import multer from "multer";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
-import { scheduleBackgroundSelfHeal } from "../services/stripeSubscriptionService.js";
-
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -55,10 +53,8 @@ router.get("/profile", async (req, res) => {
  */
 router.get("/me", async (req, res) => {
   try {
-    scheduleBackgroundSelfHeal(req.user._id, "users_me");
-
     const subscription = req.subscription;
-    const user = await User.findById(req.user._id).select('-password -sessions');
+    const user = await User.findById(req.user._id).select('-password -sessions').lean();
 
     return res.json({
       success: true,

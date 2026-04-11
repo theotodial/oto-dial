@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
+import { fetchAllContacts } from '../utils/fetchAllContacts';
 import { useAuth } from '../context/AuthContext';
 
 // Helper function to generate avatar initials
@@ -77,16 +78,11 @@ function Contacts() {
   const fetchContacts = async () => {
     try {
       setLoading(true);
-      const response = await API.get('/api/contacts');
-      
+      const list = await fetchAllContacts();
+
       if (!isMountedRef.current) return;
-      
-      if (response.error) {
-        console.error('Error fetching contacts:', response.error);
-        setContacts([]);
-      } else {
-        setContacts(response.data?.contacts || response.data || []);
-      }
+
+      setContacts(Array.isArray(list) ? list : []);
     } catch (err) {
       console.error('Error fetching contacts:', err);
       if (isMountedRef.current) {

@@ -70,10 +70,10 @@ function App() {
     return (
     <ErrorBoundary>
       <ThemeProvider>
+        <BrowserRouter>
         <AuthProvider>
           <SubscriptionProvider>
           <CallProvider>
-          <BrowserRouter>
             {/* Analytics Tracker - tracks page views and user behavior */}
             <AnalyticsTracker />
             
@@ -533,10 +533,10 @@ function App() {
             {/* Catch-all route - redirect to home */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-      </BrowserRouter>
           </CallProvider>
           </SubscriptionProvider>
       </AuthProvider>
+        </BrowserRouter>
     </ThemeProvider>
     </ErrorBoundary>
   );

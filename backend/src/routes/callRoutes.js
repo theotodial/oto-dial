@@ -242,8 +242,10 @@ router.get("/", async (req, res) => {
       ];
     }
     
-    // Support limit
-    const limit = parseInt(req.query.limit) || 100;
+    const limitRaw = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw)
+      ? Math.min(Math.max(limitRaw, 1), 50)
+      : 20;
     
     const calls = await Call.find(query)
       .select("phoneNumber toNumber fromNumber direction status createdAt durationSeconds")

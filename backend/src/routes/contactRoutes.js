@@ -13,13 +13,29 @@ router.use(authenticateUser);
  */
 router.get("/", async (req, res) => {
   try {
-    const contacts = await Contact.find({ userId: req.user._id })
-      .sort({ name: 1 })
-      .select('-__v');
-    
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50);
+    const skip = (page - 1) * limit;
+
+    const [contacts, total] = await Promise.all([
+      Contact.find({ userId: req.user._id })
+        .sort({ name: 1 })
+        .select("-__v")
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Contact.countDocuments({ userId: req.user._id })
+    ]);
+
     return res.json({
       success: true,
-      contacts
+      contacts,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.max(1, Math.ceil(total / limit))
+      }
     });
   } catch (err) {
     console.error("GET /contacts error:", err);

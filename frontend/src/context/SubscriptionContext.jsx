@@ -12,6 +12,8 @@ const SubscriptionContext = createContext(null);
 
 const CACHE_KEY = "otodial_subscription_cache_v1";
 
+const CACHE_FRESH_MS = 120_000;
+
 function readCache(userId) {
   if (!userId) return null;
   try {
@@ -19,7 +21,10 @@ function readCache(userId) {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (String(parsed.userId) !== String(userId)) return null;
-    return parsed.data ?? null;
+    return {
+      data: parsed.data ?? null,
+      fetchedAt: Number(parsed.fetchedAt) || 0
+    };
   } catch {
     return null;
   }
@@ -30,7 +35,11 @@ function writeCache(userId, data) {
   try {
     localStorage.setItem(
       CACHE_KEY,
-      JSON.stringify({ userId: String(userId), data })
+      JSON.stringify({
+        userId: String(userId),
+        data,
+        fetchedAt: Date.now()
+      })
     );
   } catch {
     /* ignore quota / private mode */
@@ -74,12 +83,25 @@ export function SubscriptionProvider({ children }) {
       return;
     }
 
+    let cancelled = false;
+    let skipNetwork = false;
     if (userId) {
       const cached = readCache(userId);
-      if (cached) setSubscription(cached);
+      if (cached?.data) {
+        setSubscription(cached.data);
+        if (cached.fetchedAt && Date.now() - cached.fetchedAt < CACHE_FRESH_MS) {
+          skipNetwork = true;
+        }
+      }
     }
 
-    let cancelled = false;
+    if (skipNetwork) {
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     setLoading(true);
     (async () => {
       const res = await API.get("/api/subscription");
