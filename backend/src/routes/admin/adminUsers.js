@@ -20,8 +20,8 @@ router.get(
   authenticateUser,
   async (req, res) => {
     try {
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 50;
+      const page = parseInt(req.query.page, 10) || 1;
+      const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
       const search = req.query.search || "";
       const skip = (page - 1) * limit;
 
@@ -49,58 +49,90 @@ router.get(
         User.countDocuments(query)
       ]);
 
-      // Get subscription info for each user
-      const usersWithSubs = await Promise.all(
-        users.map(async (user) => {
-          const subscription = await Subscription.findOne({
-            userId: user._id,
-            status: "active"
-          }).lean();
+      const userIds = users.map((u) => u._id);
 
-          const phoneNumbers = await PhoneNumber.find({ userId: user._id })
-            .select("phoneNumber")
-            .lean();
-
-          // Get Telnyx costs breakdown
-          const costs = await TelnyxCost.aggregate([
-            { $match: { userId: user._id } },
-            {
-              $group: {
-                _id: "$resourceType",
-                totalCost: { $sum: "$totalCostUsd" }
-              }
-            }
-          ]);
-
-          // Calculate cost breakdown
-          const callCosts = costs.find(c => c._id === "call")?.totalCost || 0;
-          const smsCosts = costs.find(c => c._id === "sms")?.totalCost || 0;
-          const numberCosts = costs.find(c => c._id === "number")?.totalCost || 0;
-          const totalCost = callCosts + smsCosts + numberCosts;
-
-          return {
-            ...user,
-            id: user._id, // for frontend convenience
-            identity: {
-              email: user.email,
-              name: user.name || `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
-              accountStatus: user.status || "active"
-            },
-            subscriptionStatus: subscription?.status || "none",
-            subscriptionPlan:
-              subscription?.planName ||
-              subscription?.planKey ||
-              (subscription?.displayUnlimited ? "Unlimited" : "none"),
-            phoneNumbers: phoneNumbers.map(pn => pn.phoneNumber),
-            costs: {
-              totalTelnyxCost: totalCost,
-              telnyxCallCost: callCosts,
-              telnyxSmsCost: smsCosts,
-              telnyxNumberCost: numberCosts
-            }
-          };
+      const [subscriptions, phoneRows, costAgg] = await Promise.all([
+        Subscription.find({
+          userId: { $in: userIds },
+          status: "active"
         })
-      );
+          .sort({ updatedAt: -1 })
+          .select("userId status planName planKey displayUnlimited")
+          .lean(),
+        PhoneNumber.find({ userId: { $in: userIds } })
+          .select("userId phoneNumber")
+          .lean(),
+        userIds.length
+          ? TelnyxCost.aggregate([
+              { $match: { userId: { $in: userIds } } },
+              {
+                $group: {
+                  _id: { userId: "$userId", resourceType: "$resourceType" },
+                  totalCost: { $sum: "$totalCostUsd" }
+                }
+              }
+            ])
+          : Promise.resolve([])
+      ]);
+
+      const subByUser = new Map();
+      for (const s of subscriptions) {
+        const k = String(s.userId);
+        if (!subByUser.has(k)) subByUser.set(k, s);
+      }
+
+      const phonesByUser = new Map();
+      for (const p of phoneRows) {
+        const k = String(p.userId);
+        if (!phonesByUser.has(k)) phonesByUser.set(k, []);
+        phonesByUser.get(k).push(p.phoneNumber);
+      }
+
+      const costsByUser = new Map();
+      for (const row of costAgg) {
+        const uid = String(row._id.userId);
+        if (!costsByUser.has(uid)) {
+          costsByUser.set(uid, { call: 0, sms: 0, number: 0 });
+        }
+        const bucket = costsByUser.get(uid);
+        const rt = row._id.resourceType;
+        if (rt === "call") bucket.call += row.totalCost || 0;
+        else if (rt === "sms") bucket.sms += row.totalCost || 0;
+        else if (rt === "number") bucket.number += row.totalCost || 0;
+      }
+
+      const usersWithSubs = users.map((user) => {
+        const uid = String(user._id);
+        const subscription = subByUser.get(uid);
+        const phoneNumbers = phonesByUser.get(uid) || [];
+        const costs = costsByUser.get(uid) || { call: 0, sms: 0, number: 0 };
+        const callCosts = costs.call;
+        const smsCosts = costs.sms;
+        const numberCosts = costs.number;
+        const totalCost = callCosts + smsCosts + numberCosts;
+
+        return {
+          ...user,
+          id: user._id,
+          identity: {
+            email: user.email,
+            name: user.name || `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+            accountStatus: user.status || "active"
+          },
+          subscriptionStatus: subscription?.status || "none",
+          subscriptionPlan:
+            subscription?.planName ||
+            subscription?.planKey ||
+            (subscription?.displayUnlimited ? "Unlimited" : "none"),
+          phoneNumbers,
+          costs: {
+            totalTelnyxCost: totalCost,
+            telnyxCallCost: callCosts,
+            telnyxSmsCost: smsCosts,
+            telnyxNumberCost: numberCosts
+          }
+        };
+      });
 
       res.json({
         success: true,
@@ -139,8 +171,15 @@ router.get(
       }).lean();
 
       const phoneNumbers = await PhoneNumber.find({ userId: user._id }).lean();
-      const calls = await Call.find({ user: user._id }).lean();
-      const sms = await SMS.find({ user: user._id }).lean();
+      const RECENT_ACTIVITY_LIMIT = 100;
+      const calls = await Call.find({ user: user._id })
+        .sort({ createdAt: -1 })
+        .limit(RECENT_ACTIVITY_LIMIT)
+        .lean();
+      const sms = await SMS.find({ user: user._id })
+        .sort({ createdAt: -1 })
+        .limit(RECENT_ACTIVITY_LIMIT)
+        .lean();
 
       // Get Telnyx costs with breakdown by resource type
       const costGroups = await TelnyxCost.aggregate([

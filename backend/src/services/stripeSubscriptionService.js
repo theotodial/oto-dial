@@ -1209,13 +1209,14 @@ export async function repairUserSubscriptionFromStripe({
 
 /**
  * Lightweight self-healing helper for login/protected requests.
+ * Uses lean queries for the fast path.
  */
 export async function selfHealSubscriptionForUser(userId, reason = "self_heal") {
   if (!userId) {
     return { success: false, skipped: true, reason: "missing_user_id" };
   }
 
-  const user = await User.findById(userId);
+  const user = await User.findById(userId).lean();
   if (!user || !user.stripeCustomerId) {
     return { success: false, skipped: true, reason: "missing_stripe_customer" };
   }
@@ -1223,7 +1224,9 @@ export async function selfHealSubscriptionForUser(userId, reason = "self_heal") 
   const activeSubscription = await Subscription.findOne({
     userId: user._id,
     status: "active"
-  });
+  })
+    .select("_id")
+    .lean();
 
   const userLinkedToActiveSub =
     !!activeSubscription &&
@@ -1236,13 +1239,35 @@ export async function selfHealSubscriptionForUser(userId, reason = "self_heal") 
   }
 
   const cooldownMs = 2 * 60 * 1000;
-  if (user.lastSubscriptionSyncAt && Date.now() - user.lastSubscriptionSyncAt.getTime() < cooldownMs) {
+  if (user.lastSubscriptionSyncAt && Date.now() - new Date(user.lastSubscriptionSyncAt).getTime() < cooldownMs) {
     return { success: false, skipped: true, reason: "cooldown" };
   }
 
   return repairUserSubscriptionFromStripe({
     userId: user._id,
     reason
+  });
+}
+
+/** Throttle map: avoid queuing duplicate background heals */
+const bgHealQueued = new Map();
+const BG_HEAL_DEBOUNCE_MS = 45 * 1000;
+
+/**
+ * Non-blocking Stripe self-heal for read paths (subscription GET, middleware).
+ * Does not delay HTTP responses — critical for dashboard performance.
+ */
+export function scheduleBackgroundSelfHeal(userId, reason = "background_heal") {
+  if (!userId) return;
+  const key = String(userId);
+  const now = Date.now();
+  const nextOk = bgHealQueued.get(key) || 0;
+  if (now < nextOk) return;
+  bgHealQueued.set(key, now + BG_HEAL_DEBOUNCE_MS);
+  setImmediate(() => {
+    selfHealSubscriptionForUser(userId, reason).catch((e) =>
+      console.warn(`⚠️ Background self-heal (${reason}):`, e?.message || e)
+    );
   });
 }
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
 import API from '../api';
 import { trackSubscription } from '../utils/analytics';
 
@@ -27,6 +28,11 @@ function Billing() {
   const isMountedRef = useRef(true);
   const [searchParams] = useSearchParams();
   const { user, isAuthenticated } = useAuth();
+  const { subscription, refreshSubscription } = useSubscription();
+
+  useEffect(() => {
+    setCurrentSubscription(subscription);
+  }, [subscription]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -36,7 +42,6 @@ function Billing() {
     fetchBalance();
     fetchPlans();
     fetchAddonPlans();
-    fetchCurrentSubscription();
     
     // Check for successful checkout and poll for backend activation.
     // Stripe webhooks can arrive a few seconds after redirect.
@@ -56,25 +61,23 @@ function Billing() {
         if (!isMountedRef.current || cancelled) return;
         attempts += 1;
 
-        const subResponse = await API.get('/api/subscription');
+        const subData = await refreshSubscription();
         if (!isMountedRef.current || cancelled) return;
 
         const hasActivePlan =
-          !subResponse.error &&
-          subResponse.data &&
-          subResponse.data.planName !== "No Plan";
+          subData && subData.planName !== "No Plan";
 
         if (hasActivePlan) {
-          setCurrentSubscription(subResponse.data);
+          setCurrentSubscription(subData);
           setSuccess(
             isAddonCheckout
               ? 'Add-on purchase successful. Your account is updated.'
               : 'Subscription activated successfully.'
           );
 
-          if (!isAddonCheckout && user?.id && subResponse.data?.subscription?._id) {
+          if (!isAddonCheckout && user?.id && subData?.subscription?._id) {
             try {
-              await trackSubscription(user.id, subResponse.data.subscription._id);
+              await trackSubscription(user.id, subData.subscription._id);
             } catch (err) {
               console.warn('Could not track subscription:', err);
             }
@@ -103,15 +106,7 @@ function Billing() {
       }
       isMountedRef.current = false;
     };
-  }, [searchParams, user, isAuthenticated]);
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchCurrentSubscription();
-    } else {
-      setCurrentSubscription(null);
-    }
-  }, [isAuthenticated]);
+  }, [searchParams, user, isAuthenticated, refreshSubscription]);
 
   const fetchPlans = async () => {
     if (!isMountedRef.current) return;
@@ -243,31 +238,6 @@ function Billing() {
     } catch (err) {
       console.error('Failed to fetch add-ons:', err);
       setAddonPlans([]);
-    }
-  };
-
-  const fetchCurrentSubscription = async () => {
-    if (!isMountedRef.current) return;
-
-    if (!isAuthenticated) {
-      setCurrentSubscription(null);
-      return;
-    }
-
-    try {
-      const response = await API.get('/api/subscription');
-
-      if (!isMountedRef.current) return;
-
-      if (response.error || !response.data) {
-        setCurrentSubscription(null);
-        return;
-      }
-
-      setCurrentSubscription(response.data);
-    } catch (err) {
-      console.error('Failed to fetch current subscription:', err);
-      setCurrentSubscription(null);
     }
   };
 

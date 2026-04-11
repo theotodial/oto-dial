@@ -1,5 +1,5 @@
-import dotenv from "dotenv";
-dotenv.config();
+// Env must load before any route/service reads process.env (see loadEnv.js — dotenv + multi-path .env).
+import "./loadEnv.js";
 
 import express from "express";
 import cors from "cors";
@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import connectDB from "./config/db.js";
 import { getTelnyx } from "./config/telnyx.js";
 import { validateEnv } from "./src/utils/envValidator.js";
+import { sendEmailSafe, logResendConfigAtStartup } from "./src/services/email.service.js";
 import { ensureStripeCatalogConsistency } from "./src/services/stripeCatalogBootstrapService.js";
 import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
 
@@ -21,7 +22,20 @@ import loadSubscription from "./src/middleware/loadSubscription.js";
 // ========================
 // ENV VALIDATION
 // ========================
+if (!String(process.env.RESEND_API_KEY || "").trim()) {
+  console.warn(
+    "⚠️ RESEND_API_KEY is not set — email (verification, test-email, etc.) will not work until you add it to backend/.env"
+  );
+}
+
 validateEnv();
+
+const _resendKey = String(process.env.RESEND_API_KEY || "").trim();
+if (_resendKey && !_resendKey.startsWith("re_")) {
+  console.warn(
+    "⚠️ RESEND_API_KEY should start with re_. Email sending will fail until you set a real key in backend/.env — https://resend.com/api-keys"
+  );
+}
 
 // ========================
 // ROUTES
@@ -30,6 +44,8 @@ import authRoutes from "./src/routes/auth.js";
 import affiliateAuthRoutes from "./src/routes/affiliateAuth.js";
 import affiliateRoutes from "./src/routes/affiliateRoutes.js";
 import callRoutes from "./src/routes/callRoutes.js";
+
+console.log("[CALL ROUTES LOADED] callRoutes module imported");
 import dialerRoutes from "./src/routes/dialerRoutes.js";
 import numberRoutes from "./src/routes/numberRoutes.js";
 import telnyxNumbersRoutes from "./src/routes/telnyxNumbers.js";
@@ -38,6 +54,8 @@ import subscriptionRoutes from "./src/routes/subscription.js";
 import smsRoutes from "./src/routes/smsRoutes.js";
 import stripeCheckoutRoutes from "./src/routes/stripeCheckoutRoutes.js";
 import stripeWebhookRoutes from "./src/routes/stripeWebhookRoutes.js";
+import stripeEmailWebhook from "./src/routes/stripe-email-webhook.js";
+import resendWebhook from "./src/routes/resend-webhook.js";
 import adminRoutes from "./src/routes/admin/adminRoutes.js";
 import adminAuthRoutes from "./src/routes/admin/adminAuth.js";
 import contactRoutes from "./src/routes/contactRoutes.js";
@@ -155,6 +173,15 @@ console.log("ENV CHECK AT BOOT:");
 console.log("TELNYX_API_KEY =", process.env.TELNYX_API_KEY ? "✅ set" : "❌ missing");
 console.log("STRIPE_SECRET_KEY =", process.env.STRIPE_SECRET_KEY ? "✅ set" : "❌ missing");
 console.log("JWT_SECRET =", process.env.JWT_SECRET ? "✅ set" : "❌ missing");
+console.log("RESEND_API_KEY =", process.env.RESEND_API_KEY ? "✅ set" : "❌ missing (emails will not send)");
+console.log("APP_URL =", process.env.APP_URL ? "✅ set" : "⚠️ unset");
+console.log("FRONTEND_URL =", process.env.FRONTEND_URL ? "✅ set" : "⚠️ unset (post-verify redirect defaults to APP_URL / localhost:3000)");
+console.log(
+  "BACKEND_URL =",
+  process.env.BACKEND_URL ? "✅ set (verification email links hit this host)" : "⚠️ unset (links use FRONTEND_URL / APP_URL — set if API is on api.*)"
+);
+console.log("🌐 APP_URL:", process.env.APP_URL || "(not set)");
+logResendConfigAtStartup();
 const uri = process.env.MONGODB_URI;
 console.log("MONGODB_URI =", uri ? uri.replace(/:[^:@]+@/, ":****@") : "❌ missing");
 
@@ -185,9 +212,100 @@ app.use(
   express.raw({ type: "application/json" }),
   stripeWebhookRoutes
 );
+app.use("/api/webhooks", stripeEmailWebhook);
 
 app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
+
+// Response-time logging (subscription / me are hot paths for perf tuning)
+app.use((req, res, next) => {
+  const path = req.originalUrl || req.url || "";
+  const hot =
+    path.startsWith("/api/subscription") ||
+    path === "/api/users/me" ||
+    path.startsWith("/api/admin/");
+  const t0 = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - t0;
+    if (hot) {
+      console.log(`⏱ ${ms}ms ${req.method} ${path} → ${res.statusCode}`);
+    } else if (ms >= 1200) {
+      console.log(`⏱ slow ${ms}ms ${req.method} ${path} → ${res.statusCode}`);
+    }
+  });
+  next();
+});
+
+// Resend lifecycle webhook (JSON body) — separate from Stripe raw webhooks above
+app.use("/api/webhooks/resend", resendWebhook);
+
+/**
+ * Debug only: confirm RESEND_API_KEY + domain. Set TEST_EMAIL_TO in .env.
+ * GET /api/test-email
+ */
+app.get("/api/test-email", async (req, res) => {
+  const apiKey = String(process.env.RESEND_API_KEY || "").trim();
+  const keyLooksPlaceholder =
+    !apiKey ||
+    /^REPLACE_WITH/i.test(apiKey) ||
+    (apiKey.length > 0 && !apiKey.startsWith("re_"));
+
+  const to = (process.env.TEST_EMAIL_TO || "").trim();
+  console.log("📧 [test-email] TEST_EMAIL_TO set:", Boolean(to));
+  console.log(
+    "Using API key:",
+    keyLooksPlaceholder ? "(missing or placeholder)" : `${apiKey.slice(0, 5)}…`
+  );
+
+  if (keyLooksPlaceholder) {
+    return res.status(503).json({
+      success: false,
+      error:
+        "RESEND_API_KEY is missing or still a placeholder. Set a real key (re_…) in backend/.env, save the file, and restart the server. Values in backend/.env override repo-root .env.",
+    });
+  }
+
+  if (to && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    console.error("❌ [test-email] TEST_EMAIL_TO is not a valid email:", to);
+    return res.status(400).json({
+      success: false,
+      error:
+        "TEST_EMAIL_TO must be a real email address (e.g. you@gmail.com). Fix backend/.env — do not use the env validator description text.",
+    });
+  }
+  if (!to) {
+    console.error("❌ [test-email] TEST_EMAIL_TO is not set in environment");
+    return res.status(503).json({
+      success: false,
+      error:
+        "TEST_EMAIL_TO is not set. Add TEST_EMAIL_TO=you@example.com to backend/.env, save, and restart. If you use a root .env, ensure backend/.env includes this line (backend/.env wins).",
+    });
+  }
+  console.log("📧 [test-email] recipient:", to);
+  const result = await sendEmailSafe(
+    {
+      to,
+      subject: "OTODIAL — test email",
+      html: "<p>If you received this, Resend and the OTODIAL email service are working.</p>",
+      emailType: "test_email",
+      templateUsed: "inline_test_html"
+    },
+    "test_email"
+  );
+  if (result == null) {
+    return res.status(500).json({
+      success: false,
+      error: "Email send failed — see server logs (RESEND_API_KEY / domain verification)."
+    });
+  }
+  return res.json({
+    success: true,
+    message: "Test email dispatched; check Resend dashboard and inbox.",
+    to,
+    resend: result?.data ?? result ?? null
+  });
+});
+
 app.use("/uploads", express.static(backendUploadsDir));
 app.use("/api/uploads", express.static(backendUploadsDir));
 
@@ -238,7 +356,8 @@ app.use("/webhooks/telnyx", telnyxWebhookRoutes);
 // ========================
 // PUBLIC
 // ========================
-app.use("/api/auth", authRoutes);
+// Mount auth at /api/auth and /auth so verification works if a reverse proxy strips the /api prefix.
+app.use(["/api/auth", "/auth"], authRoutes);
 app.use("/api/affiliate/auth", affiliateAuthRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/admin/auth", adminAuthRoutes); // Admin auth (no auth middleware needed for login)
@@ -256,6 +375,7 @@ app.use("/api/dialer", authenticateUser, loadSubscription, dialerRoutes);
 app.use("/api/numbers", authenticateUser, loadSubscription, numberRoutes);
 app.use("/api/numbers", authenticateUser, loadSubscription, telnyxNumbersRoutes);
 app.use("/api/calls", authenticateUser, loadSubscription, callRoutes);
+console.log("[CALL ROUTES MOUNTED] POST/GET /api/calls → authenticateUser + loadSubscription + callRoutes");
 app.use("/api/sms", authenticateUser, loadSubscription, smsRoutes);
 app.use("/api/messages", authenticateUser, loadSubscription, messageRoutes);
 app.use("/api/contacts", authenticateUser, contactRoutes);

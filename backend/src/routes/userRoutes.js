@@ -2,7 +2,7 @@ import express from "express";
 import multer from "multer";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
-import { selfHealSubscriptionForUser } from "../services/stripeSubscriptionService.js";
+import { scheduleBackgroundSelfHeal } from "../services/stripeSubscriptionService.js";
 
 const router = express.Router();
 const upload = multer({
@@ -39,6 +39,7 @@ router.get("/profile", async (req, res) => {
         identityVerification: user.identityVerification || null,
         role: user.role,
         status: user.status,
+        isEmailVerified: user.isEmailVerified !== false,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
       }
@@ -54,11 +55,7 @@ router.get("/profile", async (req, res) => {
  */
 router.get("/me", async (req, res) => {
   try {
-    try {
-      await selfHealSubscriptionForUser(req.user._id, "users_me");
-    } catch (healErr) {
-      console.warn(`⚠️ /users/me self-heal failed for ${req.user._id}:`, healErr.message);
-    }
+    scheduleBackgroundSelfHeal(req.user._id, "users_me");
 
     const subscription = req.subscription;
     const user = await User.findById(req.user._id).select('-password -sessions');
@@ -73,7 +70,8 @@ router.get("/me", async (req, res) => {
         name: user.name,
         phone: user.phone,
         company: user.company,
-        role: user.role
+        role: user.role,
+        isEmailVerified: user.isEmailVerified !== false
       },
       subscription: subscription
         ? {

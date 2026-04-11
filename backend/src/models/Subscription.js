@@ -167,6 +167,8 @@ const subscriptionSchema = new mongoose.Schema(
   }
 );
 
+subscriptionSchema.index({ userId: 1, status: 1 });
+
 const Subscription = mongoose.model("Subscription", subscriptionSchema);
 
 export default Subscription;

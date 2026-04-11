@@ -117,4 +117,6 @@ const phoneNumberSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+phoneNumberSchema.index({ userId: 1, status: 1 });
+
 export default mongoose.model("PhoneNumber", phoneNumberSchema);

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { SubscriptionProvider } from './context/SubscriptionContext';
 import { CallProvider } from './context/CallContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Navbar from './components/Navbar';
@@ -8,6 +9,7 @@ import DashboardLayout from './components/DashboardLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import GlobalCallOverlay from './components/GlobalCallOverlay';
+import EmailVerificationBanner from './components/EmailVerificationBanner';
 import AnalyticsTracker from './components/AnalyticsTracker';
 import Home from './pages/Home';
 
@@ -20,6 +22,7 @@ function HomeOrRedirect() {
 import Signup from './pages/Signup';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import OAuthConsent from './pages/OAuthConsent';
 import OAuthSuccess from './pages/OAuthSuccess';
 import Recents from './pages/Recents';
@@ -68,6 +71,7 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider>
         <AuthProvider>
+          <SubscriptionProvider>
           <CallProvider>
           <BrowserRouter>
             {/* Analytics Tracker - tracks page views and user behavior */}
@@ -75,6 +79,7 @@ function App() {
             
             {/* Single call UI: GlobalCallOverlay only — do not add a second incoming/embed layer */}
             <GlobalCallOverlay />
+            <EmailVerificationBanner />
             
       <Routes>
             {/* Public Routes - Accessible to everyone, redirects if authenticated */}
@@ -107,6 +112,16 @@ function App() {
                   <Navbar />
                   <ForgotPassword />
                 </>
+          }
+        />
+
+        <Route
+          path="/reset-password"
+          element={
+            <>
+              <Navbar />
+              <ResetPassword />
+            </>
           }
         />
             
@@ -520,6 +535,7 @@ function App() {
           </Routes>
       </BrowserRouter>
           </CallProvider>
+          </SubscriptionProvider>
       </AuthProvider>
     </ThemeProvider>
     </ErrorBoundary>

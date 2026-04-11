@@ -1,11 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
 import API from '../api';
 
 function SubscriptionDetails() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { refreshSubscription } = useSubscription();
   const [subscription, setSubscription] = useState(null);
   const [statistics, setStatistics] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -14,43 +16,31 @@ function SubscriptionDetails() {
   const [cancelling, setCancelling] = useState(false);
   const isMountedRef = useRef(true);
 
-  useEffect(() => {
-    isMountedRef.current = true;
-    fetchSubscriptionDetails();
-    
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  const fetchSubscriptionDetails = async () => {
+  const fetchSubscriptionDetails = useCallback(async () => {
     if (!isMountedRef.current) return;
-    
+
     setLoading(true);
     setError('');
 
     try {
-      // Fetch subscription details
-      const subscriptionRes = await API.get('/api/subscription');
-      
+      const subData = await refreshSubscription();
+
       if (!isMountedRef.current) return;
 
-      if (subscriptionRes.error) {
+      if (!subData) {
         setError('Failed to load subscription details');
         setSubscription(null);
       } else {
-        setSubscription(subscriptionRes.data);
+        setSubscription(subData);
       }
 
-      // Fetch call and SMS statistics
       const statsRes = await API.get('/api/usage/statistics').catch(() => ({ error: true }));
-      
+
       if (!isMountedRef.current) return;
 
       if (!statsRes.error && statsRes.data) {
         setStatistics(statsRes.data);
       } else {
-        // Set default empty stats
         setStatistics({
           calls: { made: 0, received: 0, rings: 0, total: 0 },
           sms: { sent: 0, received: 0, total: 0 }
@@ -65,7 +55,16 @@ function SubscriptionDetails() {
         setLoading(false);
       }
     }
-  };
+  }, [refreshSubscription]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    fetchSubscriptionDetails();
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [fetchSubscriptionDetails]);
 
   const handleCancelSubscription = async () => {
     if (!confirm('Are you sure you want to cancel your subscription? No refunds will be issued. Your account will remain active until the end of the current billing cycle.')) {

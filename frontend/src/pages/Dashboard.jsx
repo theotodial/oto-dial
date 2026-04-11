@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
 import { useMobileSidebar } from '../context/MobileSidebarContext';
 import API from '../api';
 import { getLocationFromAreaCode } from '../utils/areaCodeMapping';
@@ -60,7 +61,8 @@ const MenuIcon = () => (
 
 function Dashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
+  const { subscription, refreshSubscription } = useSubscription();
   const { toggleSidebar, isOpen: sidebarOpen } = useMobileSidebar();
 
   const [balance, setBalance] = useState(0);
@@ -82,6 +84,35 @@ function Dashboard() {
   const [addonsDrawerOpen, setAddonsDrawerOpen] = useState(false);
   const isMountedRef = useRef(true);
 
+  useEffect(() => {
+    if (subscription == null) return;
+
+    const inactive =
+      subscription.status === 'inactive' ||
+      subscription.planName === 'No Plan';
+
+    if (inactive) {
+      setPackageDetails({
+        remainingMinutes: 2500,
+        remainingSMS: 200,
+        planName: 'BASIC PLAN',
+        displayUnlimited: false
+      });
+      return;
+    }
+
+    const isUnlimitedPlan =
+      Boolean(subscription.displayUnlimited) ||
+      String(subscription.planType || '').toLowerCase() === 'unlimited' ||
+      String(subscription.planName || '').toLowerCase().includes('unlimited');
+    setPackageDetails({
+      remainingMinutes: isUnlimitedPlan ? '∞' : (subscription.minutesRemaining || 0),
+      remainingSMS: isUnlimitedPlan ? '∞' : (subscription.smsRemaining || 0),
+      planName: subscription.planName || 'No Plan',
+      displayUnlimited: isUnlimitedPlan
+    });
+  }, [subscription]);
+
   /* ================= FETCH DASHBOARD ================= */
 
   const fetchData = async () => {
@@ -89,12 +120,10 @@ function Dashboard() {
     setError('');
     setSuccess('');
 
-    const [walletRes, numbersRes, subscriptionRes, addonsRes, activationHealthRes] = await Promise.all([
+    const [walletRes, numbersRes, addonsRes] = await Promise.all([
       API.get('/api/wallet'),
       API.get('/api/numbers'),
-      API.get('/api/subscription').catch(() => ({ error: true })),
-      API.get('/api/subscription/addons').catch(() => ({ error: true })),
-      API.get('/api/subscription/activation-health').catch(() => ({ error: true }))
+      API.get('/api/subscription/addons').catch(() => ({ error: true }))
     ]);
 
     // Wallet - handle gracefully, don't block render
@@ -103,28 +132,6 @@ function Dashboard() {
       setBalance(0);
     } else {
       setBalance(walletRes.data?.balance ?? 0);
-    }
-
-    // Package details - handle gracefully
-    if (!subscriptionRes.error && subscriptionRes.data) {
-      const isUnlimitedPlan =
-        Boolean(subscriptionRes.data.displayUnlimited) ||
-        String(subscriptionRes.data.planType || '').toLowerCase() === 'unlimited' ||
-        String(subscriptionRes.data.planName || '').toLowerCase().includes('unlimited');
-      setPackageDetails({
-        remainingMinutes: isUnlimitedPlan ? '∞' : (subscriptionRes.data.minutesRemaining || 0),
-        remainingSMS: isUnlimitedPlan ? '∞' : (subscriptionRes.data.smsRemaining || 0),
-        planName: subscriptionRes.data.planName || 'No Plan',
-        displayUnlimited: isUnlimitedPlan
-      });
-    } else {
-      // Default values if subscription endpoint doesn't exist
-      setPackageDetails({
-        remainingMinutes: 2500,
-        remainingSMS: 200,
-        planName: 'BASIC PLAN',
-        displayUnlimited: false
-      });
     }
 
     // Numbers - handle gracefully, don't block render
@@ -148,26 +155,47 @@ function Dashboard() {
       setAddonPlans([]);
     }
 
+    if (isMountedRef.current) {
+      setLoading(false);
+    }
+
+    const activationHealthRes = await API.get('/api/subscription/activation-health').catch(() => ({
+      error: true
+    }));
+    if (!isMountedRef.current) return;
     if (!activationHealthRes.error && activationHealthRes.data?.success) {
       const issueData = activationHealthRes.data;
       setActivationIssue(issueData.showIssueReport ? issueData : null);
     } else {
       setActivationIssue(null);
     }
-
-    if (isMountedRef.current) {
-      setLoading(false);
-    }
   };
 
   useEffect(() => {
     isMountedRef.current = true;
-    fetchData();
-    
+    const verified = new URLSearchParams(window.location.search).get("verified");
+
+    (async () => {
+      await fetchData();
+      if (!isMountedRef.current) return;
+      if (verified === "1") {
+        setSuccess("Email verified successfully.");
+        await refreshUser();
+        await refreshSubscription();
+      } else if (verified === "0") {
+        setError(
+          "Email verification failed or the link expired. Try resending verification from the banner on your account."
+        );
+      }
+      if (verified === "1" || verified === "0") {
+        navigate("/dashboard", { replace: true });
+      }
+    })();
+
     return () => {
       isMountedRef.current = false;
     };
-  }, []);
+  }, [navigate, refreshUser, refreshSubscription]);
 
   /* ================= ACTIONS ================= */
 

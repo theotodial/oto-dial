@@ -2,7 +2,7 @@ import Subscription from "../models/Subscription.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import Plan from "../models/Plan.js";
 import User from "../models/User.js";
-import { selfHealSubscriptionForUser } from "./stripeSubscriptionService.js";
+import { scheduleBackgroundSelfHeal } from "./stripeSubscriptionService.js";
 import { getActiveAddonAmounts } from "./subscriptionAddonCreditService.js";
 
 // Default limits if subscription doesn't have them set
@@ -21,23 +21,11 @@ export async function loadUserSubscription(userId) {
   }).lean();
 
   if (!subscription) {
-    const user = await User.findById(userId).select("stripeCustomerId");
+    const user = await User.findById(userId).select("stripeCustomerId").lean();
     if (user?.stripeCustomerId) {
-      try {
-        await selfHealSubscriptionForUser(userId, "load_subscription");
-      } catch (healErr) {
-        console.warn("⚠️ Subscription self-heal failed:", healErr.message);
-      }
-
-      subscription = await Subscription.findOne({
-        userId,
-        status: "active"
-      }).lean();
+      scheduleBackgroundSelfHeal(userId, "load_subscription");
     }
-
-    if (!subscription) {
-      return null;
-    }
+    return null;
   }
 
   // Fix subscriptions with missing or zero limits
@@ -46,7 +34,6 @@ export async function loadUserSubscription(userId) {
     !subscription.limits.minutesTotal;
 
   if (limitsNeedFix) {
-    console.log("⚠️ Subscription missing limits, fixing:", subscription._id);
     
     // Try to get limits from plan
     let limits = DEFAULT_LIMITS;
@@ -73,13 +60,14 @@ export async function loadUserSubscription(userId) {
 
     // Reload subscription
     subscription = await Subscription.findById(subscription._id).lean();
-    console.log("✅ Subscription limits fixed:", subscription.limits);
   }
 
   const numbers = await PhoneNumber.find({
     userId,
     status: "active",
-  }).lean();
+  })
+    .select("phoneNumber")
+    .lean();
 
   const smsTotal = subscription.limits?.smsTotal || DEFAULT_LIMITS.smsTotal;
   const minutesTotal = subscription.limits?.minutesTotal || DEFAULT_LIMITS.minutesTotal;
@@ -98,16 +86,6 @@ export async function loadUserSubscription(userId) {
   // Convert remaining seconds back to minutes for display (with decimals)
   const minutesRemaining = secondsRemaining / 60;
   const smsRemaining = Math.max(0, smsTotal + smsAddons - smsUsed);
-
-  console.log("📊 Subscription loaded:", {
-    userId,
-    smsTotal,
-    smsUsed,
-    smsRemaining,
-    minutesTotal,
-    secondsUsed,
-    minutesRemaining: minutesRemaining.toFixed(2)
-  });
 
   return {
     id: subscription._id,

@@ -25,7 +25,7 @@ function AdminUsers() {
       const params = new URLSearchParams();
       if (search) params.append('search', search);
       params.append('page', page);
-      params.append('limit', '50');
+      params.append('limit', '20');
       
       const response = await API.get(`/api/admin/users?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` }

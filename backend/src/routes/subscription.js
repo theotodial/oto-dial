@@ -4,13 +4,14 @@ import Plan from "../models/Plan.js";
 import StripeInvoice from "../models/StripeInvoice.js";
 import User from "../models/User.js";
 import authMiddleware from "../middleware/authenticateUser.js";
-import { selfHealSubscriptionForUser } from "../services/stripeSubscriptionService.js";
+import { scheduleBackgroundSelfHeal } from "../services/stripeSubscriptionService.js";
 import {
   buildPublicPlanPayload,
   applyPlanSnapshotToSubscription
 } from "../services/subscriptionPlanSnapshotService.js";
 import { isUnlimitedSubscription } from "../services/unlimitedUsageService.js";
 import { getActiveAddonAmounts } from "../services/subscriptionAddonCreditService.js";
+import { maybeSendUsageWarningEmail } from "../services/usageWarningEmailService.js";
 
 const router = express.Router();
 
@@ -30,11 +31,7 @@ const getSubscriptionHandler = async (req, res) => {
   try {
     const userId = req.userId;
 
-    try {
-      await selfHealSubscriptionForUser(userId, "subscription_read");
-    } catch (healErr) {
-      console.warn(`⚠️ /api/subscription self-heal failed for ${userId}:`, healErr.message);
-    }
+    scheduleBackgroundSelfHeal(userId, "subscription_read");
 
     // Get subscription - include both active and cancelled (cancelled subscriptions are still active until periodEnd)
     let subscription = await Subscription.findOne({
@@ -43,24 +40,30 @@ const getSubscriptionHandler = async (req, res) => {
         { status: "active" },
         { status: "cancelled" }
       ]
-    }).populate("planId").sort({ createdAt: -1 });
+    })
+      .populate({ path: "planId", select: "name displayUnlimited" })
+      .sort({ createdAt: -1 })
+      .lean();
 
     // Self-heal legacy race-condition records:
     // user is marked active, but subscription got reverted to pending_activation.
     if (!subscription) {
-      const user = await User.findById(userId).select("subscriptionActive activeSubscriptionId");
+      const user = await User.findById(userId)
+        .select("subscriptionActive activeSubscriptionId")
+        .lean();
       if (user?.subscriptionActive && user.activeSubscriptionId) {
         const pendingSubscription = await Subscription.findOne({
           _id: user.activeSubscriptionId,
           userId,
           status: "pending_activation"
-        }).populate("planId");
+        });
 
         if (pendingSubscription) {
           pendingSubscription.status = "active";
           await pendingSubscription.save();
-          subscription = pendingSubscription;
-          console.log(`✅ Auto-healed pending subscription ${pendingSubscription._id} for user ${userId}`);
+          subscription = await Subscription.findById(pendingSubscription._id)
+            .populate({ path: "planId", select: "name displayUnlimited" })
+            .lean();
         }
       }
     }
@@ -117,6 +120,22 @@ const getSubscriptionHandler = async (req, res) => {
         }
       : subscription;
 
+    // Usage warning email (>80% voice or SMS) — fire-and-forget, throttled per user
+    if (!unlimited && req.user?.email) {
+      const secondsTotalSafe = Math.max(1, minutesTotal * 60);
+      const smsTotalEff =
+        (subscription.limits?.smsTotal || 0) + addonSmsActive;
+      const smsTotalSafe = Math.max(1, smsTotalEff);
+      const minutesPercent = secondsUsed / secondsTotalSafe;
+      const smsPercent = (subscription.usage?.smsUsed || 0) / smsTotalSafe;
+      void maybeSendUsageWarningEmail(userId, {
+        minutesPercent,
+        smsPercent,
+        userEmail: req.user.email,
+        displayName: req.user.name || req.user.firstName
+      });
+    }
+
     res.json({
       planName: subscription.planId?.name || subscription.planName || "Active Plan",
       planType: subscription.planType || (unlimited ? "unlimited" : null),
@@ -154,11 +173,17 @@ router.get("/activation-health", authMiddleware, async (req, res) => {
       Subscription.findOne({
         userId,
         status: "active"
-      }).sort({ updatedAt: -1 }),
+      })
+        .select("_id updatedAt")
+        .sort({ updatedAt: -1 })
+        .lean(),
       StripeInvoice.findOne({
         userId,
         status: "paid"
-      }).sort({ issuedAt: -1, createdAt: -1 })
+      })
+        .select("invoiceId customerId amountPaid currency issuedAt createdAt")
+        .sort({ issuedAt: -1, createdAt: -1 })
+        .lean()
     ]);
 
     const recentPaidWindowMs = 24 * 60 * 60 * 1000;
