@@ -3,17 +3,17 @@ import { useLocation } from 'react-router-dom';
 import ActiveCallChrome from './ActiveCallChrome';
 
 /**
- * Full-viewport call UI on routes other than /recents (xl+).
- * On /recents at 1280px+, the dialer column mounts ActiveCallChrome instead so the call UI stays in the dialer strip.
+ * Full-viewport call UI on routes other than /recents (lg+ / 1024px).
+ * On /recents at that width, the dialer column mounts ActiveCallChrome instead so the call UI stays in the dialer strip.
  */
 export default function GlobalCallOverlay() {
   const location = useLocation();
   const [isDesktop, setIsDesktop] = useState(() =>
-    typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches
+    typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
   );
 
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 1280px)');
+    const mq = window.matchMedia('(min-width: 1024px)');
     setIsDesktop(mq.matches);
     const fn = () => setIsDesktop(mq.matches);
     mq.addEventListener('change', fn);

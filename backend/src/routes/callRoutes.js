@@ -1,6 +1,5 @@
 import express from "express";
 import axios from "axios";
-import authenticateUser from "../middleware/authenticateUser.js";
 import requireActiveSubscription from "../middleware/requireActiveSubscription.js";
 import Call from "../models/Call.js";
 import PhoneNumber from "../models/PhoneNumber.js";
@@ -15,8 +14,6 @@ import { recordCallCost } from "../services/telnyxCostCalculator.js";
 import { TERMINAL_STATUSES } from "../utils/callStateMachine.js";
 
 const router = express.Router();
-
-router.use(authenticateUser);
 
 const skipSubscriptionForCallCreate =
   process.env.CALL_DEBUG_SKIP_SUBSCRIPTION === "true";
@@ -244,7 +241,7 @@ router.get("/", async (req, res) => {
     
     const limitRaw = parseInt(req.query.limit, 10);
     const limit = Number.isFinite(limitRaw)
-      ? Math.min(Math.max(limitRaw, 1), 50)
+      ? Math.min(Math.max(limitRaw, 1), 20)
       : 20;
     
     const calls = await Call.find(query)

@@ -4,6 +4,8 @@ import SupportTicket from "../../models/SupportTicket.js";
 import User from "../../models/User.js";
 import Subscription from "../../models/Subscription.js";
 import { repairUserSubscriptionFromStripe } from "../../services/stripeSubscriptionService.js";
+import { sendEmailSafe } from "../../services/email.service.js";
+import { frontBase, supportMessageEmail } from "../../emails/templates.js";
 
 const router = express.Router();
 
@@ -228,6 +230,30 @@ router.patch("/:id", requireAdmin, async (req, res) => {
         fromEmail: req.user?.email || "admin@otodial.com",
         createdAt: new Date()
       });
+
+      const recipient = String(ticket.email || "").trim();
+      if (recipient) {
+        const base = frontBase();
+        const ticketUrl = `${base}/support`;
+        const mailResult = await sendEmailSafe(
+          {
+            to: recipient,
+            subject: `Re: ${ticket.subject} — OTODIAL Support`,
+            html: supportMessageEmail({
+              name: ticket.name || recipient.split("@")[0] || "there",
+              message: reply.trim(),
+              subject: ticket.subject,
+              ticketUrl,
+            }),
+            emailType: "support_reply",
+            templateUsed: "supportMessageEmail",
+          },
+          "support_reply"
+        );
+        if (mailResult == null) {
+          console.warn("⚠️ Support reply email not delivered (see Resend logs). Ticket reply was saved.");
+        }
+      }
     }
 
     // Handle status update

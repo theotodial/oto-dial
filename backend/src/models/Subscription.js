@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { mongoPerformancePlugin } from "../utils/mongoPerformancePlugin.js";
 
 const subscriptionSchema = new mongoose.Schema(
   {
@@ -168,6 +169,8 @@ const subscriptionSchema = new mongoose.Schema(
 );
 
 subscriptionSchema.index({ userId: 1, status: 1 });
+subscriptionSchema.index({ userId: 1, createdAt: -1 });
+subscriptionSchema.plugin(mongoPerformancePlugin, { label: "subscription" });
 
 const Subscription = mongoose.model("Subscription", subscriptionSchema);
 

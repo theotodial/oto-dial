@@ -88,7 +88,7 @@ test("checkUnlimitedUsageBeforeAction blocks request when monthly limit would be
 
   assert.equal(result.allowed, false);
   assert.equal(result.reason, "limit_exceeded");
-  assert.equal(warnMock.mock.calls.length, 1);
+  assert.ok(warnMock.mock.calls.length >= 1);
   assert.equal(warnMock.mock.calls[0].arguments[0], "[limit_exceeded]");
   assert.match(String(warnMock.mock.calls[0].arguments[1]), /"reason":"pre_action_guard"/);
 });
@@ -202,6 +202,7 @@ test("incrementUnlimitedUsageAfterSuccess caps counters when race pushes usage p
 
 test("createSuspiciousActivityErrorPayload returns required API shape", () => {
   assert.deepEqual(createSuspiciousActivityErrorPayload(), {
+    success: false,
     error: "Suspicious activity detected. Please contact support."
   });
 });

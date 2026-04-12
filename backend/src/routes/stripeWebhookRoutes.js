@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import Stripe from "stripe";
 import {
   processCheckoutCompleted,
@@ -10,6 +11,11 @@ import {
 } from "../services/stripeSubscriptionService.js";
 import { createAdminNotification } from "../services/adminNotificationService.js";
 import { markAffiliateReferralPaid } from "../services/affiliateService.js";
+import User from "../models/User.js";
+import {
+  maybeSendInvoicePaymentFailedEmail,
+  maybeSendInvoicePaymentSuccessEmail
+} from "../services/transactionalInvoiceEmailService.js";
 
 const router = express.Router();
 
@@ -114,6 +120,32 @@ router.post("/", async (req, res) => {
         result = await processSubscriptionDeleted(event, stripe);
         break;
 
+      case "invoice.payment_failed": {
+        const invoice = event.data.object;
+        let user = null;
+        const mid = invoice.metadata || {};
+        if (mid.userId && mongoose.Types.ObjectId.isValid(String(mid.userId))) {
+          user = await User.findById(mid.userId).select("email name firstName").lean();
+        }
+        if (!user && invoice.customer) {
+          user = await User.findOne({ stripeCustomerId: invoice.customer })
+            .select("email name firstName")
+            .lean();
+        }
+        const to = user?.email || invoice.customer_email;
+        if (to) {
+          await maybeSendInvoicePaymentFailedEmail({
+            invoice,
+            toEmail: to,
+            name: user?.name || user?.firstName
+          }).catch((err) => {
+            console.warn("⚠️ Payment failed email helper error:", err.message);
+          });
+        }
+        result = { success: true };
+        break;
+      }
+
       default:
         console.log(`ℹ️ Unhandled event type: ${eventType}`);
         // Mark as processed even if unhandled (to prevent retries)
@@ -162,6 +194,15 @@ router.post("/", async (req, res) => {
       }).catch((err) => {
         console.warn("⚠️ Failed to create sale notification:", err.message);
       });
+
+      if (!result.skippedActivation && invoiceObject?.id) {
+        await maybeSendInvoicePaymentSuccessEmail({
+          invoice: invoiceObject,
+          userId: userId || null
+        }).catch((err) => {
+          console.warn("⚠️ Payment success email helper error:", err.message);
+        });
+      }
     }
 
     if (result.success) {

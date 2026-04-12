@@ -14,6 +14,10 @@ import { validateEnv } from "./src/utils/envValidator.js";
 import { sendEmailSafe, logResendConfigAtStartup } from "./src/services/email.service.js";
 import { ensureStripeCatalogConsistency } from "./src/services/stripeCatalogBootstrapService.js";
 import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
+import Subscription from "./src/models/Subscription.js";
+import SMS from "./src/models/SMS.js";
+import Contact from "./src/models/Contact.js";
+import Call from "./src/models/Call.js";
 
 import authenticateUser from "./src/middleware/authenticateUser.js";
 import requireAdmin from "./src/middleware/requireAdmin.js";
@@ -479,10 +483,37 @@ app.use((err, req, res, next) => {
 // ========================
 // START
 // ========================
+async function ensurePerformanceIndexes() {
+  await Promise.all([
+    Subscription.collection.createIndex(
+      { userId: 1, createdAt: -1 },
+      { name: "userId_1_createdAt_-1", background: true }
+    ),
+    SMS.collection.createIndex(
+      { user: 1, createdAt: -1 },
+      { name: "user_1_createdAt_-1", background: true }
+    ),
+    SMS.collection.createIndex(
+      { user: 1, direction: 1, createdAt: -1 },
+      { name: "user_1_direction_1_createdAt_-1", background: true }
+    ),
+    Contact.collection.createIndex(
+      { userId: 1, name: 1 },
+      { name: "userId_1_name_1", background: true }
+    ),
+    Call.collection.createIndex(
+      { user: 1, createdAt: -1 },
+      { name: "user_1_createdAt_-1", background: true }
+    ),
+  ]);
+  console.log("[MongoDB] Performance indexes synced");
+}
+
 async function startServer() {
   try {
     await connectDB();
     console.log("✅ Database connected");
+    await ensurePerformanceIndexes();
 
     try {
       const catalogFix = await ensureStripeCatalogConsistency();

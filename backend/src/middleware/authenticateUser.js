@@ -1,5 +1,28 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import {
+  cacheKeys,
+  getCachedJson,
+  setCachedJson,
+} from "../services/cache.service.js";
+
+const USER_CACHE_TTL_SECONDS = 60;
+const USER_SELECT =
+  "-password -sessions -__v";
+
+async function getCachedUserById(userId) {
+  const key = cacheKeys.userProfile(userId);
+  const cached = await getCachedJson(key);
+  if (cached) {
+    return cached;
+  }
+
+  const user = await User.findById(userId).select(USER_SELECT).lean();
+  if (user) {
+    await setCachedJson(key, user, USER_CACHE_TTL_SECONDS);
+  }
+  return user;
+}
 
 const authenticateUser = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -19,7 +42,7 @@ const authenticateUser = async (req, res, next) => {
     req.userId = decoded.userId;
 
     // 2️⃣ Load user from DB
-    const user = await User.findById(req.userId).lean();
+    const user = await getCachedUserById(req.userId);
 
     if (!user) {
       return res.status(401).json({ error: "User not found" });

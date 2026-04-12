@@ -3,7 +3,7 @@ import CallWindow from './CallWindow';
 
 /**
  * Shared active-call UI (expanded CallWindow + minimized banner).
- * @param {boolean} isDesktop — matchMedia xl (1280px), for incoming layout on global surface
+ * @param {boolean} isDesktop — wide viewport (lg+ / 1024px), for incoming layout on global surface
  * @param {boolean} dockMode — true: fills a relative parent (Recents dialer column); false: fixed fullscreen
  */
 export default function ActiveCallChrome({ isDesktop, dockMode = false }) {

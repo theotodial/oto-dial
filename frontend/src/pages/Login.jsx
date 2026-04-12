@@ -38,8 +38,8 @@ function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
+  const [infoMessage, setInfoMessage] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-
   const from = location.state?.from?.pathname || '/recents';
 
   useEffect(() => {
@@ -51,15 +51,36 @@ function Login() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const oauthError = params.get('oauth_error');
+    const verified = params.get('verified');
+
     if (oauthError) {
       setError(oauthError);
     }
-  }, [location.search]);
+    if (verified === '1') {
+      setInfoMessage('Email verified. You can sign in now.');
+    }
+    if (verified === '0') {
+      setError('Email verification failed or the link expired.');
+    }
+
+    if (verified !== null) {
+      navigate('/login', { replace: true });
+    }
+  }, [location.search, navigate]);
+
+  useEffect(() => {
+    const msg = location.state?.verifyEmailMessage;
+    if (msg) {
+      setInfoMessage(msg);
+      navigate('/login', { replace: true, state: {} });
+    }
+  }, [location.state?.verifyEmailMessage, navigate]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
     setError('');
     setSuccess('');
+    setInfoMessage('');
   };
 
   const handleSubmit = async (e) => {
@@ -103,6 +124,11 @@ function Login() {
         {success && (
           <div className="p-3 mb-4 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-lg text-sm whitespace-pre-line">
             {success}
+          </div>
+        )}
+        {infoMessage && (
+          <div className="p-3 mb-4 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-200 rounded-lg text-sm">
+            {infoMessage}
           </div>
         )}
         {error && <div className="p-3 mb-4 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-sm">{error}</div>}
@@ -171,6 +197,14 @@ function Login() {
               >
                 {showPassword ? <EyeOffIcon /> : <EyeIcon />}
               </button>
+            </div>
+            <div className="text-right mt-1">
+              <Link
+                to="/forgot-password"
+                className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
+              >
+                Forgot password?
+              </Link>
             </div>
           </div>
           <button

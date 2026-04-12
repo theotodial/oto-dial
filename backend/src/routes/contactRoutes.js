@@ -1,11 +1,7 @@
 import express from "express";
 import Contact from "../models/Contact.js";
-import authenticateUser from "../middleware/authenticateUser.js";
 
 const router = express.Router();
-
-// All routes require authentication
-router.use(authenticateUser);
 
 /**
  * GET /api/contacts
@@ -14,7 +10,7 @@ router.use(authenticateUser);
 router.get("/", async (req, res) => {
   try {
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 20);
     const skip = (page - 1) * limit;
 
     const [contacts, total] = await Promise.all([

@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { mongoPerformancePlugin } from "../utils/mongoPerformancePlugin.js";
 
 const callSchema = new mongoose.Schema(
   {
@@ -43,7 +44,6 @@ const callSchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      index: true
     },
 
     phoneNumber: {
@@ -192,5 +192,8 @@ const callSchema = new mongoose.Schema(
     versionKey: false
   }
 );
+
+callSchema.index({ user: 1, createdAt: -1 });
+callSchema.plugin(mongoPerformancePlugin, { label: "calls" });
 
 export default mongoose.model("Call", callSchema);

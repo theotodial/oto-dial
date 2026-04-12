@@ -15,10 +15,15 @@ function ForgotPassword() {
     setLoading(true);
 
     try {
-      await API.post('/api/auth/forgot-password', {
+      const res = await API.post('/api/auth/forgot-password', {
         email,
         redirectTo: `${window.location.origin}/reset-password`,
       });
+
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
 
       setSuccess(true);
       setEmail('');
@@ -47,7 +52,7 @@ function ForgotPassword() {
 
         {success && (
           <div className="p-3 mb-4 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-lg text-sm">
-            Password reset link sent! Please check your email inbox.
+            Password reset email sent
           </div>
         )}
 

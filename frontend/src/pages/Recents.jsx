@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
+import { useSubscription } from '../context/SubscriptionContext';
 import ActiveCallChrome from '../components/ActiveCallChrome';
 import { fetchAllContacts } from '../utils/fetchAllContacts';
 
@@ -139,6 +140,7 @@ function Recents() {
   const auth = useAuth();
   const user = auth?.user ?? null;
   const navigate = useNavigate();
+  const { subscription } = useSubscription();
   
   // WebRTC call context - with safe defaults
   const callContext = useCall();
@@ -161,11 +163,6 @@ function Recents() {
   const [inputMessage, setInputMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
-  const [subscriptionData, setSubscriptionData] = useState({
-    remainingSMS: 0,
-    minutesRemaining: 0,
-    planName: 'No Plan',
-  });
   const messagesEndRef = useRef(null);
   const suspiciousActivityText =
     'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
@@ -176,8 +173,14 @@ function Recents() {
   // Dialer state - MUST be declared before any conditional returns
   const [phoneNumber, setPhoneNumber] = useState('');
   const [userNumbers, setUserNumbers] = useState([]);
-  const [subscriptionActive, setSubscriptionActive] = useState(false);
   const [dialCountryCode, setDialCountryCode] = useState('+1');
+  const subscriptionActive = Boolean(subscription && subscription.planName !== 'No Plan');
+  const subscriptionData = {
+    remainingSMS: subscription?.smsRemaining || 0,
+    minutesRemaining: subscription?.minutesRemaining ?? 0,
+    planName: subscription?.planName || 'No Plan',
+  };
+
   const [showDialCountryDropdown, setShowDialCountryDropdown] = useState(false);
   /** True while outbound makeCall is in flight (before isInCall may update). */
   const [calling, setCalling] = useState(false);
@@ -233,6 +236,7 @@ function Recents() {
   const [unreadCounts, setUnreadCounts] = useState({}); // phoneNumber -> count
   const lastUnreadTotalRef = useRef(0);
   const notificationPermissionRef = useRef(null);
+  const pushSubscribeAttemptedRef = useRef(false);
 
   // Simple dialer country list (shared for desktop + mobile)
   const dialCountries = [
@@ -259,49 +263,24 @@ function Recents() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
   
-  // Subscription check - redirect if no subscription (only after loading completes)
   useEffect(() => {
-    if (!loading) {
-      const checkSubscription = async () => {
-        try {
-          const response = await API.get('/api/subscription').catch(() => ({ error: true }));
-          if (!isMountedRef.current) return;
-          
-          if (response.error || !response.data || response.data.planName === "No Plan") {
-            // No active subscription, redirect to dashboard
-            navigate('/dashboard', { replace: true });
-          }
-        } catch (err) {
-          console.warn('Subscription check failed:', err);
-        }
-      };
-      checkSubscription();
+    if (!loading && subscription && subscription.planName === 'No Plan') {
+      navigate('/dashboard', { replace: true });
     }
-  }, [loading, navigate]);
+  }, [loading, navigate, subscription]);
 
-  // Fetch user numbers and subscription - MUST be before conditional returns
+  // Fetch user numbers - MUST be before conditional returns
   useEffect(() => {
     const fetchDialerData = async () => {
       if (!isMountedRef.current) return;
       
       try {
-        const [numbersRes, subRes] = await Promise.all([
-          API.get('/api/numbers'),
-          API.get('/api/subscription').catch(() => ({ error: true }))
-        ]);
+        const numbersRes = await API.get('/api/numbers');
         
         if (!isMountedRef.current) return;
         
         if (!numbersRes.error) {
           setUserNumbers(numbersRes.data?.numbers || numbersRes.data || []);
-        }
-        if (!subRes.error && subRes.data?.planName !== "No Plan") {
-          setSubscriptionActive(true);
-          setSubscriptionData({
-            remainingSMS: subRes.data?.smsRemaining || 0,
-            minutesRemaining: subRes.data?.minutesRemaining ?? 0,
-            planName: subRes.data?.planName || 'No Plan',
-          });
         }
       } catch (err) {
         console.warn('Failed to fetch dialer data:', err);
@@ -414,6 +393,8 @@ function Recents() {
 
   // Web Push subscribe helper (so we get notifications when app is closed)
   const subscribeToPush = useCallback(async () => {
+    if (pushSubscribeAttemptedRef.current) return;
+    pushSubscribeAttemptedRef.current = true;
     try {
       const keyRes = await API.get('/api/push/vapid-public');
       const publicKey = keyRes?.data?.publicKey;
@@ -446,26 +427,7 @@ function Recents() {
     } else {
       notificationPermissionRef.current = Notification.permission;
     }
-    const pollInterval = setInterval(async () => {
-      if (!document.hidden || Notification.permission !== 'granted') return;
-      try {
-        const res = await API.get('/api/messages/unread-counts');
-        const counts = res?.data?.unreadCounts || {};
-        const total = Object.values(counts).reduce((a, b) => a + b, 0);
-        if (total > 0 && total > lastUnreadTotalRef.current) {
-          const firstThread = Object.keys(counts).find((p) => counts[p] > 0);
-          const name = firstThread ? (getContactNameRef.current(firstThread) || firstThread) : 'Someone';
-          new Notification('New message', {
-            body: total === 1 ? `Message from ${name}` : `You have ${total} unread messages`,
-            icon: '/favicon.ico'
-          });
-        }
-        lastUnreadTotalRef.current = total;
-      } catch (e) {
-        // ignore
-      }
-    }, 30000);
-    return () => clearInterval(pollInterval);
+    return undefined;
   }, []);
 
   // Update lastUnreadTotalRef when unreadCounts changes (so we don't re-notify on same count)

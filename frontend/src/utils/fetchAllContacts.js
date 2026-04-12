@@ -4,7 +4,7 @@ import API from '../api';
 export async function fetchAllContacts(maxPages = 40) {
   const all = [];
   for (let page = 1; page <= maxPages; page++) {
-    const res = await API.get('/api/contacts', { params: { page, limit: 50 } });
+    const res = await API.get('/api/contacts', { params: { page, limit: 20 } });
     if (res.error) break;
     const batch = res.data?.contacts || [];
     all.push(...batch);

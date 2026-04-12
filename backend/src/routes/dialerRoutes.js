@@ -1,158 +1,20 @@
 import express from "express";
 import axios from "axios";
-import { getTelnyx } from "../../config/telnyx.js";
 import Call from "../models/Call.js";
-import PhoneNumber from "../models/PhoneNumber.js";
 import { validateCallCountryLock } from "../middleware/countryLock.js";
-import { findRecentActiveCallForUser } from "../utils/callLifecycle.js";
+import { hangupTelnyxByCallDoc } from "../utils/telnyxHangup.js";
 
 const router = express.Router();
-const ACTIVE_STATUSES = ["queued", "dialing", "ringing", "in-progress", "answered"];
-const CALL_STATUSES = new Set([
-  "queued",
-  "dialing",
-  "ringing",
-  "in-progress",
-  "answered",
-  "completed",
-  "failed",
-  "missed"
-]);
 
 /**
- * POST /api/dialer/call
- * body: { to }
+ * POST /api/dialer/call — removed (WebRTC-only outbound; use POST /api/calls + TelnyxRTC.newCall).
  */
 router.post("/call", validateCallCountryLock, async (req, res) => {
-  try {
-    const { to, useWebrtc, callControlId: webrtcCallControlId } = req.body;
-
-    if (!to) {
-      return res.status(400).json({ error: "Destination number required" });
-    }
-
-    if (!req.subscription || !req.subscription.active) {
-      return res.status(403).json({ error: "Active subscription required" });
-    }
-
-    const unlimitedGate = await checkUnlimitedUsageBeforeAction({
-      subscriptionId: req.subscription.id,
-      userId: req.userId,
-      channel: "dialer_call_start"
-    });
-
-    if (!unlimitedGate.allowed) {
-      return res.status(403).json(createSuspiciousActivityErrorPayload());
-    }
-
-    const unlimitedPlan = isUnlimitedSubscription(
-      unlimitedGate.subscription || req.subscription
-    );
-
-    // Legacy plans keep remaining-minute based gating.
-    const minutesRemaining = req.subscription.minutesRemaining || 0;
-    const remainingSeconds = minutesRemaining * 60;
-    if (!unlimitedPlan && remainingSeconds <= 0) {
-      return res.status(403).json({ 
-        error: "No minutes remaining. Please upgrade your plan or wait for your next billing cycle." 
-      });
-    }
-
-    const inFlight = await findRecentActiveCallForUser(req.userId);
-    if (inFlight) {
-      console.warn("[CALL FLOW] BLOCK /api/dialer/call — call already in progress", {
-        userId: String(req.userId),
-        existingId: String(inFlight._id),
-      });
-      return res.status(409).json({ error: "Call already in progress" });
-    }
-
-    // Get user's phone numbers
-    let numbers = req.subscription.numbers || [];
-    
-    // Fallback: query PhoneNumber directly
-    if (!numbers.length) {
-      const phoneNumbers = await PhoneNumber.find({
-        userId: req.userId,
-        status: "active"
-      }).lean();
-      numbers = phoneNumbers.map(n => ({ phoneNumber: n.phoneNumber }));
-    }
-
-    if (!numbers.length) {
-      return res.status(400).json({ error: "No phone number assigned" });
-    }
-
-    const fromNumber = numbers[0].phoneNumber;
-
-    if (useWebrtc) {
-      const callRecord = await Call.create({
-        user: req.userId,
-        phoneNumber: to,
-        fromNumber: fromNumber,
-        toNumber: to,
-        direction: "outbound",
-        status: "dialing",
-        telnyxCallControlId: webrtcCallControlId || null
-      });
-
-      return res.json({
-        success: true,
-        callId: callRecord._id,
-        callControlId: callRecord.telnyxCallControlId
-      });
-    }
-
-    const telnyx = getTelnyx();
-    if (!telnyx) {
-      return res.status(503).json({ error: "Telnyx not configured" });
-    }
-
-    // Telnyx SDK v4 uses calls.dial() not calls.create()
-    console.log("[CALL FLOW] TELNYX REQUEST SENT (dialer dial)", { to, from: fromNumber });
-
-    const telnyxCall = await telnyx.calls.dial({
-      to,
-      from: fromNumber,
-      connection_id: process.env.TELNYX_CONNECTION_ID
-    });
-
-    const telnyxData = telnyxCall?.data || telnyxCall || {};
-    // Telnyx SDK/response shapes vary; normalize call control id.
-    const callControlId =
-      telnyxData.call_control_id ||
-      telnyxData.callControlId ||
-      telnyxData.id ||
-      telnyxData.call_leg_id ||
-      null;
-
-    if (!callControlId) {
-      console.error("DIALER ERROR: Telnyx call control id missing", telnyxData);
-      return res.status(502).json({ error: "Telnyx did not return a call control id" });
-    }
-
-    // Create call record in database
-    // CRITICAL: Set callInitiatedAt to track ring time for billing
-    const callRecord = await Call.create({
-      user: req.userId,
-      phoneNumber: to,
-      fromNumber: fromNumber,
-      toNumber: to,
-      direction: "outbound",
-      status: "dialing",
-      telnyxCallControlId: callControlId,
-      callInitiatedAt: new Date() // Track initiation time for billing ring time
-    });
-
-    return res.json({
-      success: true,
-      callControlId,
-      callId: callRecord._id
-    });
-  } catch (err) {
-    console.error("DIALER ERROR:", err);
-    res.status(500).json({ error: "Call failed" });
-  }
+  return res.status(410).json({
+    success: false,
+    error:
+      "Server-placed outbound calls are disabled. Use in-app WebRTC from Recents or the dialer.",
+  });
 });
 
 /**
@@ -165,20 +27,42 @@ router.post("/hangup", async (req, res) => {
   try {
     let callControlId = String(req.body?.callControlId || "").trim();
     const callId = String(req.body?.callId || "").trim();
+    const apiKey = process.env.TELNYX_API_KEY?.trim();
 
-    if (!callControlId && callId) {
-      const record = await Call.findOne({ _id: callId, user: req.userId }).select("telnyxCallControlId");
-      if (record?.telnyxCallControlId) {
-        callControlId = String(record.telnyxCallControlId);
+    let record = null;
+    if (callId) {
+      record = await Call.findOne({ _id: callId, user: req.userId });
+    }
+
+    if (!callControlId && record?.telnyxCallControlId) {
+      callControlId = String(record.telnyxCallControlId);
+    }
+
+    if (!apiKey) {
+      return res.status(503).json({ success: false, error: "Telnyx not configured" });
+    }
+
+    if (record) {
+      const hang = await hangupTelnyxByCallDoc(record, apiKey);
+      if (!hang.ok) {
+        const detail =
+          hang.telnyx?.errors?.[0]?.detail ||
+          hang.error ||
+          "Failed to hang up call";
+        console.error("DIALER HANGUP ERROR:", detail);
+        return res.status(502).json({
+          success: false,
+          error: detail,
+          telnyx: hang.telnyx,
+        });
       }
+      return res.json({ success: true });
     }
 
     if (!callControlId) {
-      return res.status(400).json({ success: false, error: "callControlId or callId required" });
-    }
-
-    if (!process.env.TELNYX_API_KEY) {
-      return res.status(503).json({ success: false, error: "Telnyx not configured" });
+      return res
+        .status(400)
+        .json({ success: false, error: "callControlId or callId required" });
     }
 
     await axios.post(
@@ -186,23 +70,11 @@ router.post("/hangup", async (req, res) => {
       {},
       {
         headers: {
-          Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
-          "Content-Type": "application/json"
-        }
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
       }
     );
-
-    // Non-blocking best-effort local record update (webhook is source of truth).
-    if (callId) {
-      try {
-        await Call.updateOne(
-          { _id: callId, user: req.userId },
-          { $set: { status: "failed", callEndedAt: new Date() } }
-        );
-      } catch (updateErr) {
-        console.warn("Dialer hangup: could not update call record:", updateErr?.message || updateErr);
-      }
-    }
 
     return res.json({ success: true });
   } catch (err) {
@@ -212,7 +84,11 @@ router.post("/hangup", async (req, res) => {
       err?.message ||
       "Failed to hang up call";
     console.error("DIALER HANGUP ERROR:", detail);
-    return res.status(502).json({ success: false, error: detail });
+    return res.status(502).json({
+      success: false,
+      error: err.message || detail,
+      telnyx: err.response?.data,
+    });
   }
 });
 

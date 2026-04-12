@@ -2,6 +2,12 @@ import Subscription from "../models/Subscription.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import Plan from "../models/Plan.js";
 import { getActiveAddonAmounts } from "./subscriptionAddonCreditService.js";
+import {
+  cacheKeys,
+  deleteCachedKey,
+  getCachedJson,
+  setCachedJson,
+} from "./cache.service.js";
 
 // Default limits if subscription doesn't have them set
 const DEFAULT_LIMITS = {
@@ -9,6 +15,8 @@ const DEFAULT_LIMITS = {
   smsTotal: 200,
   numbersTotal: 1
 };
+
+const SUBSCRIPTION_CACHE_TTL_SECONDS = 60;
 
 export async function loadUserSubscription(userId) {
   if (!userId) return null;
@@ -84,7 +92,9 @@ export async function loadUserSubscription(userId) {
   return {
     id: subscription._id,
     active: true,
+    status: subscription.status || "active",
     planType: subscription.planType || null,
+    planName: subscription.planName || subscription.planType || "Active Plan",
     displayUnlimited: Boolean(subscription.displayUnlimited),
     planId: subscription.planId,
     minutesRemaining,
@@ -93,9 +103,30 @@ export async function loadUserSubscription(userId) {
     usage: subscription.usage,
     dailySmsUsed: subscription.dailySmsUsed || 0,
     dailyMinutesUsed: subscription.dailyMinutesUsed || 0,
+    periodStart: subscription.periodStart || null,
+    periodEnd: subscription.periodEnd || null,
     numbers: numbers.map((n) => ({
       phoneNumber: n.phoneNumber,
       id: n._id,
     })),
   };
+}
+
+export async function getCachedUserSubscription(userId) {
+  if (!userId) return null;
+
+  const key = cacheKeys.subscription(userId);
+  const cached = await getCachedJson(key);
+  if (cached !== null) {
+    return cached;
+  }
+
+  const subscription = await loadUserSubscription(userId);
+  await setCachedJson(key, subscription, SUBSCRIPTION_CACHE_TTL_SECONDS);
+  return subscription;
+}
+
+export async function invalidateUserSubscriptionCache(userId) {
+  if (!userId) return;
+  await deleteCachedKey(cacheKeys.subscription(userId));
 }

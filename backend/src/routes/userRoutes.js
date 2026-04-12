@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
+import { cacheKeys, deleteCachedKey } from "../services/cache.service.js";
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -53,37 +54,15 @@ router.get("/profile", async (req, res) => {
  */
 router.get("/me", async (req, res) => {
   try {
-    const subscription = req.subscription;
-    const user = await User.findById(req.user._id).select('-password -sessions').lean();
-
     return res.json({
       success: true,
       user: {
-        id: user._id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        name: user.name,
-        phone: user.phone,
-        company: user.company,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified !== false
-      },
-      subscription: subscription
-        ? {
-            active: true,
-            plan: subscription.planType || "monthly",
-            planType: subscription.planType || null,
-            displayUnlimited: Boolean(subscription.displayUnlimited),
-            minutesRemaining: subscription.displayUnlimited ? "∞" : subscription.minutesRemaining,
-            smsRemaining: subscription.displayUnlimited ? "∞" : subscription.smsRemaining,
-            number: subscription.numbers.length
-              ? subscription.numbers[0].phoneNumber
-              : null
-          }
-        : {
-            active: false
-          }
+        _id: req.user._id,
+        id: req.user._id,
+        name: req.user.name || "",
+        email: req.user.email,
+        isEmailVerified: req.user.isEmailVerified !== false
+      }
     });
   } catch (err) {
     console.error("GET /me error:", err);
@@ -124,6 +103,7 @@ router.patch("/profile", async (req, res) => {
     if (language !== undefined) user.language = language;
 
     await user.save();
+    await deleteCachedKey(cacheKeys.userProfile(req.user._id));
 
     return res.json({
       success: true,
@@ -186,6 +166,7 @@ router.post("/change-password", async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(newPassword, salt);
     await user.save();
+    await deleteCachedKey(cacheKeys.userProfile(req.user._id));
 
     return res.json({
       success: true,
@@ -225,6 +206,7 @@ router.delete("/account", async (req, res) => {
 
     // Delete user account
     await User.findByIdAndDelete(req.user._id);
+    await deleteCachedKey(cacheKeys.userProfile(req.user._id));
 
     return res.json({
       success: true,
@@ -255,6 +237,7 @@ router.post("/upload-profile-picture", async (req, res) => {
     // Save profile picture URL (in production, upload to cloud storage)
     user.profilePicture = profilePicture;
     await user.save();
+    await deleteCachedKey(cacheKeys.userProfile(req.user._id));
 
     return res.json({
       success: true,
@@ -288,6 +271,7 @@ router.post("/upload-verification", async (req, res) => {
     user.identityVerification.submittedAt = new Date();
     
     await user.save();
+    await deleteCachedKey(cacheKeys.userProfile(req.user._id));
 
     return res.json({
       success: true,

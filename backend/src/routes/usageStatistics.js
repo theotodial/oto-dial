@@ -1,6 +1,4 @@
 import express from "express";
-import authenticateUser from "../middleware/authenticateUser.js";
-import loadSubscription from "../middleware/loadSubscription.js";
 import Call from "../models/Call.js";
 import SMS from "../models/SMS.js";
 
@@ -12,45 +10,84 @@ const router = express.Router();
  */
 router.get(
   "/statistics",
-  authenticateUser,
-  loadSubscription,
   async (req, res) => {
     try {
-      const userId = req.user._id;
+      const [callStats, smsStats] = await Promise.all([
+        Call.aggregate([
+          { $match: { user: req.user._id } },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              made: {
+                $sum: {
+                  $cond: [{ $eq: ["$direction", "outbound"] }, 1, 0],
+                },
+              },
+              received: {
+                $sum: {
+                  $cond: [{ $eq: ["$direction", "inbound"] }, 1, 0],
+                },
+              },
+              rings: {
+                $sum: {
+                  $cond: [
+                    {
+                      $or: [
+                        { $eq: ["$status", "missed"] },
+                        { $eq: ["$status", "failed"] },
+                        {
+                          $and: [
+                            { $gt: ["$ringingDuration", 0] },
+                            { $eq: ["$callStartedAt", null] },
+                          ],
+                        },
+                      ],
+                    },
+                    1,
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        ]),
+        SMS.aggregate([
+          { $match: { user: req.user._id } },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              sent: {
+                $sum: {
+                  $cond: [{ $eq: ["$direction", "outbound"] }, 1, 0],
+                },
+              },
+              received: {
+                $sum: {
+                  $cond: [{ $eq: ["$direction", "inbound"] }, 1, 0],
+                },
+              },
+            },
+          },
+        ]),
+      ]);
 
-      // Get all calls for this user
-      const allCalls = await Call.find({ user: userId });
-
-      // Calculate call statistics
-      const callsMade = allCalls.filter(c => c.direction === "outbound").length;
-      const callsReceived = allCalls.filter(c => c.direction === "inbound").length;
-      const callsRings = allCalls.filter(c => 
-        c.status === "missed" || 
-        c.status === "failed" || 
-        (c.ringingDuration > 0 && !c.callStartedAt)
-      ).length;
-      const totalCalls = allCalls.length;
-
-      // Get all SMS for this user
-      const allSms = await SMS.find({ user: userId });
-
-      // Calculate SMS statistics
-      const smsSent = allSms.filter(s => s.direction === "outbound").length;
-      const smsReceived = allSms.filter(s => s.direction === "inbound").length;
-      const totalSms = allSms.length;
+      const calls = callStats[0] || { made: 0, received: 0, rings: 0, total: 0 };
+      const sms = smsStats[0] || { sent: 0, received: 0, total: 0 };
 
       res.json({
         success: true,
         calls: {
-          made: callsMade,
-          received: callsReceived,
-          rings: callsRings,
-          total: totalCalls
+          made: calls.made,
+          received: calls.received,
+          rings: calls.rings,
+          total: calls.total
         },
         sms: {
-          sent: smsSent,
-          received: smsReceived,
-          total: totalSms
+          sent: sms.sent,
+          received: sms.received,
+          total: sms.total
         }
       });
     } catch (err) {

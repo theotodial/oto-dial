@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { mongoPerformancePlugin } from "../utils/mongoPerformancePlugin.js";
 
 const contactSchema = new mongoose.Schema(
   {
@@ -29,5 +30,7 @@ const contactSchema = new mongoose.Schema(
 
 // Ensure unique phone number per user
 contactSchema.index({ userId: 1, phoneNumber: 1 }, { unique: true });
+contactSchema.index({ userId: 1, name: 1 });
+contactSchema.plugin(mongoPerformancePlugin, { label: "contacts" });
 
 export default mongoose.model("Contact", contactSchema);

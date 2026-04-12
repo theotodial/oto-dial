@@ -1,6 +1,5 @@
-import dotenv from "dotenv";
-dotenv.config(); // 🚨 REQUIRED FOR ESM
-
+import crypto from "crypto";
+import bcrypt from "bcryptjs";
 import express from "express";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
@@ -12,8 +11,125 @@ import {
   buildOAuthState,
   parseOAuthState
 } from "../services/affiliateService.js";
+import { sendEmailSafe } from "../services/email.service.js";
+import {
+  newDeviceEmail,
+  passwordResetSuccessEmail,
+  pricingEmail,
+  resetPasswordEmail,
+  verificationEmail,
+  welcomeEmail
+} from "../emails/templates.js";
 
 const router = express.Router();
+
+const EMAIL_VERIFY_TTL_MS = 15 * 60 * 1000;
+const RESET_PASSWORD_TTL_MS = 60 * 60 * 1000;
+
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
+}
+
+function generatePlainToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+const BCRYPT_ROUNDS = 12;
+
+async function hashUserPassword(plain) {
+  return bcrypt.hash(plain, BCRYPT_ROUNDS);
+}
+
+/** Supports legacy plain-text passwords and bcrypt hashes. */
+async function verifyPassword(plain, stored) {
+  if (!plain || !stored) return false;
+  if (stored === "google-oauth") return false;
+  if (typeof stored === "string" && /^\$2[aby]\$/.test(stored)) {
+    return bcrypt.compare(plain, stored);
+  }
+  return plain === stored;
+}
+
+function trimBase(s) {
+  return String(s || "").trim().replace(/\/+$/, "");
+}
+
+/** Where the browser should land after email verification (SPA origin). */
+function postEmailVerificationRedirectBase() {
+  const fe = trimBase(process.env.FRONTEND_URL);
+  if (fe) return fe;
+  const app = trimBase(process.env.APP_URL);
+  if (app) return app;
+  return "http://localhost:3000";
+}
+
+/**
+ * Host + origin for links that must hit THIS Node API (not the static site).
+ * Prefer BACKEND_URL when the app is on otodial.com and API is on api.otodial.com.
+ * Otherwise FRONTEND_URL (Vite proxies /api → backend in dev) or APP_URL.
+ */
+function verificationLinkOrigin() {
+  const backend = trimBase(process.env.BACKEND_URL);
+  if (backend) return backend;
+  const fe = trimBase(process.env.FRONTEND_URL);
+  if (fe) return fe;
+  const app = trimBase(process.env.APP_URL);
+  if (app) return app;
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:3000";
+  }
+  console.warn(
+    "⚠️ BACKEND_URL / FRONTEND_URL / APP_URL unset — verification links may 404. Set BACKEND_URL=https://api.yourdomain.com"
+  );
+  return "http://localhost:3000";
+}
+
+/** Legacy helper used by forgot-password (frontend-facing URLs). */
+function publicFrontendBase() {
+  return postEmailVerificationRedirectBase();
+}
+
+const VERIFICATION_EMAIL_COOLDOWN_MS = 45 * 1000;
+
+const PRICING_ONBOARDING_EMAIL_DELAY_MS = (() => {
+  const n = Number(process.env.PRICING_ONBOARDING_EMAIL_DELAY_MS ?? 120000);
+  return Number.isFinite(n) && n >= 0 ? n : 120000;
+})();
+
+/**
+ * One-time pricing email for users without an active subscription (non-blocking).
+ */
+function schedulePricingOnboardingEmail(userId) {
+  if (!userId) return;
+  setTimeout(async () => {
+    try {
+      const user = await User.findById(userId);
+      if (!user?.email) return;
+      if (user.pricingOnboardingEmailSentAt) return;
+      if (user.subscriptionActive === true) return;
+
+      const sent = await sendEmailSafe(
+        {
+          to: user.email,
+          subject: "OTODIAL — choose your plan",
+          html: pricingEmail({ name: user.name || user.firstName || "there" }),
+          emailType: "pricing_onboarding",
+          templateUsed: "pricingEmail"
+        },
+        "pricing_onboarding"
+      );
+
+      if (sent != null) {
+        await User.updateOne(
+          { _id: userId, pricingOnboardingEmailSentAt: null },
+          { $set: { pricingOnboardingEmailSentAt: new Date() } }
+        );
+      }
+    } catch (e) {
+      console.error("Email failed [pricing_onboarding]:", e?.message || e);
+    }
+  }, PRICING_ONBOARDING_EMAIL_DELAY_MS);
+}
 
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID || "").trim();
 const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_OAUTH_CLIENT_SECRET || "").trim();
@@ -48,6 +164,73 @@ function buildFrontendErrorRedirect(req, message, path = "/login") {
   return `${frontendUrl}${path}?oauth_error=${encodeURIComponent(message)}`;
 }
 
+function sendEmailInBackground(payload, contextLabel) {
+  console.log(`📧 [background:${contextLabel}] scheduling send to`, payload?.to);
+  sendEmailSafe(payload, contextLabel).then((result) => {
+    if (result == null) {
+      console.error(`❌ [background:${contextLabel}] email not sent (see logs above)`);
+    } else {
+      console.log(`✅ [background:${contextLabel}] finished`);
+    }
+  });
+}
+
+/**
+ * Stores a hashed verification token, expiry (15m), updates lastVerificationEmailSentAt, sends email (awaited).
+ * @returns {{ ok: true } | { ok: false, reason: 'cooldown' }}
+ */
+async function setEmailVerificationAndSend(user, options = {}) {
+  const { respectCooldown = false, logResend = false } = options;
+
+  if (respectCooldown && user.lastVerificationEmailSentAt) {
+    const elapsed = Date.now() - new Date(user.lastVerificationEmailSentAt).getTime();
+    if (elapsed < VERIFICATION_EMAIL_COOLDOWN_MS) {
+      console.log(
+        "📧 Verification send skipped (cooldown):",
+        user.email,
+        `(${(elapsed / 1000).toFixed(1)}s since last send)`
+      );
+      return { ok: false, reason: "cooldown" };
+    }
+  }
+
+  const plainToken = generatePlainToken();
+  user.emailVerificationToken = sha256Hex(plainToken);
+  user.emailVerificationExpires = new Date(Date.now() + EMAIL_VERIFY_TTL_MS);
+  await user.save();
+
+  const origin = verificationLinkOrigin();
+  const verification_link = `${origin}/api/auth/verify-email?token=${encodeURIComponent(plainToken)}`;
+  if (logResend) {
+    console.log("🔁 Resending verification email to:", user.email);
+  }
+  console.log("🚀 Sending verification email to:", user.email);
+  console.log("📧 Verification link base:", `${origin}/api/auth/verify-email?token=(redacted)`);
+
+  const sent = await sendEmailSafe(
+    {
+      to: user.email,
+      subject: "Verify your OTODIAL email",
+      html: verificationEmail({
+        name: user.name || user.firstName || "there",
+        link: verification_link
+      }),
+      emailType: "verification",
+      templateUsed: "verificationEmail"
+    },
+    "verification"
+  );
+
+  if (sent == null) {
+    return { ok: false, reason: "send_failed" };
+  }
+
+  user.lastVerificationEmailSentAt = new Date();
+  await user.save();
+
+  return { ok: true };
+}
+
 /**
  * =========================================
  * Google OAuth
@@ -79,8 +262,22 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_CALLBACK_URL) {
               firstName: profile.name?.givenName || "",
               lastName: profile.name?.familyName || "",
               name: profile.displayName || "",
-              status: "active"
+              status: "active",
+              // Google already verified the email address
+              isEmailVerified: true
             });
+
+            sendEmailInBackground(
+              {
+                to: user.email,
+                subject: "Welcome to OTODIAL 🚀",
+                html: welcomeEmail({ name: user.name || "User" }),
+                emailType: "welcome",
+                templateUsed: "welcomeEmail"
+              },
+              "Google signup welcome"
+            );
+            schedulePricingOnboardingEmail(user._id);
           }
 
           return done(null, user);
@@ -187,6 +384,136 @@ router.get("/google/callback", (req, res, next) => {
 
 /**
  * =========================================
+ * Email verification (link in email → backend → redirect to app)
+ * =========================================
+ */
+router.get("/verify-email", async (req, res) => {
+  const tokenPlain = String(req.query.token || "").trim();
+  const appBase = postEmailVerificationRedirectBase();
+  const failRedirect = `${appBase}/login?verified=0`;
+  const okRedirect = `${appBase}/dashboard?verified=1`;
+
+  if (!tokenPlain) {
+    return res.redirect(failRedirect);
+  }
+
+  try {
+    const tokenHash = sha256Hex(tokenPlain);
+    const user = await User.findOne({
+      emailVerificationToken: tokenHash,
+      emailVerificationExpires: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.redirect(failRedirect);
+    }
+
+    user.isEmailVerified = true;
+    user.emailVerificationToken = null;
+    user.emailVerificationExpires = null;
+    await user.save();
+
+    sendEmailInBackground(
+      {
+        to: user.email,
+        subject: "Welcome to OTODIAL 🚀",
+        html: welcomeEmail({ name: user.name || user.firstName || "User" }),
+        emailType: "welcome",
+        templateUsed: "welcomeEmail"
+      },
+      "Post-verification welcome"
+    );
+
+    return res.redirect(okRedirect);
+  } catch (err) {
+    console.error("VERIFY EMAIL ERROR:", err);
+    return res.redirect(failRedirect);
+  }
+});
+
+/**
+ * =========================================
+ * Resend verification email (45s cooldown)
+ * =========================================
+ */
+router.post("/resend-verification", async (req, res) => {
+  try {
+    const emailRaw = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
+    if (!emailRaw) {
+      return res.status(400).json({ success: false, error: "Email is required" });
+    }
+
+    const user = await User.findOne({ email: emailRaw });
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        message:
+          "If an account exists for this email, a verification message may be sent."
+      });
+    }
+
+    if (user.isEmailVerified === true) {
+      return res.status(400).json({
+        success: false,
+        error: "This email is already verified."
+      });
+    }
+
+    if (user.password === "google-oauth") {
+      return res.status(400).json({
+        success: false,
+        error: "This account uses Google sign-in."
+      });
+    }
+
+    if (user.isEmailVerified !== false) {
+      return res.status(400).json({
+        success: false,
+        error: "This account does not require email verification."
+      });
+    }
+
+    try {
+      const vr = await setEmailVerificationAndSend(user, {
+        respectCooldown: true,
+        logResend: true
+      });
+      if (!vr.ok && vr.reason === "cooldown") {
+        return res.status(429).json({
+          success: false,
+          error: "Please wait 45 seconds before requesting again"
+        });
+      }
+      if (!vr.ok && vr.reason === "send_failed") {
+        return res.status(503).json({
+          success: false,
+          error: "Failed to send verification email. Try again."
+        });
+      }
+    } catch (sendErr) {
+      console.error("❌ Resend verification send failed:", sendErr?.message || sendErr);
+      if (sendErr?.stack) console.error(sendErr.stack);
+      return res.status(503).json({
+        success: false,
+        error: "Failed to send verification email. Try again."
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Verification email sent again"
+    });
+  } catch (err) {
+    console.error("RESEND VERIFICATION ERROR:", err);
+    if (err?.stack) console.error(err.stack);
+    return res.status(500).json({ success: false, error: "Server error" });
+  }
+});
+
+/**
+ * =========================================
  * Email / Password Register
  * =========================================
  */
@@ -206,14 +533,18 @@ router.post("/register", async (req, res) => {
       });
     }
 
+    const hashedPassword = await hashUserPassword(password);
     const user = await User.create({
       email,
-      password,
+      password: hashedPassword,
       firstName: firstName || "",
       lastName: lastName || "",
       name: name || `${firstName || ""} ${lastName || ""}`.trim(),
-      phone: phone || ""
+      phone: phone || "",
+      isEmailVerified: false
     });
+
+    schedulePricingOnboardingEmail(user._id);
 
     if (affiliateCode) {
       try {
@@ -223,11 +554,21 @@ router.post("/register", async (req, res) => {
           source: "register"
         });
       } catch (refErr) {
-        console.warn(
-          `⚠️ Failed to attach affiliate referral during registration for ${user.email}:`,
-          refErr.message
+        console.error(
+          `❌ Failed to attach affiliate referral during registration for ${user.email}:`,
+          refErr?.message || refErr
         );
+        if (refErr?.stack) console.error(refErr.stack);
       }
+    }
+
+    let verificationEmailSent = false;
+    try {
+      const vr = await setEmailVerificationAndSend(user);
+      verificationEmailSent = vr.ok === true;
+    } catch (sendErr) {
+      console.error("❌ Register verification email failed:", sendErr?.message || sendErr);
+      if (sendErr?.stack) console.error(sendErr.stack);
     }
 
     const token = jwt.sign(
@@ -239,10 +580,16 @@ router.post("/register", async (req, res) => {
     res.json({
       success: true,
       token,
+      requiresEmailVerification: true,
+      verificationEmailSent,
+      message: verificationEmailSent
+        ? "Verification email sent. Check your inbox."
+        : "Account created. If you did not receive an email, use Resend in the banner.",
       user: {
         id: user._id,
         email: user.email,
-        role: user.role
+        role: user.role,
+        isEmailVerified: false
       }
     });
   } catch (err) {
@@ -265,12 +612,15 @@ router.post("/login", async (req, res) => {
     }
 
     const user = await User.findOne({ email });
-    if (!user || user.password !== password) {
+    const passwordOk = user ? await verifyPassword(password, user.password) : false;
+    if (!user || !passwordOk) {
       return res.status(401).json({
         success: false,
         error: "Invalid credentials"
       });
     }
+
+    // Email not verified: still issue a session; the app shows a banner + resend.
 
     // Get device info
     const userAgent = req.get('user-agent') || 'Unknown Device';
@@ -281,6 +631,9 @@ router.post("/login", async (req, res) => {
 
     // Check for existing active sessions
     const existingSessions = user.sessions || [];
+    const isNewDeviceLogin = !existingSessions.some((session) => {
+      return session?.userAgent === userAgent && session?.ipAddress === ipAddress;
+    });
     const activeSessions = existingSessions.filter(s => {
       try {
         const decoded = jwt.verify(s.token, process.env.JWT_SECRET);
@@ -316,6 +669,23 @@ router.post("/login", async (req, res) => {
     user.sessions = [...validSessions, newSession];
     await user.save();
 
+    if (isNewDeviceLogin && user.email) {
+      sendEmailInBackground(
+        {
+          to: user.email,
+          subject: "New Login Detected",
+          html: newDeviceEmail({
+            name: user.name || user.firstName || "there",
+            ip: ipAddress,
+            device: userAgent
+          }),
+          emailType: "new_device",
+          templateUsed: "newDeviceEmail"
+        },
+        "New device login"
+      );
+    }
+
     // Self-heal subscription linkage on login to avoid paid-but-inactive states.
     try {
       await selfHealSubscriptionForUser(user._id, "login");
@@ -333,13 +703,19 @@ router.post("/login", async (req, res) => {
       }))
     } : null;
 
+    const isEmailVerified =
+      user.password === "google-oauth" ||
+      user.isEmailVerified === true ||
+      user.isEmailVerified === undefined;
+
     res.json({
       success: true,
       token,
       user: {
         id: user._id,
         email: user.email,
-        role: user.role
+        role: user.role,
+        isEmailVerified
       },
       ...(existingSessionInfo && { sessionInfo: existingSessionInfo })
     });
@@ -351,29 +727,102 @@ router.post("/login", async (req, res) => {
 
 /**
  * =========================================
- * Forgot Password (stub)
+ * Forgot / reset password
  * =========================================
  */
 router.post("/forgot-password", async (req, res) => {
   try {
-    const { email, redirectTo } = req.body;
+    const emailRaw = String(req.body.email || "").trim().toLowerCase();
 
-    if (!email) {
+    if (!emailRaw) {
       return res.status(400).json({ error: "Email is required" });
     }
 
-    console.log("🔐 Password reset requested:", {
-      email,
-      redirectTo,
-      requestedAt: new Date().toISOString()
-    });
+    // Same response either way — do not reveal whether the email exists
+    const user = await User.findOne({ email: emailRaw });
+    if (user && user.password !== "google-oauth") {
+      const plainToken = generatePlainToken();
+      user.resetPasswordToken = sha256Hex(plainToken);
+      user.resetPasswordExpires = new Date(Date.now() + RESET_PASSWORD_TTL_MS);
+      await user.save();
+
+      const resetBase = `${publicFrontendBase()}/reset-password`;
+      const reset_link = `${resetBase}?token=${encodeURIComponent(plainToken)}`;
+
+      console.log("📧 Sending password reset email to:", user.email);
+      await sendEmailSafe(
+        {
+          to: user.email,
+          subject: "Reset your OTODIAL password",
+          html: resetPasswordEmail({
+            name: user.name || user.firstName || "there",
+            reset_link
+          }),
+          emailType: "password_reset",
+          templateUsed: "resetPasswordEmail"
+        },
+        "password_reset"
+      );
+    }
 
     return res.json({
       success: true,
-      message: "Password reset link sent"
+      message: "Password reset email sent"
     });
   } catch (err) {
     console.error("FORGOT PASSWORD ERROR:", err);
+    if (err?.stack) console.error(err.stack);
+    return res.json({
+      success: true,
+      message: "Password reset email sent"
+    });
+  }
+});
+
+router.post("/reset-password", async (req, res) => {
+  try {
+    const tokenPlain = String(req.body.token || "").trim();
+    const password = req.body.password;
+
+    if (!tokenPlain || !password) {
+      return res.status(400).json({ error: "Token and password required" });
+    }
+
+    if (String(password).length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
+    const tokenHash = sha256Hex(tokenPlain);
+    const user = await User.findOne({
+      resetPasswordToken: tokenHash,
+      resetPasswordExpires: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ error: "Invalid or expired reset link" });
+    }
+
+    user.password = await hashUserPassword(password);
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+    await user.save();
+
+    sendEmailInBackground(
+      {
+        to: user.email,
+        subject: "Your OTODIAL password was updated",
+        html: passwordResetSuccessEmail({
+          name: user.name || user.firstName || "there"
+        }),
+        emailType: "password_reset_success",
+        templateUsed: "passwordResetSuccessEmail"
+      },
+      "password_reset_success"
+    );
+
+    return res.json({ success: true, message: "Password updated" });
+  } catch (err) {
+    console.error("RESET PASSWORD ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });

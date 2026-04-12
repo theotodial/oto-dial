@@ -50,7 +50,7 @@ function ChatPanel({ selectedChat }) {
         : '';
       const response = selectedChat?.phoneNumber
         ? await API.get('/api/messages', {
-            params: { thread: selectedChat.phoneNumber, limit: 50 }
+            params: { thread: selectedChat.phoneNumber, limit: 20 }
           })
         : await API.get('/api/messages', { params: { limit: 20 } });
       if (response.error) {

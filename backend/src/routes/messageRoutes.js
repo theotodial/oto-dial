@@ -29,7 +29,7 @@ router.get("/", async (req, res) => {
   try {
     const userId = req.userId;
     const limitRaw = Number.parseInt(req.query.limit, 10);
-    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 20;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 20) : 20;
     const thread = String(req.query.thread || "").trim();
     const query = { user: userId };
 
@@ -141,28 +141,52 @@ router.post("/read-state", async (req, res) => {
 router.get("/unread-counts", async (req, res) => {
   try {
     const userId = req.userId;
-    const [messages, readStates] = await Promise.all([
-      SMS.find({ user: userId, direction: "inbound" })
-        .select("from createdAt direction")
-        .lean(),
-      MessageReadState.find({ user: userId }).lean()
-    ]);
-    const lastReadByPhone = {};
-    readStates.forEach((s) => {
-      const key = normalizePhone(s.phoneNumber) || s.phoneNumber;
-      lastReadByPhone[key] = s.lastReadAt ? new Date(s.lastReadAt) : new Date(0);
-    });
+    const readStates = await MessageReadState.find({ user: userId })
+      .select("phoneNumber lastReadAt")
+      .lean();
+
     const unreadByPhone = {};
-    messages.forEach((msg) => {
-      if (msg.direction !== "inbound") return;
-      const threadPhone = msg.from;
-      const threadNorm = normalizePhone(threadPhone);
-      const lastRead = lastReadByPhone[threadNorm] || lastReadByPhone[threadPhone] || new Date(0);
-      const msgDate = new Date(msg.createdAt || 0);
-      if (msgDate > lastRead) {
-        unreadByPhone[threadPhone] = (unreadByPhone[threadPhone] || 0) + 1;
-      }
-    });
+    await Promise.all(
+      readStates.map(async (state) => {
+        const candidates = buildPhoneCandidates(state.phoneNumber);
+        const count = await SMS.countDocuments({
+          user: userId,
+          direction: "inbound",
+          from: { $in: candidates },
+          createdAt: { $gt: state.lastReadAt || new Date(0) },
+        });
+        if (count > 0) {
+          unreadByPhone[state.phoneNumber] = count;
+        }
+      })
+    );
+
+    const latestInboundThreads = await SMS.aggregate([
+      { $match: { user: req.user._id, direction: "inbound" } },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: "$from",
+          latestAt: { $first: "$createdAt" },
+        },
+      },
+      { $limit: 20 },
+    ]);
+
+    await Promise.all(
+      latestInboundThreads.map(async (thread) => {
+        if (unreadByPhone[thread._id] !== undefined) return;
+        const count = await SMS.countDocuments({
+          user: userId,
+          direction: "inbound",
+          from: thread._id,
+        });
+        if (count > 0) {
+          unreadByPhone[thread._id] = count;
+        }
+      })
+    );
+
     res.json({ success: true, unreadCounts: unreadByPhone });
   } catch (err) {
     console.error("GET /api/messages/unread-counts error:", err);
@@ -183,15 +207,14 @@ router.delete("/thread/:phoneNumber", async (req, res) => {
     if (!normalized) {
       return res.status(400).json({ success: false, error: "Phone number required" });
     }
-    const messages = await SMS.find({ user: userId }).lean();
-    const idsToDelete = messages
-      .filter((m) => {
-        const toNorm = normalizePhoneForMatch(m.to);
-        const fromNorm = normalizePhoneForMatch(m.from);
-        return toNorm === normalized || fromNorm === normalized;
-      })
-      .map((m) => m._id);
-    const result = await SMS.deleteMany({ _id: { $in: idsToDelete } });
+    const candidates = buildPhoneCandidates(raw);
+    const result = await SMS.deleteMany({
+      user: userId,
+      $or: [
+        { to: { $in: candidates } },
+        { from: { $in: candidates } },
+      ],
+    });
     res.json({ success: true, deleted: result.deletedCount });
   } catch (err) {
     console.error("DELETE /api/messages/thread error:", err);

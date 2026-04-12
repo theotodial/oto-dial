@@ -48,6 +48,14 @@ const optionalEnvVars = {
   SUBSCRIPTION_RECONCILIATION_SYNC_MAX_PAGES: '6',
   SUBSCRIPTION_RECONCILIATION_AUTO_REPAIR: 'true',
   REQUEST_BODY_LIMIT: '25mb',
+  // Do NOT put human-readable descriptions here — validateEnv assigns these to process.env when unset.
+  RESEND_API_KEY: '',
+  RESEND_FROM: '',
+  RESEND_REPLY_TO: '',
+  APP_URL: '',
+  PRICING_ONBOARDING_EMAIL_DELAY_MS: '',
+  TEST_EMAIL_TO: '',
+  STRIPE_WEBHOOK_SECRET_EMAIL: '',
   TELNYX_VOICE_WEBHOOK_URL: '',
   TELNYX_WEBHOOK_TIMEOUT_SECS: '25',
   TELNYX_MAX_MONTHLY_NUMBER_COST: '3.0',
@@ -90,11 +98,13 @@ export function validateEnv() {
     }
   }
 
-  // Set defaults for optional variables
+  // Set defaults for optional variables (only real defaults — never documentation strings).
   for (const [key, defaultValue] of Object.entries(optionalEnvVars)) {
-    if (!process.env[key] && defaultValue) {
-      process.env[key] = defaultValue;
-    }
+    const raw = process.env[key];
+    const hasValue = raw != null && String(raw).trim() !== "";
+    if (hasValue) continue;
+    if (defaultValue === undefined || defaultValue === null || defaultValue === "") continue;
+    process.env[key] = defaultValue;
   }
 
   // Output results

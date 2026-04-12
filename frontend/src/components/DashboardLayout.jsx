@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import { MobileSidebarContext } from '../context/MobileSidebarContext';
+import { useAuth } from '../context/AuthContext';
 
 const MenuIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -25,6 +26,8 @@ function DashboardLayout({ children }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const { token, user } = useAuth();
+  const emailBannerPad = Boolean(token && user?.isEmailVerified === false);
 
   // Pages that should open sidebar instead of going back
   const pagesWithSidebarToggle = [
@@ -115,7 +118,9 @@ function DashboardLayout({ children }) {
         {showFloatingMobileBtn && (
           <button
             onClick={handleButtonClick}
-            className="lg:hidden fixed top-3 left-3 z-40 w-10 h-10 bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 rounded-lg flex items-center justify-center shadow-lg hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 transition-all duration-300"
+            className={`lg:hidden fixed left-3 z-40 w-10 h-10 bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 rounded-lg flex items-center justify-center shadow-lg hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 transition-all duration-300 ${
+              emailBannerPad ? 'top-[4.25rem]' : 'top-3'
+            }`}
             aria-label={isChatOpen ? "Go back to chats" : shouldToggleSidebar ? "Toggle menu" : "Go back"}
           >
             {isChatOpen ? <BackIcon /> : shouldToggleSidebar ? (mobileMenuOpen ? <CloseIcon /> : <MenuIcon />) : <BackIcon />}
@@ -123,7 +128,11 @@ function DashboardLayout({ children }) {
         )}
 
         <Sidebar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
-        <div className="flex-1 overflow-auto bg-gray-50 dark:bg-slate-800 lg:ml-0 pt-0">
+        <div
+          className={`flex-1 overflow-auto bg-gray-50 dark:bg-slate-800 lg:ml-0 ${
+            emailBannerPad ? 'pt-12 sm:pt-14' : 'pt-0'
+          }`}
+        >
           {children}
         </div>
       </div>

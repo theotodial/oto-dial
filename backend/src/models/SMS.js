@@ -1,11 +1,11 @@
 import mongoose from "mongoose";
+import { mongoPerformancePlugin } from "../utils/mongoPerformancePlugin.js";
 
 const smsSchema = new mongoose.Schema(
   {
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      index: true
     },
 
     to: {
@@ -76,5 +76,9 @@ const smsSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+smsSchema.index({ user: 1, createdAt: -1 });
+smsSchema.index({ user: 1, direction: 1, createdAt: -1 });
+smsSchema.plugin(mongoPerformancePlugin, { label: "messages" });
 
 export default mongoose.model("SMS", smsSchema);

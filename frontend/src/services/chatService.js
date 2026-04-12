@@ -3,7 +3,7 @@ import API from '../api';
 export const getChat = async (phoneNumber) => {
   const response = phoneNumber
     ? await API.get('/api/messages', {
-        params: { thread: phoneNumber, limit: 50 }
+        params: { thread: phoneNumber, limit: 20 }
       })
     : await API.get('/api/messages', { params: { limit: 20 } });
   if (response.error) {

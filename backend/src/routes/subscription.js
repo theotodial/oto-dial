@@ -2,14 +2,12 @@ import express from "express";
 import Subscription from "../models/Subscription.js";
 import Plan from "../models/Plan.js";
 import StripeInvoice from "../models/StripeInvoice.js";
-import authMiddleware from "../middleware/authenticateUser.js";
-import {
-  buildPublicPlanPayload,
-  applyPlanSnapshotToSubscription
-} from "../services/subscriptionPlanSnapshotService.js";
+import { applyPlanSnapshotToSubscription } from "../services/subscriptionPlanSnapshotService.js";
 import { isUnlimitedSubscription } from "../services/unlimitedUsageService.js";
-import { getActiveAddonAmounts } from "../services/subscriptionAddonCreditService.js";
-import { maybeSendUsageWarningEmail } from "../services/usageWarningEmailService.js";
+import {
+  getCachedUserSubscription,
+  invalidateUserSubscriptionCache,
+} from "../services/subscriptionService.js";
 
 const router = express.Router();
 
@@ -25,25 +23,10 @@ const DEFAULT_LIMITS = {
 /**
  * GET /api/subscription and GET /api/subscription/current
  */
-const SUBSCRIPTION_READ_SELECT =
-  "planId status planType planName displayUnlimited usage limits addons addonsSmsExpiry addonsMinutesExpiry periodEnd periodStart monthlySmsLimit monthlyMinutesLimit dailySmsLimit dailyMinutesLimit";
-
 const getSubscriptionHandler = async (req, res) => {
   try {
     const userId = req.userId;
-
-    // Hot path: no Stripe/self-heal — reconciliation + login handle repair
-    let subscription = await Subscription.findOne({
-      userId,
-      $or: [
-        { status: "active" },
-        { status: "cancelled" }
-      ]
-    })
-      .select(SUBSCRIPTION_READ_SELECT)
-      .populate({ path: "planId", select: "name displayUnlimited" })
-      .sort({ createdAt: -1 })
-      .lean();
+    const subscription = await getCachedUserSubscription(userId);
 
     if (!subscription) {
       return res.json({
@@ -54,41 +37,16 @@ const getSubscriptionHandler = async (req, res) => {
       });
     }
 
-    // minutesUsed field stores SECONDS internally
-    const secondsUsed = subscription.usage?.minutesUsed || 0;
-
-    // Apply add-ons only if not expired
-    const now = new Date();
-    const activeAddons = getActiveAddonAmounts(subscription, now);
-    const addonMinutesActive = activeAddons.minutesActive;
-
-    const minutesTotal =
-      (subscription.limits?.minutesTotal || 0) + addonMinutesActive;
-    const secondsTotal = minutesTotal * 60;
-    const secondsRemaining = Math.max(0, secondsTotal - secondsUsed);
-    
-    // Convert remaining seconds to minutes for display (with decimals)
-    const minutesRemaining = secondsRemaining / 60;
-
-    const addonSmsActive = activeAddons.smsActive;
-
-    const smsRemaining = Math.max(
-      0,
-      (subscription.limits?.smsTotal || 0) +
-        addonSmsActive -
-        (subscription.usage?.smsUsed || 0)
-    );
-
     const unlimited =
+      Boolean(subscription.displayUnlimited) ||
       isUnlimitedSubscription(subscription) ||
-      Boolean(subscription.planId?.displayUnlimited) ||
-      /unlimited/i.test(String(subscription.planId?.name || ""));
+      /unlimited/i.test(String(subscription.planName || ""));
 
     const safeSubscription = unlimited
       ? {
           _id: subscription._id,
-          planId: subscription.planId?._id || subscription.planId,
-          planName: subscription.planId?.name || subscription.planName || "Unlimited",
+          planId: subscription.planId,
+          planName: subscription.planName || "Unlimited",
           planType: "unlimited",
           displayUnlimited: true,
           status: subscription.status || "active",
@@ -97,28 +55,12 @@ const getSubscriptionHandler = async (req, res) => {
         }
       : subscription;
 
-    // Usage warning email (>80% voice or SMS) — fire-and-forget, throttled per user
-    if (!unlimited && req.user?.email) {
-      const secondsTotalSafe = Math.max(1, minutesTotal * 60);
-      const smsTotalEff =
-        (subscription.limits?.smsTotal || 0) + addonSmsActive;
-      const smsTotalSafe = Math.max(1, smsTotalEff);
-      const minutesPercent = secondsUsed / secondsTotalSafe;
-      const smsPercent = (subscription.usage?.smsUsed || 0) / smsTotalSafe;
-      void maybeSendUsageWarningEmail(userId, {
-        minutesPercent,
-        smsPercent,
-        userEmail: req.user.email,
-        displayName: req.user.name || req.user.firstName
-      });
-    }
-
     res.json({
-      planName: subscription.planId?.name || subscription.planName || "Active Plan",
+      planName: subscription.planName || "Active Plan",
       planType: subscription.planType || (unlimited ? "unlimited" : null),
       displayUnlimited: unlimited,
-      minutesRemaining: unlimited ? "∞" : minutesRemaining,
-      smsRemaining: unlimited ? "∞" : smsRemaining,
+      minutesRemaining: unlimited ? "∞" : subscription.minutesRemaining,
+      smsRemaining: unlimited ? "∞" : subscription.smsRemaining,
       status: subscription.status || "active",
       periodEnd: subscription.periodEnd,
       periodStart: subscription.periodStart,
@@ -135,14 +77,14 @@ const getSubscriptionHandler = async (req, res) => {
   }
 };
 
-router.get("/", authMiddleware, getSubscriptionHandler);
-router.get("/current", authMiddleware, getSubscriptionHandler);
+router.get("/", getSubscriptionHandler);
+router.get("/current", getSubscriptionHandler);
 
 /**
  * GET /api/subscription/activation-health
  * Detects paid-but-not-active mismatches for support prompts.
  */
-router.get("/activation-health", authMiddleware, async (req, res) => {
+router.get("/activation-health", async (req, res) => {
   try {
     const userId = req.userId;
 
@@ -200,7 +142,7 @@ router.get("/activation-health", authMiddleware, async (req, res) => {
 /**
  * POST /api/subscription/buy
  */
-router.post("/buy", authMiddleware, async (req, res) => {
+router.post("/buy", async (req, res) => {
   try {
     const userId = req.userId;
 
@@ -257,6 +199,7 @@ router.post("/buy", authMiddleware, async (req, res) => {
 
     applyPlanSnapshotToSubscription(subscription, plan);
     await subscription.save();
+    await invalidateUserSubscriptionCache(userId);
 
     res.status(201).json({
       message: "Subscription activated",
@@ -272,7 +215,7 @@ router.post("/buy", authMiddleware, async (req, res) => {
  * POST /api/subscription/fix
  * Fix subscription with missing or zero limits
  */
-router.post("/fix", authMiddleware, async (req, res) => {
+router.post("/fix", async (req, res) => {
   try {
     const userId = req.userId;
 
@@ -321,6 +264,7 @@ router.post("/fix", authMiddleware, async (req, res) => {
     }
 
     await subscription.save();
+    await invalidateUserSubscriptionCache(userId);
 
     console.log(`✅ Fixed subscription for user ${userId}:`, subscription.limits);
 
@@ -338,7 +282,7 @@ router.post("/fix", authMiddleware, async (req, res) => {
  * POST /api/subscription/cancel
  * Cancel subscription - no refunds, account remains active until periodEnd
  */
-router.post("/cancel", authMiddleware, async (req, res) => {
+router.post("/cancel", async (req, res) => {
   try {
     const userId = req.userId;
 
@@ -355,6 +299,7 @@ router.post("/cancel", authMiddleware, async (req, res) => {
     // This ensures user keeps access until the end of the billing cycle
     subscription.status = "cancelled";
     await subscription.save();
+    await invalidateUserSubscriptionCache(userId);
 
     console.log(`✅ Subscription cancelled for user ${userId}. Active until ${subscription.periodEnd}`);
 
@@ -373,7 +318,7 @@ router.post("/cancel", authMiddleware, async (req, res) => {
  * POST /api/subscription/reset-usage
  * Reset SMS and minutes usage (for testing/admin)
  */
-router.post("/reset-usage", authMiddleware, async (req, res) => {
+router.post("/reset-usage", async (req, res) => {
   try {
     const userId = req.userId;
 
@@ -395,6 +340,7 @@ router.post("/reset-usage", authMiddleware, async (req, res) => {
     }
 
     console.log(`✅ Reset usage for user ${userId}`);
+    await invalidateUserSubscriptionCache(userId);
 
     res.json({
       message: "Usage reset successfully",

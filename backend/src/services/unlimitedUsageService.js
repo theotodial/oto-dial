@@ -7,7 +7,7 @@ import {
 } from "../constants/unlimitedPlan.js";
 
 export function createSuspiciousActivityErrorPayload() {
-  return { error: SUSPICIOUS_ACTIVITY_ERROR };
+  return { success: false, error: SUSPICIOUS_ACTIVITY_ERROR };
 }
 
 export function getServerDayKey(now = new Date()) {
@@ -107,6 +107,11 @@ export async function checkUnlimitedUsageBeforeAction({
 
   const subscription = await Subscription.findById(subscriptionId).lean();
   if (!subscription || !isUnlimitedSubscription(subscription)) {
+    console.log("[USAGE CHECK] PASSED (not unlimited — no usage gate)", {
+      channel,
+      userId: userId ? String(userId) : null,
+      subscriptionId: subscriptionId ? String(subscriptionId) : null,
+    });
     return {
       allowed: true,
       subscription
@@ -152,6 +157,12 @@ export async function checkUnlimitedUsageBeforeAction({
       }
     });
 
+    console.warn("[USAGE CHECK] BLOCKED (unlimited internal limits)", {
+      channel,
+      userId: userId ? String(userId) : null,
+      subscriptionId: subscriptionId ? String(subscriptionId) : null,
+      reason: "limit_exceeded",
+    });
     return {
       allowed: false,
       subscription,
@@ -159,6 +170,11 @@ export async function checkUnlimitedUsageBeforeAction({
     };
   }
 
+  console.log("[USAGE CHECK] PASSED (unlimited within limits)", {
+    channel,
+    userId: userId ? String(userId) : null,
+    subscriptionId: subscriptionId ? String(subscriptionId) : null,
+  });
   return {
     allowed: true,
     subscription

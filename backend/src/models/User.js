@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { ADMIN_ACCESS_AREAS } from "../constants/adminAccess.js";
+import { mongoPerformancePlugin } from "../utils/mongoPerformancePlugin.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -174,6 +175,55 @@ const userSchema = new mongoose.Schema(
       default: null
     },
 
+    // Email verification (email/password signups). Legacy users may omit this field.
+    isEmailVerified: {
+      type: Boolean,
+      default: undefined,
+    },
+    emailVerificationToken: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    emailVerificationExpires: {
+      type: Date,
+      default: null,
+    },
+
+    // Throttle verification / resend emails (e.g. 45s between sends)
+    lastVerificationEmailSentAt: {
+      type: Date,
+      default: null,
+    },
+
+    // Password reset (hashed token in DB; plain token only in email link)
+    resetPasswordToken: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    resetPasswordExpires: {
+      type: Date,
+      default: null,
+    },
+
+    // Throttle usage warning emails (avoid spamming on every /api/subscription poll)
+    lastUsageWarningEmailAt: {
+      type: Date,
+      default: null,
+    },
+
+    lastUpgradePlanEmailAt: {
+      type: Date,
+      default: null,
+    },
+
+    // One-time pricing nudge after signup when user has no active subscription
+    pricingOnboardingEmailSentAt: {
+      type: Date,
+      default: null,
+    },
+
     // Identity verification
     identityVerification: {
       status: {
@@ -215,5 +265,7 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+userSchema.plugin(mongoPerformancePlugin, { label: "users" });
 
 export default mongoose.model("User", userSchema);
