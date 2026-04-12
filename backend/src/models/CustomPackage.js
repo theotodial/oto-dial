@@ -65,6 +65,8 @@ const customPackageSchema = new mongoose.Schema(
 );
 
 customPackageSchema.index({ userId: 1, active: 1, expiresAt: 1 });
+customPackageSchema.index({ userId: 1 }, { unique: true });
+customPackageSchema.index({ expiresAt: 1 });
 customPackageSchema.plugin(mongoPerformancePlugin, { label: "customPackage" });
 
 const CustomPackage = mongoose.model("CustomPackage", customPackageSchema);

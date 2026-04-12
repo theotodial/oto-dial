@@ -440,7 +440,7 @@ function Billing() {
                 <span className="block mt-0.5">
                         {isUnlimitedCurrent
                           ? "∞ minutes • ∞ SMS remaining"
-                          : `${currentSubscription.minutesRemaining?.toFixed(1) || 0} minutes • ${currentSubscription.smsRemaining || 0} SMS remaining`}
+                          : `${(Number(currentSubscription.minutesRemaining ?? 0)).toFixed(1)} minutes • ${Number(currentSubscription.smsRemaining ?? 0)} SMS remaining`}
                 </span>
               </div>
                 );

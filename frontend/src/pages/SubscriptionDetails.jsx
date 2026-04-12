@@ -207,25 +207,25 @@ function SubscriptionDetails() {
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Minutes</p>
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {subscription?.limits?.minutesTotal || subscription?.totalMinutes || 2500}
+                  {Number(subscription?.limits?.minutesTotal ?? subscription?.totalMinutes ?? 0)}
                 </p>
               </div>
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Remaining Minutes</p>
                 <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-                  {subscription?.isUnlimited ? '∞' : parseFloat(subscription?.minutesRemaining || 0).toFixed(2)}
+                  {subscription?.isUnlimited ? '∞' : parseFloat(subscription?.minutesRemaining ?? 0).toFixed(2)}
                 </p>
               </div>
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total SMS</p>
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {subscription?.limits?.smsTotal || subscription?.totalSMS || 200}
+                  {Number(subscription?.limits?.smsTotal ?? subscription?.totalSMS ?? 0)}
                 </p>
               </div>
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Remaining SMS</p>
                 <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-                  {subscription?.isUnlimited ? '∞' : (subscription?.smsRemaining || 0)}
+                  {subscription?.isUnlimited ? '∞' : Number(subscription?.smsRemaining ?? 0)}
                 </p>
               </div>
             </div>

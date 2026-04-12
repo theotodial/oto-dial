@@ -13,6 +13,7 @@ import {
   deleteCachedKey,
   setCachedJson,
 } from "./cache.service.js";
+import User from "../models/User.js";
 
 // Default limits if subscription doesn't have them set
 const DEFAULT_LIMITS = {
@@ -43,6 +44,103 @@ function subscriptionUiEntitled(status) {
     status === "pending_activation" ||
     status === "past_due"
   );
+}
+
+export function buildEffectiveUsage({ subscription, customPackage }) {
+  const now = new Date();
+  const customActive =
+    customPackage &&
+    customPackage.active === true &&
+    (!customPackage.expiresAt || new Date(customPackage.expiresAt) > now);
+
+  if (customActive) {
+    return {
+      smsRemaining: Number(customPackage.smsAllowed ?? 0),
+      minutesRemaining: Number(customPackage.minutesAllowed ?? 0),
+      isSmsEnabled: customPackage.isSmsEnabled !== false,
+      isCallEnabled: customPackage.isCallEnabled !== false,
+      source: "customPackage",
+      limits: {
+        smsTotal: Number(customPackage.smsAllowed ?? 0),
+        minutesTotal: Number(customPackage.minutesAllowed ?? 0),
+        numbersTotal: Number(subscription?.limits?.numbersTotal ?? 1),
+      },
+      usage: {
+        smsUsed: 0,
+        minutesUsed: 0,
+      },
+      active: true,
+      status: "custom_override",
+    };
+  }
+
+  if (subscription) {
+    return {
+      smsRemaining: Number(subscription.smsRemaining ?? 0),
+      minutesRemaining: Number(subscription.minutesRemaining ?? 0),
+      isSmsEnabled: true,
+      isCallEnabled: true,
+      source: "subscription",
+      limits: subscription.limits || null,
+      usage: subscription.usage || null,
+      active: Boolean(subscription.active),
+      status: subscription.status || "active",
+    };
+  }
+
+  return {
+    smsRemaining: 0,
+    minutesRemaining: 0,
+    isSmsEnabled: false,
+    isCallEnabled: false,
+    source: "none",
+    limits: null,
+    usage: null,
+    active: false,
+    status: "inactive",
+  };
+}
+
+function buildFallbackUserSubscription(userDoc) {
+  if (!userDoc) return null;
+  const hasUserLevelPlan =
+    userDoc.subscriptionActive === true ||
+    Boolean(userDoc.activeSubscriptionId) ||
+    Boolean(userDoc.currentPlanId);
+
+  if (!hasUserLevelPlan) {
+    return null;
+  }
+
+  const minutesTotal = Number(userDoc.currentSubscriptionLimits?.minutesTotal ?? 0);
+  const smsTotal = Number(userDoc.currentSubscriptionLimits?.smsTotal ?? 0);
+  const numbersTotal = Number(userDoc.currentSubscriptionLimits?.numbersTotal ?? 0);
+
+  return {
+    id: userDoc.activeSubscriptionId || userDoc._id,
+    _id: userDoc.activeSubscriptionId || userDoc._id,
+    active: true,
+    status: "active",
+    planType: "admin_assigned",
+    planName: userDoc.plan || "Admin Assigned Plan",
+    plan: userDoc.plan || "Admin Assigned Plan",
+    isUnlimited: false,
+    displayUnlimited: false,
+    minutesRemaining: minutesTotal,
+    smsRemaining: smsTotal,
+    limits: {
+      minutesTotal,
+      smsTotal,
+      numbersTotal,
+    },
+    usage: {
+      minutesUsed: 0,
+      smsUsed: 0,
+    },
+    periodStart: null,
+    periodEnd: null,
+    numbers: [],
+  };
 }
 
 async function resetDailyUsageWindowIfNeeded(subscription) {
@@ -92,6 +190,10 @@ export async function loadUserSubscription(userId) {
     .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
 
+  const userDoc = await User.findById(userId)
+    .select("subscriptionActive activeSubscriptionId currentPlanId currentSubscriptionLimits plan")
+    .lean();
+
   if (!subscription) {
     const customPackageOnly = await getActiveCustomPackage(userId);
     if (customPackageOnly) {
@@ -99,7 +201,17 @@ export async function loadUserSubscription(userId) {
         userId: String(userId),
         customPackageId: String(customPackageOnly._id),
       });
-      return applyCustomPackageToSubscription(null, customPackageOnly);
+      return applyCustomPackageToSubscription(buildFallbackUserSubscription(userDoc), customPackageOnly);
+    }
+
+    const fallbackSubscription = buildFallbackUserSubscription(userDoc);
+    if (fallbackSubscription) {
+      console.log("[subscription] Using user-level fallback subscription state:", {
+        userId: String(userId),
+        activeSubscriptionId: String(userDoc?.activeSubscriptionId || ""),
+        currentPlanId: String(userDoc?.currentPlanId || ""),
+      });
+      return fallbackSubscription;
     }
     console.warn("[subscription] No subscription found in DB:", {
       userId: String(userId),
@@ -253,10 +365,15 @@ export function buildPublicSubscriptionState(subscription) {
     plan: subscription.planName || subscription.planType || "Active Plan",
     planName: subscription.planName || subscription.planType || "Active Plan",
     planType: subscription.planType || null,
-    minutesRemaining: subscription.isUnlimited ? "∞" : subscription.minutesRemaining,
-    smsRemaining: subscription.isUnlimited ? "∞" : subscription.smsRemaining,
+    minutesRemaining: subscription.isUnlimited ? "∞" : Number(subscription.minutesRemaining ?? 0),
+    smsRemaining: subscription.isUnlimited ? "∞" : Number(subscription.smsRemaining ?? 0),
     isUnlimited: Boolean(subscription.isUnlimited),
     displayUnlimited: Boolean(subscription.displayUnlimited || subscription.isUnlimited),
+    isSmsEnabled: subscription.isSmsEnabled !== false,
+    isCallEnabled: subscription.isCallEnabled !== false,
+    source: subscription.source || "subscription",
+    limits: subscription.limits || null,
+    usage: subscription.usage || null,
     periodStart: subscription.periodStart || null,
     periodEnd: subscription.periodEnd || null
   };

@@ -78,7 +78,19 @@ function AdminUserDetail() {
         setRecentCalls(response.data.recentCalls || []);
         setRecentMessages(response.data.recentMessages || []);
         setCosts(response.data.costs || null);
-        setCustomPackage(response.data.customPackage || null);
+        const nextCustomPackage = response.data.customPackage || null;
+        setCustomPackage(nextCustomPackage);
+        setPackageMinutes(nextCustomPackage ? String(nextCustomPackage.minutesAllowed ?? 0) : '');
+        setPackageSms(nextCustomPackage ? String(nextCustomPackage.smsAllowed ?? 0) : '');
+        setPackageExpiresAt(
+          nextCustomPackage?.expiresAt
+            ? new Date(nextCustomPackage.expiresAt).toISOString().slice(0, 16)
+            : ''
+        );
+        setPackageAllowedCountries((nextCustomPackage?.allowedCountries || []).join(', '));
+        setPackageBlockedCountries((nextCustomPackage?.blockedCountries || []).join(', '));
+        setPackageCallsEnabled(nextCustomPackage ? nextCustomPackage.isCallEnabled !== false : true);
+        setPackageSmsEnabled(nextCustomPackage ? nextCustomPackage.isSmsEnabled !== false : true);
       } else {
         setError('Failed to load user');
       }
@@ -519,6 +531,9 @@ function AdminUserDetail() {
         expiresAt: packageExpiresAt || null,
         isCallEnabled: packageCallsEnabled,
         isSmsEnabled: packageSmsEnabled,
+        active: true,
+        overridePlan: true,
+        notes: '',
         allowedCountries: packageAllowedCountries
           .split(',')
           .map((value) => value.trim())

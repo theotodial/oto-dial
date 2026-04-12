@@ -100,8 +100,8 @@ function Dashboard() {
     const isUnlimitedPlan =
       Boolean(subscription.isUnlimited || subscription.displayUnlimited);
     setPackageDetails({
-      remainingMinutes: isUnlimitedPlan ? '∞' : (subscription.minutesRemaining || 0),
-      remainingSMS: isUnlimitedPlan ? '∞' : (subscription.smsRemaining || 0),
+      remainingMinutes: isUnlimitedPlan ? '∞' : (subscription.minutesRemaining ?? 0),
+      remainingSMS: isUnlimitedPlan ? '∞' : (subscription.smsRemaining ?? 0),
       planName: subscription.planName || 'No Plan',
       displayUnlimited: isUnlimitedPlan
     });

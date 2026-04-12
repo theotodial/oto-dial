@@ -118,6 +118,10 @@ router.post("/send", async (req, res) => {
       return res.status(403).json({ error: "Subscription is not active" });
     }
 
+    if (req.subscription.isSmsEnabled === false) {
+      return res.status(403).json({ error: "SMS disabled by admin" });
+    }
+
     const unlimitedGate = await checkUnlimitedUsageBeforeAction({
       subscriptionId: req.subscription.id,
       userId: req.userId,

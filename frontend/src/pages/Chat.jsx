@@ -84,7 +84,7 @@ function Chat() {
   const [sendError, setSendError] = useState('');
   const messagesEndRef = useRef(null);
   const subscriptionData = {
-    remainingSMS: subscription?.smsRemaining || 0,
+    remainingSMS: subscription?.smsRemaining ?? 0,
     planName: subscription?.planName || 'No Plan',
     active: Boolean(subscription?.active),
   };

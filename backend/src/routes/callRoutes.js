@@ -74,6 +74,13 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       numbersCount: Array.isArray(sub?.numbers) ? sub.numbers.length : 0,
     });
 
+    if (sub && sub.isCallEnabled === false) {
+      return res.status(403).json({
+        success: false,
+        error: "Calling disabled by admin",
+      });
+    }
+
     let phoneNumber = req.body.phoneNumber || req.body.to;
     let fromNumber = req.body.fromNumber ?? null;
     let toNumber = req.body.toNumber ?? phoneNumber;

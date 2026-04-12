@@ -3,6 +3,7 @@ import multer from "multer";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 import { cacheKeys, deleteCachedKey } from "../services/cache.service.js";
+import { buildPublicSubscriptionState, getCachedUserSubscription, buildEffectiveUsage } from "../services/subscriptionService.js";
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -54,6 +55,12 @@ router.get("/profile", async (req, res) => {
  */
 router.get("/me", async (req, res) => {
   try {
+    const subscription = await getCachedUserSubscription(req.user._id);
+    const effective = buildEffectiveUsage({
+      subscription,
+      customPackage: subscription?.customPackage || null,
+    });
+
     return res.json({
       success: true,
       user: {
@@ -62,7 +69,10 @@ router.get("/me", async (req, res) => {
         name: req.user.name || "",
         email: req.user.email,
         isEmailVerified: req.user.isEmailVerified !== false
-      }
+      },
+      subscription: buildPublicSubscriptionState(subscription),
+      customPackage: subscription?.customPackage || null,
+      usage: effective,
     });
   } catch (err) {
     console.error("GET /me error:", err);

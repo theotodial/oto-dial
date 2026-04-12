@@ -177,7 +177,7 @@ function Recents() {
   const subscriptionKnown = subscriptionHydrated;
   const subscriptionActive = Boolean(subscription?.active);
   const subscriptionData = {
-    remainingSMS: subscription?.smsRemaining || 0,
+    remainingSMS: subscription?.smsRemaining ?? 0,
     minutesRemaining: subscription?.minutesRemaining ?? 0,
     planName: subscription?.planName || 'No Plan',
   };

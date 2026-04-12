@@ -1,5 +1,9 @@
 import express from "express";
-import { buildPublicSubscriptionState, getCachedUserSubscription } from "../services/subscriptionService.js";
+import {
+  buildPublicSubscriptionState,
+  buildEffectiveUsage,
+  getCachedUserSubscription,
+} from "../services/subscriptionService.js";
 
 const router = express.Router();
 
@@ -19,9 +23,12 @@ router.get("/bootstrap", async (req, res) => {
         }
       : null;
 
-    const subscription = buildPublicSubscriptionState(
-      await getCachedUserSubscription(req.userId)
-    );
+    const rawSubscription = await getCachedUserSubscription(req.userId);
+    const subscription = buildPublicSubscriptionState(rawSubscription);
+    const usage = buildEffectiveUsage({
+      subscription: rawSubscription,
+      customPackage: rawSubscription?.customPackage || null,
+    });
 
     console.log("[bootstrap] SUB RESULT", {
       userId: String(req.userId || ""),
@@ -33,7 +40,9 @@ router.get("/bootstrap", async (req, res) => {
     return res.json({
       success: true,
       user,
-      subscription
+      subscription,
+      customPackage: rawSubscription?.customPackage || null,
+      usage,
     });
   } catch (err) {
     console.error("GET /api/app/bootstrap error:", err);

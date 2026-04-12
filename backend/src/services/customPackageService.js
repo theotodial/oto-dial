@@ -22,46 +22,58 @@ export async function getActiveCustomPackage(userId) {
     .lean();
 }
 
+export function isCustomPackageActive(customPackage, now = new Date()) {
+  if (!customPackage || customPackage.active !== true) {
+    return false;
+  }
+
+  if (!customPackage.expiresAt) {
+    return true;
+  }
+
+  const expiresAt = new Date(customPackage.expiresAt);
+  return !Number.isNaN(expiresAt.getTime()) && expiresAt > now;
+}
+
 export function applyCustomPackageToSubscription(subscription, customPackage) {
-  if (!customPackage) {
+  if (!isCustomPackageActive(customPackage)) {
     return subscription;
   }
 
-  const usage = subscription?.usage || {};
-  const minutesUsed = Number(usage.minutesUsed || 0) / 60;
-  const smsUsed = Number(usage.smsUsed || 0);
-  const minutesAllowed = Math.max(0, Number(customPackage.minutesAllowed || 0));
-  const smsAllowed = Math.max(0, Number(customPackage.smsAllowed || 0));
-  const callEnabled = Boolean(customPackage.isCallEnabled);
-  const smsEnabled = Boolean(customPackage.isSmsEnabled);
+  const minutesAllowed = Math.max(0, Number(customPackage.minutesAllowed ?? 0));
+  const smsAllowed = Math.max(0, Number(customPackage.smsAllowed ?? 0));
+  const callEnabled = customPackage.isCallEnabled !== false;
+  const smsEnabled = customPackage.isSmsEnabled !== false;
+  const normalizedAllowedCountries = normalizeCountryList(customPackage.allowedCountries);
+  const normalizedBlockedCountries = normalizeCountryList(customPackage.blockedCountries);
 
   return {
     ...(subscription || {}),
-    active:
-      callEnabled ||
-      smsEnabled ||
-      minutesAllowed > 0 ||
-      smsAllowed > 0 ||
-      Boolean(subscription?.active),
-    status: customPackage.active ? "custom_override" : (subscription?.status || "inactive"),
+    active: true,
+    status: "custom_override",
     planType: "custom",
     planName: customPackage.overridePlan ? "Custom Package" : (subscription?.planName || "Custom Package"),
     plan: customPackage.overridePlan ? "Custom Package" : (subscription?.plan || subscription?.planName || "Custom Package"),
-    minutesRemaining: Math.max(0, minutesAllowed - minutesUsed),
-    smsRemaining: Math.max(0, smsAllowed - smsUsed),
+    minutesRemaining: minutesAllowed,
+    smsRemaining: smsAllowed,
     limits: {
       minutesTotal: minutesAllowed,
       smsTotal: smsAllowed,
-      numbersTotal: Number(subscription?.limits?.numbersTotal || 1),
+      numbersTotal: Number(subscription?.limits?.numbersTotal ?? 1),
+    },
+    usage: {
+      minutesUsed: 0,
+      smsUsed: 0,
     },
     isCallEnabled: callEnabled,
     isSmsEnabled: smsEnabled,
-    allowedCountries: normalizeCountryList(customPackage.allowedCountries),
-    blockedCountries: normalizeCountryList(customPackage.blockedCountries),
+    source: "customPackage",
+    allowedCountries: normalizedAllowedCountries,
+    blockedCountries: normalizedBlockedCountries,
     customPackage: {
       ...customPackage,
-      allowedCountries: normalizeCountryList(customPackage.allowedCountries),
-      blockedCountries: normalizeCountryList(customPackage.blockedCountries),
+      allowedCountries: normalizedAllowedCountries,
+      blockedCountries: normalizedBlockedCountries,
     },
   };
 }
@@ -116,8 +128,8 @@ export function sanitizeCustomPackageInput(input = {}) {
     minutesAllowed: numericField(input.minutesAllowed, "minutesAllowed"),
     smsAllowed: numericField(input.smsAllowed, "smsAllowed"),
     expiresAt,
-    isCallEnabled: Boolean(input.isCallEnabled),
-    isSmsEnabled: Boolean(input.isSmsEnabled),
+    isCallEnabled: input.isCallEnabled !== false,
+    isSmsEnabled: input.isSmsEnabled !== false,
     allowedCountries: normalizeCountryList(input.allowedCountries),
     blockedCountries: normalizeCountryList(input.blockedCountries),
     overridePlan: input.overridePlan !== false,

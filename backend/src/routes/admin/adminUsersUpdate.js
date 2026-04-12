@@ -1,9 +1,11 @@
 import express from "express";
 import requireAdmin from "../../middleware/requireAdmin.js";
+import AdminLog from "../../models/AdminLog.js";
 import User from "../../models/User.js";
 import Subscription from "../../models/Subscription.js";
 import CustomPackage from "../../models/CustomPackage.js";
 import { clearAdminUsersCache } from "../../services/adminUsersCacheService.js";
+import { invalidateUserSubscriptionCache } from "../../services/subscriptionService.js";
 import { sanitizeCustomPackageInput } from "../../services/customPackageService.js";
 
 const router = express.Router();
@@ -248,6 +250,7 @@ router.post("/:id/adjust-usage", requireAdmin, async (req, res) => {
       minutesUsed: nextMinutesSeconds,
     };
     await subscription.save();
+    await invalidateUserSubscriptionCache(req.params.id);
 
     res.json({
       success: true,
@@ -267,17 +270,43 @@ router.post("/:id/adjust-usage", requireAdmin, async (req, res) => {
 router.put("/:id/custom-package", requireAdmin, async (req, res) => {
   try {
     const payload = sanitizeCustomPackageInput(req.body);
+    const customPackage = await CustomPackage.findOneAndUpdate(
+      { userId: req.params.id },
+      {
+        $set: {
+          smsAllowed: payload.smsAllowed ?? 0,
+          minutesAllowed: payload.minutesAllowed ?? 0,
+          isSmsEnabled: payload.isSmsEnabled ?? true,
+          isCallEnabled: payload.isCallEnabled ?? true,
+          expiresAt: payload.expiresAt || null,
+          allowedCountries: payload.allowedCountries || [],
+          blockedCountries: payload.blockedCountries || [],
+          overridePlan: payload.overridePlan !== false,
+          active: payload.active !== false,
+          notes: payload.notes || "",
+          createdBy: req.user._id,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: {
+          userId: req.params.id,
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        runValidators: true,
+        setDefaultsOnInsert: true,
+      }
+    ).lean();
 
-    await CustomPackage.updateMany(
-      { userId: req.params.id, active: true },
-      { $set: { active: false } }
-    );
-
-    const customPackage = await CustomPackage.create({
+    console.log("[ADMIN] CustomPackage saved:", customPackage);
+    await AdminLog.create({
+      adminId: req.user._id,
       userId: req.params.id,
-      ...payload,
-      createdBy: req.user._id,
+      action: "CUSTOM_PACKAGE_UPDATE",
+      payload,
     });
+    await invalidateUserSubscriptionCache(req.params.id);
 
     res.json({
       success: true,
@@ -296,10 +325,24 @@ router.put("/:id/custom-package", requireAdmin, async (req, res) => {
 
 router.delete("/:id/custom-package", requireAdmin, async (req, res) => {
   try {
-    await CustomPackage.updateMany(
-      { userId: req.params.id, active: true },
-      { $set: { active: false } }
+    await CustomPackage.findOneAndUpdate(
+      { userId: req.params.id },
+      {
+        $set: {
+          active: false,
+          updatedAt: new Date(),
+        }
+      },
+      { new: true }
     );
+
+    await AdminLog.create({
+      adminId: req.user._id,
+      userId: req.params.id,
+      action: "CUSTOM_PACKAGE_CLEAR",
+      payload: {},
+    });
+    await invalidateUserSubscriptionCache(req.params.id);
 
     res.json({
       success: true,
