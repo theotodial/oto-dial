@@ -77,7 +77,10 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
     if (sub && sub.isCallEnabled === false) {
       return res.status(403).json({
         success: false,
-        error: "Calling disabled by admin",
+        error:
+          sub.source === "customPackage"
+            ? "Calling disabled by admin"
+            : "Calling is not included in your current plan.",
       });
     }
 

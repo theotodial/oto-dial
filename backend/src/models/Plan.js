@@ -85,6 +85,19 @@ const planSchema = new mongoose.Schema(
       default: false
     },
 
+    // When true: omitted from public /api/subscription/plans; admin assign/change only (no Stripe checkout).
+    adminOnly: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+
+    // When false: block inbound/outbound voice (WebRTC + Telnyx); SMS unaffected.
+    voiceCallsEnabled: {
+      type: Boolean,
+      default: true
+    },
+
     // Use active boolean instead of status enum for consistency
     active: {
       type: Boolean,

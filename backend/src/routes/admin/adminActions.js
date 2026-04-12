@@ -20,6 +20,197 @@ import {
 const router = express.Router();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
+/** Same statuses as admin user details — change-plan must find these rows, not only `active`. */
+const ADMIN_MANAGED_SUBSCRIPTION_STATUSES = [
+  "active",
+  "trialing",
+  "pending_activation",
+  "past_due",
+  "incomplete"
+];
+
+function findAdminManagedSubscription(userId) {
+  return Subscription.findOne({
+    userId,
+    status: { $in: ADMIN_MANAGED_SUBSCRIPTION_STATUSES }
+  }).sort({ updatedAt: -1, createdAt: -1 });
+}
+
+function parseAdminPeriodEnd(body, now = new Date()) {
+  let raw = body?.periodEnd ?? body?.subscriptionPeriodEnd;
+  if (typeof raw === "string") {
+    raw = raw.trim();
+  }
+  const fallback = new Date(now);
+  fallback.setMonth(fallback.getMonth() + 1);
+  if (raw === undefined || raw === null || raw === "") {
+    return fallback;
+  }
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) {
+    return fallback;
+  }
+  if (d.getTime() <= now.getTime()) {
+    return fallback;
+  }
+  return d;
+}
+
+/**
+ * Core assign: cancel prior Mongo rows, optional Stripe, create Subscription + link user.
+ * Used by POST /subscription/assign and as fallback from change-plan when no row exists.
+ */
+async function performAdminAssignSubscription({ userId, planId, loadedCreditsInput, body }) {
+  const user = await User.findById(userId);
+  if (!user) {
+    return { ok: false, status: 404, error: "User not found" };
+  }
+
+  const plan = await Plan.findById(planId);
+  if (!plan || !plan.active) {
+    return { ok: false, status: 404, error: "Plan not found or inactive" };
+  }
+
+  const effectivePlanPriceId = getCanonicalPlanPriceId(plan);
+  const hasStripePlanConfig = Boolean(plan.stripeProductId && effectivePlanPriceId);
+  const shouldUseStripe = Boolean(stripe && hasStripePlanConfig);
+
+  if (hasStripePlanConfig && plan.stripePriceId !== effectivePlanPriceId) {
+    plan.stripePriceId = effectivePlanPriceId;
+    await plan.save();
+  }
+
+  await Subscription.updateMany({ userId }, { status: "cancelled" });
+
+  let stripeSubscriptionId = null;
+  if (shouldUseStripe && user.stripeCustomerId) {
+    try {
+      const existingSubscriptions = await stripe.subscriptions.list({
+        customer: user.stripeCustomerId,
+        status: "active"
+      });
+
+      for (const sub of existingSubscriptions.data) {
+        await stripe.subscriptions.cancel(sub.id);
+      }
+
+      const stripeSubscription = await stripe.subscriptions.create({
+        customer: user.stripeCustomerId,
+        items: [{ price: effectivePlanPriceId }],
+        metadata: {
+          userId: userId.toString(),
+          planId: planId.toString(),
+          planName: plan.name
+        }
+      });
+
+      stripeSubscriptionId = stripeSubscription.id;
+      console.log(`✅ Created Stripe subscription ${stripeSubscriptionId} for user ${userId}`);
+    } catch (stripeErr) {
+      console.error("Stripe subscription creation error:", stripeErr);
+    }
+  } else if (!user.stripeCustomerId && shouldUseStripe) {
+    try {
+      const customer = await stripe.customers.create({
+        email: user.email,
+        metadata: {
+          userId: userId.toString(),
+          planId: planId.toString()
+        }
+      });
+      user.stripeCustomerId = customer.id;
+      await user.save();
+
+      const stripeSubscription = await stripe.subscriptions.create({
+        customer: customer.id,
+        items: [{ price: effectivePlanPriceId }],
+        metadata: {
+          userId: userId.toString(),
+          planId: planId.toString(),
+          planName: plan.name
+        }
+      });
+
+      stripeSubscriptionId = stripeSubscription.id;
+      console.log(`✅ Created Stripe customer and subscription for user ${userId}`);
+    } catch (stripeErr) {
+      console.error("Stripe customer/subscription creation error:", stripeErr);
+    }
+  }
+
+  const now = new Date();
+  const periodEnd = parseAdminPeriodEnd(body, now);
+
+  const planLimits = plan?.limits || {};
+  const minutesTotal = Number(planLimits.minutesTotal || 0);
+  const smsTotal = Number(planLimits.smsTotal || 0);
+  const numbersTotal = Number(planLimits.numbersTotal || 0);
+  if (!Number.isFinite(minutesTotal) || !Number.isFinite(smsTotal) || !Number.isFinite(numbersTotal)) {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        "Plan limits are invalid. Please edit the plan to include minutesTotal, smsTotal, and numbersTotal."
+    };
+  }
+
+  const subscription = await Subscription.create({
+    userId,
+    planId,
+    stripeSubscriptionId: stripeSubscriptionId,
+    stripePriceId: shouldUseStripe ? effectivePlanPriceId : null,
+    planKey: plan.name,
+    planName: plan.planName || plan.name,
+    status: "active",
+    periodStart: now,
+    periodEnd,
+    usage: {
+      minutesUsed: 0,
+      smsUsed: 0
+    },
+    limits: {
+      minutesTotal,
+      smsTotal,
+      numbersTotal
+    },
+    addons: {
+      minutes: 0,
+      sms: 0
+    },
+    ratePerMinute: 0.0065,
+    usageWindowDateKey: getServerDayKey()
+  });
+
+  applyPlanSnapshotToSubscription(subscription, plan);
+
+  if (loadedCreditsInput.hasChanges) {
+    applyLoadedCreditsToSubscription(subscription, loadedCreditsInput);
+  }
+
+  await subscription.save();
+
+  await User.findByIdAndUpdate(userId, {
+    $set: {
+      activeSubscriptionId: subscription._id,
+      currentPlanId: planId,
+      lastSubscriptionSyncAt: new Date(),
+    },
+    $unset: {
+      subscriptionActive: "",
+      currentSubscriptionLimits: "",
+      plan: "",
+      minutesUsed: "",
+      smsUsed: "",
+    },
+  });
+
+  return {
+    ok: true,
+    subscription,
+    loadedCredits: getActiveAddonAmounts(subscription)
+  };
+}
+
 /**
  * ================================
  * SUBSCRIPTION CONTROLS
@@ -30,6 +221,7 @@ const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SEC
  * POST /api/admin/actions/subscription/assign
  * Assign subscription to user
  * Creates Stripe subscription if Stripe is configured
+ * Optional body: periodEnd | subscriptionPeriodEnd (ISO) — billing period end
  */
 router.post("/subscription/assign", requireAdmin, async (req, res) => {
   try {
@@ -52,163 +244,25 @@ router.post("/subscription/assign", requireAdmin, async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: "User not found"
-      });
-    }
-
-    const plan = await Plan.findById(planId);
-    if (!plan || !plan.active) {
-      return res.status(404).json({
-        success: false,
-        error: "Plan not found or inactive"
-      });
-    }
-
-    // Stripe is optional for admin-assigned plans.
-    // If Stripe is configured AND the plan has Stripe ids, we create/cancel Stripe subs.
-    // Otherwise we fall back to MongoDB-only subscription (still enforcing limits in-app).
-    const effectivePlanPriceId = getCanonicalPlanPriceId(plan);
-    const hasStripePlanConfig = Boolean(plan.stripeProductId && effectivePlanPriceId);
-    const shouldUseStripe = Boolean(stripe && hasStripePlanConfig);
-
-    if (hasStripePlanConfig && plan.stripePriceId !== effectivePlanPriceId) {
-      plan.stripePriceId = effectivePlanPriceId;
-      await plan.save();
-    }
-
-    // Cancel existing subscriptions
-    await Subscription.updateMany(
-      { userId },
-      { status: "cancelled" }
-    );
-
-    // Cancel existing Stripe subscriptions if user has Stripe customer ID
-    let stripeSubscriptionId = null;
-    if (shouldUseStripe && user.stripeCustomerId) {
-      try {
-        // Cancel existing active Stripe subscriptions
-        const existingSubscriptions = await stripe.subscriptions.list({
-          customer: user.stripeCustomerId,
-          status: "active"
-        });
-
-        for (const sub of existingSubscriptions.data) {
-          await stripe.subscriptions.cancel(sub.id);
-        }
-
-        // Create new Stripe subscription
-        const stripeSubscription = await stripe.subscriptions.create({
-          customer: user.stripeCustomerId,
-          items: [{ price: effectivePlanPriceId }],
-          metadata: {
-            userId: userId.toString(),
-            planId: planId.toString(),
-            planName: plan.name
-          }
-        });
-
-        stripeSubscriptionId = stripeSubscription.id;
-        console.log(`✅ Created Stripe subscription ${stripeSubscriptionId} for user ${userId}`);
-      } catch (stripeErr) {
-        console.error("Stripe subscription creation error:", stripeErr);
-        // Continue with MongoDB-only subscription if Stripe fails
-      }
-    } else if (!user.stripeCustomerId && shouldUseStripe) {
-      // Create Stripe customer if doesn't exist
-      try {
-        const customer = await stripe.customers.create({
-          email: user.email,
-          metadata: {
-            userId: userId.toString(),
-            planId: planId.toString()
-          }
-        });
-        user.stripeCustomerId = customer.id;
-        await user.save();
-
-        // Create Stripe subscription
-        const stripeSubscription = await stripe.subscriptions.create({
-          customer: customer.id,
-          items: [{ price: effectivePlanPriceId }],
-          metadata: {
-            userId: userId.toString(),
-            planId: planId.toString(),
-            planName: plan.name
-          }
-        });
-
-        stripeSubscriptionId = stripeSubscription.id;
-        console.log(`✅ Created Stripe customer and subscription for user ${userId}`);
-      } catch (stripeErr) {
-        console.error("Stripe customer/subscription creation error:", stripeErr);
-      }
-    }
-
-    // Create new subscription in MongoDB
-    const now = new Date();
-    const periodEnd = new Date(now);
-    periodEnd.setMonth(periodEnd.getMonth() + 1);
-
-    const planLimits = plan?.limits || {};
-    const minutesTotal = Number(planLimits.minutesTotal || 0);
-    const smsTotal = Number(planLimits.smsTotal || 0);
-    const numbersTotal = Number(planLimits.numbersTotal || 0);
-    if (!Number.isFinite(minutesTotal) || !Number.isFinite(smsTotal) || !Number.isFinite(numbersTotal)) {
-      return res.status(400).json({
-        success: false,
-        error: "Plan limits are invalid. Please edit the plan to include minutesTotal, smsTotal, and numbersTotal."
-      });
-    }
-
-    const subscription = await Subscription.create({
+    const result = await performAdminAssignSubscription({
       userId,
       planId,
-      stripeSubscriptionId: stripeSubscriptionId,
-      stripePriceId: shouldUseStripe ? effectivePlanPriceId : null,
-      planKey: plan.name,
-      planName: plan.planName || plan.name,
-      status: "active",
-      periodStart: now,
-      periodEnd,
-      usage: {
-        minutesUsed: 0,
-        smsUsed: 0
-      },
-      limits: {
-        minutesTotal,
-        smsTotal,
-        numbersTotal
-      },
-      addons: {
-        minutes: 0,
-        sms: 0
-      },
-      ratePerMinute: 0.0065, // Default rate
-      usageWindowDateKey: getServerDayKey()
+      loadedCreditsInput,
+      body: req.body
     });
 
-    applyPlanSnapshotToSubscription(subscription, plan);
-
-    if (loadedCreditsInput.hasChanges) {
-      applyLoadedCreditsToSubscription(subscription, loadedCreditsInput);
+    if (!result.ok) {
+      return res.status(result.status).json({
+        success: false,
+        error: result.error
+      });
     }
-
-    await subscription.save();
-
-    // Update user's active subscription
-    user.activeSubscriptionId = subscription._id;
-    user.subscriptionActive = true;
-    await user.save();
 
     res.json({
       success: true,
       message: "Subscription assigned successfully",
-      subscription,
-      loadedCredits: getActiveAddonAmounts(subscription)
+      subscription: result.subscription,
+      loadedCredits: result.loadedCredits
     });
   } catch (err) {
     console.error("Assign subscription error:", err);
@@ -324,14 +378,6 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: "User not found"
-      });
-    }
-
     const plan = await Plan.findById(planId);
     if (!plan || !plan.active) {
       return res.status(404).json({
@@ -340,63 +386,90 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
       });
     }
 
-    // Verify plan has Stripe configuration
-    const effectivePlanPriceId = getCanonicalPlanPriceId(plan);
-    if (!plan.stripeProductId || !effectivePlanPriceId) {
-      return res.status(400).json({
-        success: false,
-        error: "Plan is missing Stripe configuration"
-      });
-    }
-
-    if (plan.stripePriceId !== effectivePlanPriceId) {
-      plan.stripePriceId = effectivePlanPriceId;
-      await plan.save();
-    }
-
-    // Find active subscription
-    const subscription = await Subscription.findOne({
-      userId,
-      status: "active"
-    });
+    let subscription = await findAdminManagedSubscription(userId);
 
     if (!subscription) {
-      return res.status(404).json({
-        success: false,
-        error: "No active subscription found"
+      const assignResult = await performAdminAssignSubscription({
+        userId,
+        planId,
+        loadedCreditsInput,
+        body: req.body
+      });
+      if (!assignResult.ok) {
+        return res.status(assignResult.status).json({
+          success: false,
+          error: assignResult.error
+        });
+      }
+      return res.json({
+        success: true,
+        message:
+          "Subscription assigned successfully (no existing subscription row; created new)",
+        subscription: assignResult.subscription,
+        loadedCredits: assignResult.loadedCredits
       });
     }
 
-    // Update Stripe subscription if exists
-    if (stripe && subscription.stripeSubscriptionId) {
-      try {
-        // Update Stripe subscription to use new price
-        const stripeSub = await stripe.subscriptions.retrieve(subscription.stripeSubscriptionId);
-        
-        // Update subscription items
-        await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
-          items: [{
-            id: stripeSub.items.data[0].id,
-            price: effectivePlanPriceId
-          }],
-          metadata: {
-            userId: userId.toString(),
-            planId: planId.toString(),
-            planName: plan.name
-          }
-        });
+    const effectivePlanPriceId = getCanonicalPlanPriceId(plan);
+    // Must match assign: Stripe only when product id and canonical price both exist.
+    const stripeBillable = Boolean(plan.stripeProductId && effectivePlanPriceId);
 
-        console.log(`✅ Updated Stripe subscription ${subscription.stripeSubscriptionId} to plan ${plan.name}`);
-      } catch (stripeErr) {
-        console.error("Stripe subscription update error:", stripeErr);
-        // Continue with MongoDB update even if Stripe fails
+    if (stripeBillable) {
+      if (plan.stripePriceId !== effectivePlanPriceId) {
+        plan.stripePriceId = effectivePlanPriceId;
+        await plan.save();
       }
+
+      if (stripe && subscription.stripeSubscriptionId) {
+        try {
+          const stripeSub = await stripe.subscriptions.retrieve(subscription.stripeSubscriptionId);
+
+          await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
+            items: [{
+              id: stripeSub.items.data[0].id,
+              price: effectivePlanPriceId
+            }],
+            metadata: {
+              userId: userId.toString(),
+              planId: planId.toString(),
+              planName: plan.name
+            }
+          });
+
+          console.log(`✅ Updated Stripe subscription ${subscription.stripeSubscriptionId} to plan ${plan.name}`);
+        } catch (stripeErr) {
+          console.error("Stripe subscription update error:", stripeErr);
+        }
+      }
+
+      subscription.stripePriceId = effectivePlanPriceId;
+    } else {
+      if (stripe && subscription.stripeSubscriptionId) {
+        try {
+          await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
+          console.log(`✅ Cancelled Stripe subscription ${subscription.stripeSubscriptionId} (Mongo-only plan ${plan.name})`);
+        } catch (stripeErr) {
+          console.error("Stripe subscription cancel error (Mongo-only plan change):", stripeErr);
+        }
+      }
+      subscription.stripeSubscriptionId = null;
+      subscription.stripePriceId = null;
     }
 
-    // Update subscription plan in MongoDB - SINGLE SOURCE OF TRUTH
     subscription.planId = planId;
-    subscription.stripePriceId = effectivePlanPriceId;
     applyPlanSnapshotToSubscription(subscription, plan);
+
+    subscription.status = "active";
+
+    const periodRaw =
+      req.body?.periodEnd ?? req.body?.subscriptionPeriodEnd;
+    const hasExplicitPeriod =
+      periodRaw !== undefined &&
+      periodRaw !== null &&
+      String(periodRaw).trim() !== "";
+    if (hasExplicitPeriod) {
+      subscription.periodEnd = parseAdminPeriodEnd(req.body, new Date());
+    }
 
     if (loadedCreditsInput.hasChanges) {
       applyLoadedCreditsToSubscription(subscription, loadedCreditsInput);
@@ -452,10 +525,7 @@ router.post("/subscription/load-credits", requireAdmin, async (req, res) => {
       });
     }
 
-    const subscription = await Subscription.findOne({
-      userId,
-      status: "active"
-    });
+    const subscription = await findAdminManagedSubscription(userId);
 
     if (!subscription) {
       return res.status(404).json({
@@ -497,10 +567,6 @@ router.post("/subscription/override-usage", requireAdmin, async (req, res) => {
       monthlyMinutesLimit,
       dailySmsLimit,
       dailyMinutesLimit,
-      monthlySmsUsed,
-      monthlyMinutesUsed,
-      dailySmsUsed,
-      dailyMinutesUsed
     } = req.body;
 
     if (!userId) {
@@ -510,10 +576,7 @@ router.post("/subscription/override-usage", requireAdmin, async (req, res) => {
       });
     }
 
-    const subscription = await Subscription.findOne({
-      userId,
-      status: "active"
-    });
+    const subscription = await findAdminManagedSubscription(userId);
 
     if (!subscription) {
       return res.status(404).json({
@@ -539,23 +602,12 @@ router.post("/subscription/override-usage", requireAdmin, async (req, res) => {
     setNumberIfProvided("monthlyMinutesLimit", monthlyMinutesLimit);
     setNumberIfProvided("dailySmsLimit", dailySmsLimit);
     setNumberIfProvided("dailyMinutesLimit", dailyMinutesLimit);
-    setNumberIfProvided("usage.smsUsed", monthlySmsUsed);
-    setNumberIfProvided("usage.minutesUsed", monthlyMinutesUsed, { toSeconds: true });
-    setNumberIfProvided("dailySmsUsed", dailySmsUsed);
-    setNumberIfProvided("dailyMinutesUsed", dailyMinutesUsed, { toSeconds: true });
 
     if (Object.keys(setUpdate).length === 0) {
       return res.status(400).json({
         success: false,
-        error: "At least one override value is required"
+        error: "At least one limit override value is required (usage is derived from SMS/Call records)"
       });
-    }
-
-    if (
-      setUpdate.dailySmsUsed !== undefined ||
-      setUpdate.dailyMinutesUsed !== undefined
-    ) {
-      setUpdate.usageWindowDateKey = getServerDayKey();
     }
 
     await Subscription.updateOne(

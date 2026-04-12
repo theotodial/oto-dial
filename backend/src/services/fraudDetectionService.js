@@ -1,6 +1,8 @@
 import User from "../models/User.js";
 import Subscription from "../models/Subscription.js";
 import CustomPackage from "../models/CustomPackage.js";
+import { computeUsage } from "./usageComputationService.js";
+import { getLatestSubscription } from "./subscriptionService.js";
 import { detectCountryFromPhoneNumber } from "../utils/countryUtils.js";
 import { getEffectiveTelecomPolicy } from "./telecomPolicyService.js";
 
@@ -108,18 +110,12 @@ export async function evaluateFraudEvent({
     });
   }
 
-  const subscription = await Subscription.findOne({
-    userId,
-    status: { $in: ["active", "trialing", "pending_activation", "past_due", "incomplete"] },
-  })
-    .sort({ updatedAt: -1, createdAt: -1 })
-    .select("usage limits")
-    .lean();
+  const subscription = await getLatestSubscription(userId);
+
+  const { minutesUsed, smsUsed } = await computeUsage(userId);
 
   const minutesTotal = Number(subscription?.limits?.minutesTotal || 0);
-  const minutesUsed = Number(subscription?.usage?.minutesUsed || 0) / 60;
   const smsTotal = Number(subscription?.limits?.smsTotal || 0);
-  const smsUsed = Number(subscription?.usage?.smsUsed || 0);
 
   if (channel === "call" && minutesTotal > 0 && minutesUsed > minutesTotal * 1.5) {
     return flagUser(userId, "Voice usage spike exceeds 150% of limit", {

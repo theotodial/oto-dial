@@ -107,6 +107,25 @@ async function initializePlans() {
         dedicatedNumbers: AFFILIATE_UNLIMITED_LIMITS.dedicatedNumbers,
         displayUnlimited: true,
         active: true
+      },
+      {
+        type: "sms_1700",
+        name: "1700 SMS",
+        planName: "1700 SMS",
+        price: 80,
+        currency: "USD",
+        stripeProductId: null,
+        stripePriceId: null,
+        limits: {
+          minutesTotal: 0,
+          smsTotal: 1700,
+          numbersTotal: 1
+        },
+        dedicatedNumbers: 1,
+        displayUnlimited: false,
+        adminOnly: true,
+        voiceCallsEnabled: false,
+        active: true
       }
     ];
 
@@ -131,6 +150,8 @@ async function initializePlans() {
         plan.dailyMinutesLimit = planData.dailyMinutesLimit ?? null;
         plan.dedicatedNumbers = planData.dedicatedNumbers ?? planData.limits?.numbersTotal ?? 1;
         plan.displayUnlimited = Boolean(planData.displayUnlimited);
+        plan.adminOnly = Boolean(planData.adminOnly);
+        plan.voiceCallsEnabled = planData.voiceCallsEnabled !== false;
         plan.active = planData.active;
         await plan.save();
         console.log(`✅ Updated plan: ${planData.name}`);

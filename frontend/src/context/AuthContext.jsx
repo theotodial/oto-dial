@@ -2,6 +2,7 @@ import { createContext, useContext, useCallback } from "react";
 import API from "../api";
 import {
   buildLoginFallbackPayload,
+  emptyUsageBootstrap,
   inactiveSubscriptionBootstrap,
   useAppState,
 } from "./AppStateContext";
@@ -57,6 +58,7 @@ export function AuthProvider({ children }) {
               isEmailVerified: true,
             },
             subscription: inactiveSubscriptionBootstrap(),
+            usage: emptyUsageBootstrap(),
           });
         }
       }
@@ -114,6 +116,7 @@ export function AuthProvider({ children }) {
               isEmailVerified: true,
             },
             subscription: inactiveSubscriptionBootstrap(),
+            usage: emptyUsageBootstrap(),
           });
         }
       }

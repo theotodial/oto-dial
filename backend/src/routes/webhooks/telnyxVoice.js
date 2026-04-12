@@ -1,8 +1,9 @@
 import express from "express";
 import mongoose from "mongoose";
+import axios from "axios";
 import Call from "../../models/Call.js";
-import Subscription from "../../models/Subscription.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
+import { loadUserSubscription } from "../../services/subscriptionService.js";
 import { recordCallCost } from "../../services/telnyxCostCalculator.js";
 import { emitAdminLiveCall } from "../../services/adminLiveEventsService.js";
 import { normalizeCallPartyNumber } from "../../utils/callLifecycle.js";
@@ -10,10 +11,6 @@ import {
   findCallForTelnyxEvent,
   mergeTelnyxCallIdentifiers,
 } from "../../utils/telnyxWebhookCallResolver.js";
-import {
-  isUnlimitedSubscription,
-  incrementUnlimitedUsageAfterSuccess,
-} from "../../services/unlimitedUsageService.js";
 import { TERMINAL_STATUSES, isTerminalStatus } from "../../utils/callStateMachine.js";
 import {
   bridgeParkedWebRtcToPstn,
@@ -34,6 +31,27 @@ const HANDLED_EVENTS = new Set([
   "call.bridged",
   "call.hangup",
 ]);
+
+async function hangupTelnyxCallLeg(callControlId, apiKey) {
+  if (!callControlId || !apiKey) return;
+  try {
+    await axios.post(
+      `https://api.telnyx.com/v2/calls/${encodeURIComponent(callControlId)}/actions/hangup`,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+  } catch (e) {
+    console.warn(
+      "[VOICE] hangup failed (voice disabled / policy):",
+      e?.response?.data || e?.message || e
+    );
+  }
+}
 
 function isOutboundWebRtcCall(doc) {
   return (
@@ -118,6 +136,19 @@ router.post("/", async (req, res) => {
             { new: true }
           );
           if (claimed) {
+            const ownerSub = await loadUserSubscription(claimed.user);
+            if (ownerSub && ownerSub.isCallEnabled === false) {
+              await Call.updateOne(
+                { _id: claimed._id },
+                { $set: { webrtcParkDialAttempted: false } }
+              );
+              await hangupTelnyxCallLeg(callControlId, apiKey);
+              console.warn(
+                "[PARK OUTBOUND] blocked — calling not enabled for user",
+                String(claimed.user)
+              );
+              return res.sendStatus(200);
+            }
             try {
               await mergeTelnyxCallIdentifiers(claimed, {
                 callControlId,
@@ -192,6 +223,17 @@ router.post("/", async (req, res) => {
         console.warn(
           `[WEBHOOK RECEIVED] call.initiated — no active phone for to ${searchNumber}`
         );
+        return res.sendStatus(200);
+      }
+
+      const apiKeyInbound = process.env.TELNYX_API_KEY?.trim();
+      const inboundUserSub = await loadUserSubscription(phoneNumber.userId);
+      if (inboundUserSub && inboundUserSub.isCallEnabled === false) {
+        console.warn(
+          "[VOICE] inbound rejected — calling not enabled for user",
+          String(phoneNumber.userId)
+        );
+        await hangupTelnyxCallLeg(callControlId, apiKeyInbound);
         return res.sendStatus(200);
       }
 
@@ -581,95 +623,6 @@ router.post("/", async (req, res) => {
       } else {
         call.costPending = true;
         await call.save();
-      }
-
-      if (billableSeconds > 0 && call.user) {
-        const usageCountLock = await Call.updateOne(
-          {
-            _id: call._id,
-            usageCountedAt: null,
-          },
-          {
-            $set: {
-              usageCountedAt: new Date(),
-              usageCountedSeconds: billableSeconds,
-            },
-          }
-        );
-
-        if (usageCountLock.modifiedCount === 0) {
-          console.log(
-            `⏭️ Usage already counted for call ${call._id}, skipping duplicate webhook charge`
-          );
-          return res.sendStatus(200);
-        }
-
-        const subscription = await Subscription.findOne({
-          userId: call.user,
-          status: "active",
-        });
-
-        if (subscription) {
-          if (isUnlimitedSubscription(subscription)) {
-            const usageResult = await incrementUnlimitedUsageAfterSuccess({
-              subscriptionId: subscription._id,
-              userId: call.user,
-              channel: "voice_hangup",
-              minutesIncrementSeconds: billableSeconds,
-            });
-
-            if (!usageResult.success && usageResult.limitReached) {
-              console.warn(
-                `⚠️ Voice usage increment hit Unlimited threshold for user ${call.user}`
-              );
-            }
-          } else {
-            const secondsUsedBefore = subscription.usage?.minutesUsed || 0;
-            const minutesTotal =
-              (subscription.limits?.minutesTotal || 2500) +
-              (subscription.addons?.minutes || 0);
-            const secondsTotal = minutesTotal * 60;
-            const secondsRemainingBefore = Math.max(0, secondsTotal - secondsUsedBefore);
-            const minutesRemainingBefore = secondsRemainingBefore / 60;
-
-            await Subscription.findOneAndUpdate(
-              { userId: call.user, status: "active" },
-              {
-                $inc: {
-                  "usage.minutesUsed": billableSeconds,
-                },
-              }
-            );
-
-            const secondsUsedAfter = secondsUsedBefore + billableSeconds;
-            const secondsRemainingAfter = Math.max(0, secondsTotal - secondsUsedAfter);
-            const minutesRemainingAfter = secondsRemainingAfter / 60;
-
-            console.log(`📊 USAGE DEDUCTED:`);
-            console.log(
-              `   Call: ${call.direction} ${call.fromNumber} -> ${call.toNumber}`
-            );
-            console.log(
-              `   Duration: ${billableSeconds} seconds (${(billableSeconds / 60).toFixed(3)} minutes)`
-            );
-            console.log(
-              `   Status: ${finalStatus}${!call.callStartedAt ? " (unanswered/ringing)" : ""}`
-            );
-            console.log(`   User: ${call.user}`);
-            console.log(
-              `   Before: ${secondsUsedBefore}s used, ${minutesRemainingBefore.toFixed(2)} minutes remaining`
-            );
-            console.log(
-              `   After: ${secondsUsedAfter}s used, ${minutesRemainingAfter.toFixed(2)} minutes remaining`
-            );
-          }
-        } else {
-          console.warn(
-            `⚠️ No active subscription found for user ${call.user} - usage not deducted`
-          );
-        }
-      } else if (!call.user) {
-        console.warn(`⚠️ Call has no user associated - usage not deducted`);
       }
 
       return res.sendStatus(200);

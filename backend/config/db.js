@@ -35,6 +35,28 @@ function redactUri(u) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Atlas / VPN / Windows SRV-fallback paths often need >5s for TLS + replica set discovery. */
+function getMongoClientOptions() {
+  const connectTimeoutMS = Math.max(
+    10_000,
+    Number(process.env.MONGO_CONNECT_TIMEOUT_MS || 30_000)
+  );
+  const serverSelectionTimeoutMS = Math.max(
+    10_000,
+    Number(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS || 30_000)
+  );
+  return {
+    maxPoolSize: 50,
+    minPoolSize: 0,
+    maxIdleTimeMS: 300_000,
+    waitQueueTimeoutMS: 10_000,
+    connectTimeoutMS,
+    socketTimeoutMS: Math.max(30_000, Number(process.env.MONGO_SOCKET_TIMEOUT_MS || 60_000)),
+    serverSelectionTimeoutMS,
+    family: 4,
+  };
+}
+
 const connectDB = async () => {
   const primary =
     process.env.MONGODB_URI ||
@@ -51,21 +73,16 @@ const connectDB = async () => {
 
   const attempts = Math.max(1, Math.min(5, Number(process.env.MONGO_CONNECT_RETRIES || 3)));
   const delayMs = Math.max(500, Number(process.env.MONGO_CONNECT_RETRY_MS || 2000));
+  const resolvedAttempts = Math.max(
+    1,
+    Math.min(5, Number(process.env.MONGO_RESOLVED_URI_RETRIES || 3))
+  );
   const dohDisabled = process.env.MONGO_DISABLE_DOH === "true";
 
   const tryConnect = async (uri, label) => {
     await mongoose.disconnect().catch(() => {});
     console.log(`[MongoDB] Connecting (${label}):`, redactUri(uri));
-    await mongoose.connect(uri, {
-      maxPoolSize: 50,
-      minPoolSize: 0,
-      maxIdleTimeMS: 300_000,
-      waitQueueTimeoutMS: 10_000,
-      connectTimeoutMS: 5_000,
-      socketTimeoutMS: 30_000,
-      serverSelectionTimeoutMS: 5_000,
-      family: 4,
-    });
+    await mongoose.connect(uri, getMongoClientOptions());
     console.log("MongoDB Connected");
   };
 
@@ -107,20 +124,29 @@ const connectDB = async () => {
         );
         const resolved = await convertMongoSrvToDirectUri(uri);
         if (resolved) {
-          try {
-            await tryConnect(resolved, "resolved (mongodb+srv → mongodb://)");
-            return;
-          } catch (resolvedErr) {
-            lastErr = resolvedErr;
-            console.error(
-              "[MongoDB] Resolved direct URI connect failed:",
-              resolvedErr?.message || resolvedErr
-            );
+          for (let r = 0; r < resolvedAttempts; r++) {
+            try {
+              await tryConnect(resolved, "resolved (mongodb+srv → mongodb://)");
+              return;
+            } catch (resolvedErr) {
+              lastErr = resolvedErr;
+              console.error(
+                `[MongoDB] Resolved direct URI connect failed (${r + 1}/${resolvedAttempts}):`,
+                resolvedErr?.message || resolvedErr
+              );
+              if (r < resolvedAttempts - 1) {
+                await sleep(delayMs);
+              }
+            }
           }
+          console.error(
+            "[MongoDB] Resolved mongodb:// URI could not connect after retries. Set MONGODB_URI_DIRECT to Atlas standard connection string, or allow outbound TCP 27017 / fix VPN firewall."
+          );
+        } else {
+          console.error(
+            "[MongoDB] Could not resolve SRV to mongodb:// (no host list). Set MONGODB_URI_DIRECT to a standard mongodb:// string from Atlas."
+          );
         }
-        console.error(
-          "[MongoDB] DoH returned no SRV records; set MONGODB_URI_DIRECT to a standard mongodb:// string from Atlas."
-        );
       } catch (dohErr) {
         console.error("[MongoDB] DNS-over-HTTPS resolution failed:", dohErr?.message || dohErr);
         lastErr = dohErr;

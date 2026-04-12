@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import API from '../api';
+import { notifySubscriptionChanged } from '../utils/subscriptionSync';
 
 const SendIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -100,6 +101,7 @@ function ChatPanel({ selectedChat }) {
       });
 
       if (!response.error) {
+        notifySubscriptionChanged();
         await fetchMessages();
       }
     } catch (err) {

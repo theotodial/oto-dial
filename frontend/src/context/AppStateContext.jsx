@@ -1,24 +1,39 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import API from "../api";
 import { cachedFetch, clearCachedFetch, readJsonStorage, removeStorageKey, writeJsonStorage } from "../utils/appCache";
+import {
+  BOOTSTRAP_REFRESH_EVENT,
+  BOOTSTRAP_REFRESH_STORAGE_KEY,
+  shouldRefreshSubscription,
+} from "../utils/subscriptionSync";
 
 const AppStateContext = createContext(null);
 
-const APP_BOOTSTRAP_CACHE_KEY = "otodial_app_bootstrap_v1";
+const APP_BOOTSTRAP_CACHE_KEY = "otodial_app_bootstrap_v2";
 
-/** Matches backend buildPublicSubscriptionState(null) — used when bootstrap fails but session is valid */
+export function emptyUsageBootstrap() {
+  return {
+    smsUsed: 0,
+    minutesUsed: 0,
+    smsRemaining: 0,
+    minutesRemaining: 0,
+    smsLimit: 0,
+    minutesLimit: 0,
+    isSmsEnabled: false,
+    isCallEnabled: false,
+  };
+}
+
+/** Matches backend when no subscription row exists */
 export function inactiveSubscriptionBootstrap() {
   return {
-    active: false,
+    id: null,
     status: "inactive",
-    plan: "No Plan",
-    planName: "No Plan",
-    minutesRemaining: 0,
-    smsRemaining: 0,
-    isUnlimited: false,
-    displayUnlimited: false,
-    periodStart: null,
-    periodEnd: null,
+    planName: null,
+    limits: null,
+    hasSubscription: false,
+    isActive: false,
+    showUsage: false,
   };
 }
 
@@ -43,6 +58,7 @@ export function buildLoginFallbackPayload(loginUser) {
     success: true,
     user,
     subscription: inactiveSubscriptionBootstrap(),
+    usage: emptyUsageBootstrap(),
   };
 }
 
@@ -68,9 +84,11 @@ export function AppStateProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem("token"));
   const [user, setUser] = useState(null);
   const [subscription, setSubscription] = useState(null);
+  const [usage, setUsage] = useState(null);
   const [isReady, setIsReady] = useState(() => !localStorage.getItem("token"));
   const [isRefreshing, setIsRefreshing] = useState(false);
   const hasFetchedRef = useRef(false);
+  const lastBootstrapRefreshRef = useRef(0);
 
   const clearAppState = useCallback(() => {
     clearCachedFetch("auth:/api/app/bootstrap");
@@ -79,6 +97,7 @@ export function AppStateProvider({ children }) {
     removeStorageKey(APP_BOOTSTRAP_CACHE_KEY);
     setUser(null);
     setSubscription(null);
+    setUsage(null);
     setIsReady(!localStorage.getItem("token"));
     hasFetchedRef.current = false;
   }, []);
@@ -86,8 +105,10 @@ export function AppStateProvider({ children }) {
   const applyBootstrapData = useCallback((data, activeToken) => {
     const nextUser = data?.user || null;
     const nextSubscription = data?.subscription || null;
+    const nextUsage = data?.usage ?? emptyUsageBootstrap();
     setUser(nextUser);
     setSubscription(nextSubscription);
+    setUsage(nextUsage);
     setIsReady(true);
     if (activeToken && data) {
       writeBootstrapCache(activeToken, data);
@@ -159,6 +180,67 @@ export function AppStateProvider({ children }) {
     });
   }, [applyBootstrapData, clearAppState, fetchBootstrap]);
 
+  useEffect(() => {
+    if (!token) {
+      return undefined;
+    }
+
+    const requestBootstrapRefresh = (detail = {}) => {
+      const now = Date.now();
+      if (now - lastBootstrapRefreshRef.current < 1500) {
+        return;
+      }
+
+      const currentUserId = user?._id ?? user?.id ?? null;
+      if (!shouldRefreshSubscription(detail, currentUserId)) {
+        return;
+      }
+
+      lastBootstrapRefreshRef.current = now;
+      fetchBootstrap({ force: true }).catch(() => {
+        /* handled in fetchBootstrap */
+      });
+    };
+
+    const handleBootstrapRefresh = (event) => {
+      requestBootstrapRefresh(event?.detail || {});
+    };
+
+    const handleStorageRefresh = (event) => {
+      if (event.key !== BOOTSTRAP_REFRESH_STORAGE_KEY || !event.newValue) {
+        return;
+      }
+
+      try {
+        requestBootstrapRefresh(JSON.parse(event.newValue));
+      } catch (_) {
+        requestBootstrapRefresh({});
+      }
+    };
+
+    const handleWindowFocus = () => {
+      requestBootstrapRefresh({ reason: "window-focus" });
+    };
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        requestBootstrapRefresh({ reason: "visibility-change" });
+      }
+    };
+
+    window.addEventListener(BOOTSTRAP_REFRESH_EVENT, handleBootstrapRefresh);
+    window.addEventListener("storage", handleStorageRefresh);
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener(BOOTSTRAP_REFRESH_EVENT, handleBootstrapRefresh);
+      window.removeEventListener("storage", handleStorageRefresh);
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [fetchBootstrap, token, user]);
+
   const setAuthToken = useCallback((newToken, bootstrapData = null) => {
     localStorage.removeItem("adminToken");
     localStorage.removeItem("adminProfile");
@@ -192,12 +274,13 @@ export function AppStateProvider({ children }) {
     token,
     user,
     subscription,
+    usage,
     isReady,
     isRefreshing,
     setAuthToken,
     clearAppState,
     refetchBootstrap: () => fetchBootstrap({ force: true }),
-  }), [token, user, subscription, isReady, isRefreshing, setAuthToken, clearAppState, fetchBootstrap]);
+  }), [token, user, subscription, usage, isReady, isRefreshing, setAuthToken, clearAppState, fetchBootstrap]);
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }

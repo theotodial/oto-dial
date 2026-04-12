@@ -62,7 +62,7 @@ const MenuIcon = () => (
 function Dashboard() {
   const navigate = useNavigate();
   const { user, refreshUser } = useAuth();
-  const { subscription, hydrated: subscriptionHydrated, refreshSubscription } = useSubscription();
+  const { subscription, usage, hydrated: subscriptionHydrated, refreshSubscription } = useSubscription();
   const { toggleSidebar, isOpen: sidebarOpen } = useMobileSidebar();
 
   const [balance, setBalance] = useState(0);
@@ -87,7 +87,13 @@ function Dashboard() {
   useEffect(() => {
     if (!subscriptionHydrated) return;
 
-    if (subscription == null || !subscription.active) {
+    const hasRow =
+      subscription &&
+      (subscription.id != null ||
+        subscription._id != null ||
+        subscription.hasSubscription === true);
+
+    if (!hasRow) {
       setPackageDetails({
         remainingMinutes: 0,
         remainingSMS: 0,
@@ -100,12 +106,12 @@ function Dashboard() {
     const isUnlimitedPlan =
       Boolean(subscription.isUnlimited || subscription.displayUnlimited);
     setPackageDetails({
-      remainingMinutes: isUnlimitedPlan ? '∞' : (subscription.minutesRemaining ?? 0),
-      remainingSMS: isUnlimitedPlan ? '∞' : (subscription.smsRemaining ?? 0),
+      remainingMinutes: isUnlimitedPlan ? '∞' : (usage?.minutesRemaining ?? 0),
+      remainingSMS: isUnlimitedPlan ? '∞' : (usage?.smsRemaining ?? 0),
       planName: subscription.planName || 'No Plan',
       displayUnlimited: isUnlimitedPlan
     });
-  }, [subscription, subscriptionHydrated]);
+  }, [subscription, usage, subscriptionHydrated]);
 
   /* ================= FETCH DASHBOARD ================= */
 

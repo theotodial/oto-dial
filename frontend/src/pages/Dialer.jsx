@@ -42,7 +42,7 @@ function Dialer() {
   } = useCall();
 
   const { subscription } = useSubscription();
-  const subscriptionActive = Boolean(subscription?.active);
+  const billingActive = Boolean(subscription?.isActive ?? subscription?.active);
 
   const dialCountries = [
     { code: '+1', name: 'United States', flag: '🇺🇸' },
@@ -166,7 +166,7 @@ function Dialer() {
     console.log('📞 Dialer handleCall triggered');
     console.log('📞 State:', {
       phoneNumber,
-      subscriptionActive,
+      billingActive,
       userNumbersCount: userNumbers.length,
       isClientReady,
       isInCall,
@@ -183,7 +183,7 @@ function Dialer() {
       return;
     }
 
-    if (!subscriptionActive) {
+    if (!billingActive) {
       console.warn(
         '[CALL FLOW] UI subscription flag is false — still calling makeCall; server will enforce subscription'
       );
@@ -288,7 +288,7 @@ function Dialer() {
             {isInitializing && (
               <span className="text-xs text-yellow-600 dark:text-yellow-400">Connecting...</span>
             )}
-            {!subscriptionActive && (
+            {!billingActive && (
               <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/30 px-2 py-1 rounded">
                 Subscription Required
               </div>

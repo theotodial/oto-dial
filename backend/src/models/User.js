@@ -94,9 +94,10 @@ const userSchema = new mongoose.Schema(
       index: true
     },
 
-    subscriptionActive: { 
-      type: Boolean, 
-      default: false
+    subscriptionActive: {
+      type: Boolean,
+      default: false,
+      select: false,
     },
 
     currentPlanId: {
@@ -109,7 +110,7 @@ const userSchema = new mongoose.Schema(
     currentSubscriptionLimits: {
       minutesTotal: { type: Number, default: 0 },
       smsTotal: { type: Number, default: 0 },
-      numbersTotal: { type: Number, default: 0 }
+      numbersTotal: { type: Number, default: 0 },
     },
 
     lastSubscriptionSyncAt: {
@@ -117,9 +118,10 @@ const userSchema = new mongoose.Schema(
       default: null
     },
      
-    plan: { 
-      type: String, 
-      default: null
+    plan: {
+      type: String,
+      default: null,
+      select: false,
     },
 
     telnyxNumber: {
@@ -135,12 +137,14 @@ const userSchema = new mongoose.Schema(
 
     minutesUsed: {
       type: Number,
-      default: 0
+      default: 0,
+      select: false,
     },
 
     smsUsed: {
       type: Number,
-      default: 0
+      default: 0,
+      select: false,
     },
 
     // Track active sessions for multiple device login

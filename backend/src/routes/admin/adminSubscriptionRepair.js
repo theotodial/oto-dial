@@ -62,15 +62,24 @@ router.post("/reattach/:subscriptionId", async (req, res) => {
       subscription.status = "active";
       await subscription.save({ session });
 
-      user.activeSubscriptionId = subscription._id;
-      user.subscriptionActive = true;
-      user.currentPlanId = subscription.planId || null;
-      user.currentSubscriptionLimits = subscription.limits || {
-        minutesTotal: 0,
-        smsTotal: 0,
-        numbersTotal: 0
-      };
-      await user.save({ session });
+      await User.findByIdAndUpdate(
+        user._id,
+        {
+          $set: {
+            activeSubscriptionId: subscription._id,
+            currentPlanId: subscription.planId || null,
+            lastSubscriptionSyncAt: new Date(),
+          },
+          $unset: {
+            subscriptionActive: "",
+            currentSubscriptionLimits: "",
+            plan: "",
+            minutesUsed: "",
+            smsUsed: "",
+          },
+        },
+        { session }
+      );
 
       await session.commitTransaction();
       session.endSession();
@@ -116,15 +125,24 @@ router.post("/force-activate/:subscriptionId", async (req, res) => {
       subscription.status = "active";
       await subscription.save({ session });
 
-      user.activeSubscriptionId = subscription._id;
-      user.subscriptionActive = true;
-      user.currentPlanId = subscription.planId || null;
-      user.currentSubscriptionLimits = subscription.limits || {
-        minutesTotal: 0,
-        smsTotal: 0,
-        numbersTotal: 0
-      };
-      await user.save({ session });
+      await User.findByIdAndUpdate(
+        user._id,
+        {
+          $set: {
+            activeSubscriptionId: subscription._id,
+            currentPlanId: subscription.planId || null,
+            lastSubscriptionSyncAt: new Date(),
+          },
+          $unset: {
+            subscriptionActive: "",
+            currentSubscriptionLimits: "",
+            plan: "",
+            minutesUsed: "",
+            smsUsed: "",
+          },
+        },
+        { session }
+      );
 
       await session.commitTransaction();
       session.endSession();

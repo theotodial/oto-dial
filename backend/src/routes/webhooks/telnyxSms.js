@@ -1,12 +1,7 @@
 import express from "express";
 import SMS from "../../models/SMS.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
-import Subscription from "../../models/Subscription.js";
 import { recordSmsCost } from "../../services/telnyxCostCalculator.js";
-import {
-  incrementUnlimitedUsageAfterSuccess,
-  isUnlimitedSubscription
-} from "../../services/unlimitedUsageService.js";
 
 const router = express.Router();
 
@@ -181,60 +176,6 @@ router.post("/", async (req, res) => {
         });
       } catch (pushErr) {
         console.warn("Push notification error:", pushErr?.message);
-      }
-    }
-    
-    // Update usage tracking for inbound SMS
-    // Both inbound and outbound SMS count toward usage
-    if (userId) {
-      try {
-        // Get subscription before update to log remaining balance
-        const subscription = await Subscription.findOne({
-          userId: userId,
-          status: "active"
-        });
-
-        if (subscription) {
-          if (isUnlimitedSubscription(subscription)) {
-            const usageResult = await incrementUnlimitedUsageAfterSuccess({
-              subscriptionId: subscription._id,
-              userId: userId,
-              channel: "sms_inbound",
-              smsIncrement: 1
-            });
-
-            if (!usageResult.success && usageResult.limitReached) {
-              console.warn(
-                `⚠️ Inbound SMS reached Unlimited threshold for user ${userId}`
-              );
-            }
-          } else {
-            const smsUsedBefore = subscription.usage?.smsUsed || 0;
-            const smsTotal = (subscription.limits?.smsTotal || 200) + (subscription.addons?.sms || 0);
-            const smsRemainingBefore = Math.max(0, smsTotal - smsUsedBefore);
-
-            // Deduct usage
-            await Subscription.updateOne(
-              { userId: userId, status: "active" },
-              { $inc: { "usage.smsUsed": 1 } }
-            );
-
-            // Calculate remaining after deduction
-            const smsUsedAfter = smsUsedBefore + 1;
-            const smsRemainingAfter = Math.max(0, smsTotal - smsUsedAfter);
-
-            // Enhanced logging for debugging and cost tracking
-            console.log(`📊 INBOUND SMS USAGE DEDUCTED:`);
-            console.log(`   SMS: ${fromNumber} -> ${toNumber}`);
-            console.log(`   User: ${userId}`);
-            console.log(`   Before: ${smsUsedBefore} SMS used, ${smsRemainingBefore} SMS remaining`);
-            console.log(`   After: ${smsUsedAfter} SMS used, ${smsRemainingAfter} SMS remaining`);
-          }
-        } else {
-          console.warn(`⚠️ No active subscription found for user ${userId} - SMS usage not deducted`);
-        }
-      } catch (usageErr) {
-        console.warn(`⚠️ Failed to track inbound SMS usage:`, usageErr.message);
       }
     }
     

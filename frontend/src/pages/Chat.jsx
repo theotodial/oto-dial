@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import API from '../api';
 import { useCall } from '../context/CallContext';
 import { useSubscription } from '../context/SubscriptionContext';
+import { notifySubscriptionChanged } from '../utils/subscriptionSync';
 
 // Icons
 const SendIcon = () => (
@@ -61,7 +62,7 @@ const CallIcon = () => (
 
 function Chat() {
   const { makeCall } = useCall();
-  const { subscription } = useSubscription();
+  const { subscription, usage, refreshSubscription } = useSubscription();
   const suspiciousActivityText =
     'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
   const isSuspiciousActivityError = (message) =>
@@ -84,9 +85,9 @@ function Chat() {
   const [sendError, setSendError] = useState('');
   const messagesEndRef = useRef(null);
   const subscriptionData = {
-    remainingSMS: subscription?.smsRemaining ?? 0,
+    remainingSMS: usage?.smsRemaining ?? subscription?.smsRemaining ?? 0,
     planName: subscription?.planName || 'No Plan',
-    active: Boolean(subscription?.active),
+    active: Boolean(subscription?.isActive ?? subscription?.active),
   };
 
   const scrollToBottom = () => {
@@ -384,7 +385,8 @@ function Chat() {
       setTimeout(() => setSendError(''), 5000);
       } else {
         // SMS sent successfully, refresh chat sessions and subscription
-        await Promise.all([fetchChatData(), fetchSubscription()]);
+        notifySubscriptionChanged();
+        await Promise.all([fetchChatData(), refreshSubscription()]);
       }
       setSending(false);
   };

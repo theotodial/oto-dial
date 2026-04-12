@@ -7,6 +7,7 @@ import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { scheduleBackgroundSelfHeal } from "../services/stripeSubscriptionService.js";
 import { cacheKeys, setCachedJson } from "../services/cache.service.js";
+import { loadLatestSubscriptionDocument } from "../services/subscriptionService.js";
 import {
   attachAffiliateReferralToUser,
   buildOAuthState,
@@ -107,7 +108,8 @@ function schedulePricingOnboardingEmail(userId) {
       const user = await User.findById(userId);
       if (!user?.email) return;
       if (user.pricingOnboardingEmailSentAt) return;
-      if (user.subscriptionActive === true) return;
+      const subscription = await loadLatestSubscriptionDocument(userId);
+      if (subscription && subscription.status !== "cancelled") return;
 
       const sent = await sendEmailSafe(
         {

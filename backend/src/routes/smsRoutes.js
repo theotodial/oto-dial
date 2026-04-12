@@ -2,11 +2,9 @@ import express from "express";
 import { getTelnyx } from "../../config/telnyx.js";
 import SMS from "../models/SMS.js";
 import PhoneNumber from "../models/PhoneNumber.js";
-import Subscription from "../models/Subscription.js";
 import {
   checkUnlimitedUsageBeforeAction,
   createSuspiciousActivityErrorPayload,
-  incrementUnlimitedUsageAfterSuccess,
   isUnlimitedSubscription
 } from "../services/unlimitedUsageService.js";
 import { emitAdminLiveSms } from "../services/adminLiveEventsService.js";
@@ -217,50 +215,6 @@ router.post("/send", async (req, res) => {
     }).catch((error) => {
       console.warn("[ADMIN LIVE] failed to emit sms:", error?.message || error);
     });
-
-    // ✅ Usage tracking - deduct usage for outbound SMS
-    if (req.subscription.id) {
-      if (unlimitedPlan) {
-        const usageResult = await incrementUnlimitedUsageAfterSuccess({
-          subscriptionId: req.subscription.id,
-          userId: req.userId,
-          channel: "sms_outbound",
-          smsIncrement: 1
-        });
-
-        if (!usageResult.success && usageResult.limitReached) {
-          console.warn(
-            `⚠️ Outbound SMS usage increment hit Unlimited plan threshold for user ${req.userId}`
-          );
-        }
-      } else {
-      // Get subscription before update to log remaining balance
-      const subscription = await Subscription.findById(req.subscription.id);
-      
-      if (subscription) {
-        const smsUsedBefore = subscription.usage?.smsUsed || 0;
-        const smsTotal = (subscription.limits?.smsTotal || 200) + (subscription.addons?.sms || 0);
-        const smsRemainingBefore = Math.max(0, smsTotal - smsUsedBefore);
-
-        // Deduct usage
-        await Subscription.updateOne(
-          { _id: req.subscription.id },
-          { $inc: { "usage.smsUsed": 1 } }
-        );
-
-        // Calculate remaining after deduction
-        const smsUsedAfter = smsUsedBefore + 1;
-        const smsRemainingAfter = Math.max(0, smsTotal - smsUsedAfter);
-
-        // Enhanced logging for debugging and cost tracking
-        console.log(`📊 OUTBOUND SMS USAGE DEDUCTED:`);
-        console.log(`   SMS: ${from} -> ${toFormatted}`);
-        console.log(`   User: ${req.userId}`);
-        console.log(`   Before: ${smsUsedBefore} SMS used, ${smsRemainingBefore} SMS remaining`);
-        console.log(`   After: ${smsUsedAfter} SMS used, ${smsRemainingAfter} SMS remaining`);
-      }
-      }
-    }
 
     console.log(`✅ SMS sent from ${from} to ${toFormatted}`);
     res.json({ success: true, messageId: response.data.id });

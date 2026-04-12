@@ -1028,7 +1028,8 @@ async function processAnalyticsTrack(req) {
 
           // Check subscription
           try {
-            const subscription = await Subscription.findOne({ userId, status: 'active' })
+            const subscription = await Subscription.findOne({ userId })
+              .sort({ createdAt: -1 })
               .select("_id")
               .lean();
             if (subscription) {

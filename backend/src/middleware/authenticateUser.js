@@ -8,7 +8,7 @@ import {
 
 const USER_CACHE_TTL_SECONDS = 300;
 const USER_SELECT =
-  "-password -sessions -__v";
+  "-password -sessions -__v -subscriptionActive -currentSubscriptionLimits -minutesUsed -smsUsed -plan";
 
 async function fetchFreshUserById(userId) {
   const user = await User.findById(userId)

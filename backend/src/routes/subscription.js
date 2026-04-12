@@ -7,18 +7,12 @@ import { isUnlimitedSubscription } from "../services/unlimitedUsageService.js";
 import {
   getCachedUserSubscription,
   invalidateUserSubscriptionCache,
+  loadLatestSubscriptionDocument,
 } from "../services/subscriptionService.js";
 
 const router = express.Router();
 
 // GET /plans and GET /addons are served by subscriptionCatalog.js (public, no auth)
-
-// Default limits for subscription
-const DEFAULT_LIMITS = {
-  minutesTotal: 2500,
-  smsTotal: 200,
-  numbersTotal: 1
-};
 
 /**
  * GET /api/subscription and GET /api/subscription/current
@@ -65,10 +59,10 @@ const getSubscriptionHandler = async (req, res) => {
       periodEnd: subscription.periodEnd,
       periodStart: subscription.periodStart,
       limits: unlimited
-        ? { numbersTotal: subscription.limits?.numbersTotal || 1 }
+        ? { numbersTotal: Number(subscription.limits?.numbersTotal ?? 0) }
         : subscription.limits,
-      totalMinutes: unlimited ? null : (subscription.limits?.minutesTotal || 0),
-      totalSMS: unlimited ? null : (subscription.limits?.smsTotal || 0),
+      totalMinutes: unlimited ? null : Number(subscription.limits?.minutesTotal ?? 0),
+      totalSMS: unlimited ? null : Number(subscription.limits?.smsTotal ?? 0),
       subscription: safeSubscription
     });
   } catch (err) {
@@ -88,14 +82,8 @@ router.get("/activation-health", async (req, res) => {
   try {
     const userId = req.userId;
 
-    const [activeSubscription, recentPaidInvoice] = await Promise.all([
-      Subscription.findOne({
-        userId,
-        status: "active"
-      })
-        .select("_id updatedAt")
-        .sort({ updatedAt: -1 })
-        .lean(),
+    const [latestSubscription, recentPaidInvoice] = await Promise.all([
+      loadLatestSubscriptionDocument(userId),
       StripeInvoice.findOne({
         userId,
         status: "paid"
@@ -112,14 +100,16 @@ router.get("/activation-health", async (req, res) => {
       : (recentPaidInvoice?.createdAt ? new Date(recentPaidInvoice.createdAt).getTime() : null);
 
     const hasRecentPaidInvoice = !!paidAt && (now - paidAt) <= recentPaidWindowMs;
-    const showIssueReport = hasRecentPaidInvoice && !activeSubscription;
+    const hasActiveSubscription =
+      !!latestSubscription && latestSubscription.status !== "cancelled";
+    const showIssueReport = hasRecentPaidInvoice && !hasActiveSubscription;
 
     res.json({
       success: true,
-      hasActiveSubscription: !!activeSubscription,
+      hasActiveSubscription,
       hasRecentPaidInvoice,
       showIssueReport,
-      activeSubscriptionId: activeSubscription?._id || null,
+      activeSubscriptionId: latestSubscription?._id || null,
       recentPaidInvoice: recentPaidInvoice
         ? {
             invoiceId: recentPaidInvoice.invoiceId,
@@ -146,21 +136,16 @@ router.post("/buy", async (req, res) => {
   try {
     const userId = req.userId;
 
-    let plan = await Plan.findOne({
+    const plan = await Plan.findOne({
       name: "Basic",
       active: true,
     }).lean();
 
-    // Create default plan if it doesn't exist
     if (!plan) {
-      plan = await Plan.create({
-        name: "Basic",
-        price: 19.99,
-        currency: "USD",
-        limits: DEFAULT_LIMITS,
-        active: true
+      return res.status(404).json({
+        message: "Default plan not found",
+        error: "Default plan not found"
       });
-      plan = plan.toObject();
     }
 
     const now = new Date();
@@ -168,8 +153,8 @@ router.post("/buy", async (req, res) => {
     periodEnd.setDate(now.getDate() + 30);
 
     // Check for existing subscription
-    const existing = await Subscription.findOne({ userId, status: "active" });
-    if (existing) {
+    const existing = await loadLatestSubscriptionDocument(userId);
+    if (existing && existing.status !== "cancelled") {
       return res.json({
         message: "Subscription already active",
         subscription: existing,
@@ -219,21 +204,17 @@ router.post("/fix", async (req, res) => {
   try {
     const userId = req.userId;
 
-    const subscription = await Subscription.findOne({
-      userId,
-      status: "active",
-    });
+    const subscription = await loadLatestSubscriptionDocument(userId);
 
     if (!subscription) {
-      return res.status(404).json({ error: "No active subscription found" });
+      return res.status(404).json({ error: "No subscription found" });
     }
 
-    // Check if limits need fixing
-    const needsFix = !subscription.limits || 
-      !subscription.limits.smsTotal || 
-      subscription.limits.smsTotal <= 0 ||
-      !subscription.limits.minutesTotal ||
-      subscription.limits.minutesTotal <= 0;
+    const needsFix =
+      !subscription.limits ||
+      subscription.limits.smsTotal == null ||
+      subscription.limits.minutesTotal == null ||
+      subscription.limits.numbersTotal == null;
 
     if (!needsFix) {
       return res.json({
@@ -242,24 +223,18 @@ router.post("/fix", async (req, res) => {
       });
     }
 
-    // Get limits from plan or use defaults
-    let limits = DEFAULT_LIMITS;
     let planDoc = null;
     if (subscription.planId) {
       planDoc = await Plan.findById(subscription.planId);
-      if (planDoc?.limits) {
-        limits = planDoc.limits;
-      }
     }
 
-    // Update subscription with proper limits
     if (planDoc) {
       applyPlanSnapshotToSubscription(subscription, planDoc);
     } else {
       subscription.limits = {
-        minutesTotal: limits.minutesTotal || DEFAULT_LIMITS.minutesTotal,
-        smsTotal: limits.smsTotal || DEFAULT_LIMITS.smsTotal,
-        numbersTotal: limits.numbersTotal || DEFAULT_LIMITS.numbersTotal
+        minutesTotal: Number(subscription.limits?.minutesTotal ?? 0),
+        smsTotal: Number(subscription.limits?.smsTotal ?? 0),
+        numbersTotal: Number(subscription.limits?.numbersTotal ?? 0)
       };
     }
 
@@ -286,13 +261,10 @@ router.post("/cancel", async (req, res) => {
   try {
     const userId = req.userId;
 
-    const subscription = await Subscription.findOne({
-      userId,
-      status: "active"
-    });
+    const subscription = await loadLatestSubscriptionDocument(userId);
 
-    if (!subscription) {
-      return res.status(404).json({ error: "No active subscription found" });
+    if (!subscription || subscription.status === "cancelled") {
+      return res.status(404).json({ error: "No subscription found" });
     }
 
     // Mark subscription as cancelled but keep it active until periodEnd
@@ -322,8 +294,14 @@ router.post("/reset-usage", async (req, res) => {
   try {
     const userId = req.userId;
 
-    const subscription = await Subscription.findOneAndUpdate(
-      { userId, status: "active" },
+    const latestSubscription = await loadLatestSubscriptionDocument(userId);
+
+    if (!latestSubscription) {
+      return res.status(404).json({ error: "No subscription found" });
+    }
+
+    const subscription = await Subscription.findByIdAndUpdate(
+      latestSubscription._id,
       {
         $set: {
           "usage.smsUsed": 0,
@@ -334,10 +312,6 @@ router.post("/reset-usage", async (req, res) => {
       },
       { new: true }
     );
-
-    if (!subscription) {
-      return res.status(404).json({ error: "No active subscription found" });
-    }
 
     console.log(`✅ Reset usage for user ${userId}`);
     await invalidateUserSubscriptionCache(userId);

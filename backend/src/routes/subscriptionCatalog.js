@@ -9,7 +9,12 @@ const router = express.Router();
 
 router.get("/plans", async (req, res) => {
   try {
-    const plans = await Plan.find({ active: true }).sort({ price: 1 }).select("-__v");
+    const plans = await Plan.find({
+      active: true,
+      adminOnly: { $ne: true }
+    })
+      .sort({ price: 1 })
+      .select("-__v");
     res.json({
       success: true,
       plans: plans.map((plan) => ({

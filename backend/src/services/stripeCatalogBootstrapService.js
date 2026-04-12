@@ -97,6 +97,10 @@ export async function ensureStripeCatalogConsistency() {
 
   const plans = await Plan.find({ active: true });
   for (const plan of plans) {
+    if (plan.adminOnly) {
+      continue;
+    }
+
     const looksUnlimited =
       plan.type !== AFFILIATE_UNLIMITED_PLAN_TYPE &&
       (plan.type === UNLIMITED_PLAN_TYPE ||
@@ -183,6 +187,41 @@ export async function ensureStripeCatalogConsistency() {
   return updates;
 }
 
+/** Admin-assignable Mongo-only plans (no Stripe); ensures they exist for GET /api/admin/plans. */
+export async function ensureAdminAssignableInternalPlans() {
+  const spec = {
+    type: "sms_1700",
+    name: "1700 SMS",
+    planName: "1700 SMS",
+    price: 80,
+    currency: "USD",
+    limits: {
+      minutesTotal: 0,
+      smsTotal: 1700,
+      numbersTotal: 1
+    },
+    dedicatedNumbers: 1,
+    displayUnlimited: false,
+    adminOnly: true,
+    voiceCallsEnabled: false,
+    active: true,
+    stripeProductId: null,
+    stripePriceId: null
+  };
+
+  const filter = {
+    $or: [{ name: spec.name }, { type: spec.type }]
+  };
+
+  await Plan.findOneAndUpdate(
+    filter,
+    { $set: spec },
+    { upsert: true, new: true, runValidators: true }
+  );
+  return { ok: true };
+}
+
 export default {
-  ensureStripeCatalogConsistency
+  ensureStripeCatalogConsistency,
+  ensureAdminAssignableInternalPlans
 };

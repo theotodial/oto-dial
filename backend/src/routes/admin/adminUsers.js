@@ -18,24 +18,12 @@ import {
   applyCustomPackageToSubscription,
   getActiveCustomPackage,
 } from "../../services/customPackageService.js";
-import { buildPublicSubscriptionState } from "../../services/subscriptionService.js";
+import {
+  buildPublicSubscriptionState,
+  loadUserSubscription,
+} from "../../services/subscriptionService.js";
 
 const router = express.Router();
-const ACTIVE_ADMIN_SUBSCRIPTION_STATUSES = [
-  "active",
-  "trialing",
-  "pending_activation",
-  "past_due",
-  "incomplete",
-];
-
-function hasUserLevelSubscriptionState(user = {}) {
-  return (
-    user?.subscriptionActive === true ||
-    Boolean(user?.activeSubscriptionId) ||
-    Boolean(user?.currentPlanId)
-  );
-}
 
 function escapeRegex(value = "") {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -64,11 +52,11 @@ function buildAdminUserFilterMatch(filter = "all") {
   if (normalized === "active") {
     return {
       $or: [
-        { "subscription.status": { $in: ACTIVE_ADMIN_SUBSCRIPTION_STATUSES } },
+        {
+          subscription: { $ne: null },
+          "subscription.status": { $ne: "cancelled" },
+        },
         { customPackage: { $ne: null } },
-        { subscriptionActive: true },
-        { activeSubscriptionId: { $ne: null } },
-        { currentPlanId: { $ne: null } },
       ],
     };
   }
@@ -77,9 +65,6 @@ function buildAdminUserFilterMatch(filter = "all") {
     return {
       subscription: null,
       customPackage: null,
-      subscriptionActive: { $ne: true },
-      activeSubscriptionId: null,
-      currentPlanId: null,
       status: { $nin: ["suspended", "banned"] },
     };
   }
@@ -103,14 +88,18 @@ function buildUsageSummary(subscription) {
     loadedMinutesTotal: addonCredits.minutesTotal,
     loadedMinutesActive: addonCredits.minutesActive,
     loadedMinutesExpiry: addonCredits.minutesExpiry,
-    monthlySmsUsed: Number(subscription.usage?.smsUsed || 0),
-    monthlyMinutesUsed: Number(subscription.usage?.minutesUsed || 0) / 60,
+    monthlySmsUsed: Number(subscription.smsUsed ?? subscription.usage?.smsUsed ?? 0),
+    monthlyMinutesUsed:
+      Number(
+        subscription.minutesUsed ??
+          Number(subscription.usage?.minutesUsed || 0) / 60
+      ),
     dailySmsUsed: Number(subscription.dailySmsUsed || 0),
     dailyMinutesUsed: Number(subscription.dailyMinutesUsed || 0) / 60,
     monthlySmsLimit:
-      subscription.monthlySmsLimit ?? subscription.limits?.smsTotal ?? null,
+      subscription.monthlySmsLimit ?? subscription.smsLimit ?? subscription.limits?.smsTotal ?? null,
     monthlyMinutesLimit:
-      subscription.monthlyMinutesLimit ?? subscription.limits?.minutesTotal ?? null,
+      subscription.monthlyMinutesLimit ?? subscription.minutesLimit ?? subscription.limits?.minutesTotal ?? null,
     dailySmsLimit: subscription.dailySmsLimit ?? null,
     dailyMinutesLimit: subscription.dailyMinutesLimit ?? null,
   };
@@ -158,53 +147,12 @@ function buildSubscriptionFromLookup(subscription, customPackage) {
   );
 }
 
-function buildSubscriptionFromUserFallback(user, customPackage) {
-  if (!hasUserLevelSubscriptionState(user) && !customPackage) {
-    return null;
-  }
-
-  const minutesTotal = Number(user?.currentSubscriptionLimits?.minutesTotal || 0);
-  const smsTotal = Number(user?.currentSubscriptionLimits?.smsTotal || 0);
-  const minutesUsed = Number(user?.minutesUsed || 0);
-  const smsUsed = Number(user?.smsUsed || 0);
-
-  return buildPublicSubscriptionState(
-    applyCustomPackageToSubscription(
-      {
-        id: user?.activeSubscriptionId || user?._id,
-        _id: user?.activeSubscriptionId || user?._id,
-        active: hasUserLevelSubscriptionState(user),
-        status: "active",
-        planName: user?.plan || "Admin Assigned Plan",
-        planType: "admin_assigned",
-        isUnlimited: false,
-        displayUnlimited: false,
-        minutesRemaining: Math.max(0, minutesTotal - minutesUsed),
-        smsRemaining: Math.max(0, smsTotal - smsUsed),
-        limits: {
-          minutesTotal,
-          smsTotal,
-          numbersTotal: Number(user?.currentSubscriptionLimits?.numbersTotal || 0),
-        },
-        usage: {
-          minutesUsed,
-          smsUsed,
-        },
-        periodStart: null,
-        periodEnd: null,
-      },
-      customPackage
-    )
-  );
-}
-
 async function loadEffectiveSubscriptionForAdmin(userId) {
   const [subscriptionDoc, customPackage] = await Promise.all([
     Subscription.findOne({
       userId,
-      status: { $in: ["active", "trialing", "pending_activation", "past_due", "incomplete"] },
     })
-      .sort({ updatedAt: -1, createdAt: -1 })
+      .sort({ createdAt: -1 })
       .lean(),
     getActiveCustomPackage(userId),
   ]);
@@ -288,11 +236,10 @@ router.get(
             pipeline: [
               {
                 $match: {
-                  $expr: { $eq: ["$userId", "$$userId"] },
-                  status: { $in: ["active", "trialing", "pending_activation", "past_due", "incomplete"] }
+                  $expr: { $eq: ["$userId", "$$userId"] }
                 }
               },
-              { $sort: { updatedAt: -1, createdAt: -1 } },
+              { $sort: { createdAt: -1 } },
               { $limit: 1 },
               {
                 $project: {
@@ -356,13 +303,6 @@ router.get(
             status: 1,
             isEmailVerified: 1,
             createdAt: 1,
-            plan: 1,
-            subscriptionActive: 1,
-            activeSubscriptionId: 1,
-            currentPlanId: 1,
-            currentSubscriptionLimits: 1,
-            minutesUsed: 1,
-            smsUsed: 1,
             subscription: { $arrayElemAt: ["$subscription", 0] },
             customPackage: { $arrayElemAt: ["$customPackage", 0] }
           }
@@ -389,9 +329,10 @@ router.get(
       const total = Number(totalRows[0]?.total || 0);
 
       const usersWithSubs = users.map((user) => {
-        const effectiveSubscription =
-          buildSubscriptionFromLookup(user.subscription || null, user.customPackage || null) ||
-          buildSubscriptionFromUserFallback(user, user.customPackage || null);
+        const effectiveSubscription = buildSubscriptionFromLookup(
+          user.subscription || null,
+          user.customPackage || null
+        );
 
         return {
           _id: user._id,
@@ -439,25 +380,11 @@ router.get(
   authenticateUser,
   async (req, res) => {
     try {
-      const [user, subscriptionDoc, customPackage, recentCalls, recentMessages] = await Promise.all([
+      const [user, effectiveSubscription, recentCalls, recentMessages] = await Promise.all([
         User.findById(req.params.id)
           .select("_id email name firstName lastName status createdAt isEmailVerified")
           .lean(),
-        Subscription.findOne({
-          userId: req.params.id,
-          status: { $in: ["active", "trialing", "pending_activation", "past_due", "incomplete"] }
-        })
-          .sort({ updatedAt: -1, createdAt: -1 })
-          .select("status planName planKey planType displayUnlimited limits usage periodStart periodEnd dailySmsUsed dailyMinutesUsed monthlySmsLimit monthlyMinutesLimit dailySmsLimit dailyMinutesLimit")
-          .lean(),
-        CustomPackage.findOne({
-          userId: req.params.id,
-          active: true,
-          $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }]
-        })
-          .sort({ updatedAt: -1, createdAt: -1 })
-          .select("minutesAllowed smsAllowed expiresAt isCallEnabled isSmsEnabled allowedCountries blockedCountries overridePlan active")
-          .lean(),
+        loadUserSubscription(req.params.id),
         Call.find({ user: req.params.id })
           .select("phoneNumber fromNumber toNumber direction status createdAt duration")
           .sort({ createdAt: -1 })
@@ -495,8 +422,7 @@ router.get(
       const smsCostGroup = costs.find((c) => c._id === "sms") || {};
       const numberCostGroup = costs.find((c) => c._id === "number") || {};
       const primaryNumber = phoneNumbers[0] || {};
-      const effectiveSubscription = buildSubscriptionFromLookup(subscriptionDoc, customPackage);
-      const usage = buildUsageSummary(subscriptionDoc);
+      const usage = buildUsageSummary(effectiveSubscription);
 
       return res.json({
         success: true,
@@ -518,8 +444,9 @@ router.get(
           },
           phoneNumbers,
         },
+        hasSubscriptionDocument: Boolean(effectiveSubscription),
         subscription: effectiveSubscription,
-        customPackage: customPackage || null,
+        customPackage: effectiveSubscription?.customPackage || null,
         usage,
         recentCalls,
         recentMessages,
@@ -564,10 +491,7 @@ router.get(
         return res.status(404).json({ error: "User not found" });
       }
 
-      const subscription = await Subscription.findOne({
-        userId: user._id,
-        status: "active"
-      }).lean();
+      const subscription = await loadUserSubscription(user._id);
 
       const phoneNumbers = await PhoneNumber.find({ userId: user._id }).lean();
       const RECENT_ACTIVITY_LIMIT = 100;
@@ -616,7 +540,7 @@ router.get(
       // Derive subscription summary expected by frontend
       const subscriptionSummary = subscription
         ? {
-            planName: subscription.planName || subscription.planKey || "Active Plan",
+            planName: subscription.planName || subscription.planKey || "No Plan",
             planType: subscription.planType || null,
             displayUnlimited: Boolean(subscription.displayUnlimited),
             status: subscription.status,

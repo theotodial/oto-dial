@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import API from '../../api';
+import { notifySubscriptionChanged } from '../../utils/subscriptionSync';
 
 function AdminUserDetail() {
   const navigate = useNavigate();
@@ -40,6 +41,8 @@ function AdminUserDetail() {
   const [packageBlockedCountries, setPackageBlockedCountries] = useState('');
   const [packageCallsEnabled, setPackageCallsEnabled] = useState(true);
   const [packageSmsEnabled, setPackageSmsEnabled] = useState(true);
+  const [hasMongoSubscription, setHasMongoSubscription] = useState(false);
+  const [subscriptionPeriodEnd, setSubscriptionPeriodEnd] = useState('');
 
   useEffect(() => {
     fetchUser();
@@ -52,8 +55,21 @@ function AdminUserDetail() {
       const response = await API.get('/api/admin/plans', {
         headers: { Authorization: `Bearer ${token}` }
       });
+      if (response.error) {
+        console.error('Failed to fetch plans:', response.error);
+        return;
+      }
       if (response.data?.success) {
-        setAvailablePlans(response.data.plans || []);
+        const list = response.data.plans || [];
+        setAvailablePlans(
+          [...list].sort((a, b) => {
+            const an = String(a.name || '').toLowerCase();
+            const bn = String(b.name || '').toLowerCase();
+            if (an.includes('1700 sms')) return -1;
+            if (bn.includes('1700 sms')) return 1;
+            return Number(a.price || 0) - Number(b.price || 0);
+          })
+        );
       }
     } catch (err) {
       console.error('Failed to fetch plans:', err);
@@ -73,6 +89,7 @@ function AdminUserDetail() {
         setError(response.error);
       } else if (response.data?.success) {
         setUser(response.data.user);
+        setHasMongoSubscription(response.data.hasSubscriptionDocument === true);
         setSubscription(response.data.subscription || null);
         setUsage(response.data.usage || null);
         setRecentCalls(response.data.recentCalls || []);
@@ -117,6 +134,7 @@ function AdminUserDetail() {
       if (response.error) {
         alert(response.error);
       } else if (response.data?.success) {
+        notifySubscriptionChanged({ reason: action, userId: id });
         await fetchUser(); // Refresh user data
         alert(response.data.message || 'Action completed successfully');
       } else {
@@ -142,6 +160,7 @@ function AdminUserDetail() {
       if (response.error) {
         alert(response.error);
       } else if (response.data?.success) {
+        notifySubscriptionChanged({ reason: 'status-change', userId: id });
         await fetchUser();
         alert(`User status updated to ${status}`);
       } else {
@@ -233,10 +252,15 @@ function AdminUserDetail() {
     setActionLoading('assign-plan');
     try {
       const token = localStorage.getItem('adminToken');
+      const periodPayload =
+        subscriptionPeriodEnd.trim() !== ''
+          ? { subscriptionPeriodEnd: new Date(subscriptionPeriodEnd).toISOString() }
+          : {};
       const response = await API.post('/api/admin/actions/subscription/assign', {
         userId: id,
         planId: selectedPlanId,
-        ...loadedPayload
+        ...loadedPayload,
+        ...periodPayload
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -246,6 +270,7 @@ function AdminUserDetail() {
       } else if (response.data?.success) {
         alert('Subscription assigned successfully');
         resetPlanForm();
+        notifySubscriptionChanged({ reason: 'assign-plan', userId: id });
         await fetchUser();
       } else {
         alert(response.data?.error || 'Failed to assign subscription');
@@ -274,10 +299,15 @@ function AdminUserDetail() {
     setActionLoading('change-plan');
     try {
       const token = localStorage.getItem('adminToken');
+      const periodPayload =
+        subscriptionPeriodEnd.trim() !== ''
+          ? { subscriptionPeriodEnd: new Date(subscriptionPeriodEnd).toISOString() }
+          : {};
       const response = await API.post('/api/admin/actions/subscription/change-plan', {
         userId: id,
         planId: selectedPlanId,
-        ...loadedPayload
+        ...loadedPayload,
+        ...periodPayload
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -287,6 +317,7 @@ function AdminUserDetail() {
       } else if (response.data?.success) {
         alert('Subscription plan changed successfully');
         resetPlanForm();
+        notifySubscriptionChanged({ reason: 'change-plan', userId: id });
         await fetchUser();
       } else {
         alert(response.data?.error || 'Failed to change plan');
@@ -336,6 +367,7 @@ function AdminUserDetail() {
     setLoadedCreditsExpiry('');
     setLoadedSmsExpiry('');
     setLoadedMinutesExpiry('');
+    setSubscriptionPeriodEnd('');
   };
 
   const handleLoadCredits = async () => {
@@ -396,6 +428,7 @@ function AdminUserDetail() {
         alert(response.error);
       } else if (response.data?.success) {
         alert(response.data.message || 'Credits loaded successfully');
+        notifySubscriptionChanged({ reason: 'load-credits', userId: id });
         await fetchUser();
       } else {
         alert(response.data?.error || 'Failed to load credits');
@@ -428,6 +461,7 @@ function AdminUserDetail() {
         alert(response.error);
       } else if (response.data?.success) {
         alert(`Trial subscription created for ${days} days`);
+        notifySubscriptionChanged({ reason: 'set-trial', userId: id });
         await fetchUser();
       } else {
         alert(response.data?.error || 'Failed to set trial');
@@ -511,6 +545,7 @@ function AdminUserDetail() {
       } else if (response.data?.success) {
         setUsageAdjustMinutes('');
         setUsageAdjustSms('');
+        notifySubscriptionChanged({ reason: 'adjust-usage', userId: id });
         await fetchUser();
         alert(response.data.message || 'Usage adjusted');
       }
@@ -548,6 +583,7 @@ function AdminUserDetail() {
       if (response.error) {
         alert(response.error);
       } else if (response.data?.success) {
+        notifySubscriptionChanged({ reason: 'custom-package-save', userId: id });
         await fetchUser();
         alert(response.data.message || 'Custom package saved');
       }
@@ -568,6 +604,7 @@ function AdminUserDetail() {
       if (response.error) {
         alert(response.error);
       } else if (response.data?.success) {
+        notifySubscriptionChanged({ reason: 'custom-package-clear', userId: id });
         await fetchUser();
         alert(response.data.message || 'Custom package cleared');
       }
@@ -690,12 +727,14 @@ function AdminUserDetail() {
                         setLoadedCreditsExpiry('');
                         setLoadedSmsExpiry('');
                         setLoadedMinutesExpiry('');
+                        setSubscriptionPeriodEnd('');
+                        fetchPlans();
                       }}
                       className="px-3 py-1 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
                     >
-                      {subscription ? 'Change Plan' : 'Assign Plan'}
+                      {subscription && hasMongoSubscription ? 'Change Plan' : 'Assign Plan'}
                     </button>
-                    {subscription && (
+                    {subscription && hasMongoSubscription && (
                       <button
                         onClick={handleLoadCredits}
                         disabled={actionLoading === 'load-credits'}
@@ -1242,7 +1281,9 @@ function AdminUserDetail() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-md w-full p-6">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-              {subscription ? 'Change Subscription Plan' : 'Assign Subscription Plan'}
+              {subscription && hasMongoSubscription
+                ? 'Change Subscription Plan'
+                : 'Assign Subscription Plan'}
             </h2>
             
             <div className="space-y-4">
@@ -1257,11 +1298,26 @@ function AdminUserDetail() {
                 >
                   <option value="">-- Select a plan --</option>
                   {availablePlans.map((plan) => (
-                    <option key={plan._id} value={plan._id}>
-                      {plan.name} - ${plan.price}/month
+                    <option key={String(plan._id)} value={String(plan._id)}>
+                      {plan.adminOnly ? `${plan.name} (admin only)` : plan.name} — ${plan.currency || 'USD'} ${plan.price}/mo · SMS {plan.limits?.smsTotal ?? '—'} · min {plan.limits?.minutesTotal ?? '—'}
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Subscription period end (optional)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={subscriptionPeriodEnd}
+                  onChange={(e) => setSubscriptionPeriodEnd(e.target.value)}
+                  className="w-full px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Leave blank for default (+1 month from now). Shown as next billing in the app.
+                </p>
               </div>
 
               <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
@@ -1332,13 +1388,17 @@ function AdminUserDetail() {
                   Cancel
                 </button>
                 <button
-                  onClick={subscription ? handleChangePlan : handleAssignPlan}
+                  onClick={
+                    subscription && hasMongoSubscription
+                      ? handleChangePlan
+                      : handleAssignPlan
+                  }
                   disabled={!selectedPlanId || (actionLoading === 'assign-plan' || actionLoading === 'change-plan')}
                   className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                 >
                   {actionLoading === 'assign-plan' || actionLoading === 'change-plan' 
                     ? 'Processing...' 
-                    : subscription 
+                    : subscription && hasMongoSubscription
                       ? 'Change Plan' 
                       : 'Assign Plan'}
                 </button>

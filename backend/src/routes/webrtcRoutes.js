@@ -337,6 +337,12 @@ router.get("/token", async (req, res) => {
       return res.status(403).json({ error: "Active subscription required" });
     }
 
+    if (req.subscription.isCallEnabled === false) {
+      return res.status(403).json({
+        error: "Calling is not included in your current plan.",
+      });
+    }
+
     const unlimitedGate = await checkUnlimitedUsageBeforeAction({
       subscriptionId: req.subscription.id,
       userId: req.userId,
@@ -477,6 +483,13 @@ router.post("/repair-outbound", async (req, res) => {
   try {
     if (!req.subscription || !req.subscription.active) {
       return res.status(403).json({ success: false, error: "Active subscription required" });
+    }
+
+    if (req.subscription.isCallEnabled === false) {
+      return res.status(403).json({
+        success: false,
+        error: "Calling is not included in your current plan.",
+      });
     }
 
     const unlimitedGate = await checkUnlimitedUsageBeforeAction({
@@ -898,6 +911,13 @@ router.get("/outbound-diagnostics", async (req, res) => {
   try {
     if (!req.subscription || !req.subscription.active) {
       return res.status(403).json({ success: false, error: "Active subscription required" });
+    }
+
+    if (req.subscription.isCallEnabled === false) {
+      return res.status(403).json({
+        success: false,
+        error: "Calling is not included in your current plan.",
+      });
     }
 
     const headers = getTelnyxAuthHeaders();

@@ -15,7 +15,10 @@ import { getTelnyx } from "./config/telnyx.js";
 import { validateEnv } from "./src/utils/envValidator.js";
 import { sendEmailSafe, logResendConfigAtStartup } from "./src/services/email.service.js";
 import { configureAdminLiveEvents } from "./src/services/adminLiveEventsService.js";
-import { ensureStripeCatalogConsistency } from "./src/services/stripeCatalogBootstrapService.js";
+import {
+  ensureAdminAssignableInternalPlans,
+  ensureStripeCatalogConsistency
+} from "./src/services/stripeCatalogBootstrapService.js";
 import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
 import { startSystemHealthService } from "./src/services/systemHealthService.js";
 import Subscription from "./src/models/Subscription.js";
@@ -78,6 +81,7 @@ import blogRoutes from "./src/routes/blogRoutes.js";
 import analyticsRoutes from "./src/routes/analyticsRoutes.js";
 import sitePublicRoutes from "./src/routes/sitePublic.js";
 import appBootstrapRoutes from "./src/routes/appBootstrap.js";
+import debugRoutes from "./src/routes/debugRoutes.js";
 import NotFoundLog from "./src/models/NotFoundLog.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
@@ -382,6 +386,7 @@ app.use("/api/site", sitePublicRoutes);
 // ========================
 app.use("/api/users", authenticateUser, loadSubscription, userRoutes);
 app.use("/api/app", authenticateUser, appBootstrapRoutes);
+app.use("/api/debug", authenticateUser, debugRoutes);
 // Public plan & add-on catalog (no auth)
 app.use("/api/subscription", subscriptionCatalogRoutes);
 // Subscription GET handlers load their own lean doc — skip loadSubscription to avoid duplicate DB + phone scans
@@ -548,6 +553,12 @@ async function startServer() {
       }
     } catch (catalogErr) {
       console.error("⚠️ Stripe catalog consistency check failed:", catalogErr.message);
+    }
+
+    try {
+      await ensureAdminAssignableInternalPlans();
+    } catch (internalPlanErr) {
+      console.error("⚠️ Internal admin plan seed failed:", internalPlanErr.message);
     }
 
     try {

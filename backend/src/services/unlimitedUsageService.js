@@ -1,4 +1,5 @@
 import Subscription from "../models/Subscription.js";
+import { computeUsageInWindow } from "./usageComputationService.js";
 import {
   SUSPICIOUS_ACTIVITY_ERROR,
   UNLIMITED_INTERNAL_LIMITS,
@@ -15,6 +16,36 @@ export function getServerDayKey(now = new Date()) {
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+export function getServerDayBounds(now = new Date()) {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+/** Billing period if current time falls inside it; otherwise calendar month (server local). */
+export function getUnlimitedMonthlyWindow(subscription = {}, now = new Date()) {
+  const ps = subscription?.periodStart ? new Date(subscription.periodStart) : null;
+  const pe = subscription?.periodEnd ? new Date(subscription.periodEnd) : null;
+  if (
+    ps &&
+    pe &&
+    !Number.isNaN(ps.getTime()) &&
+    !Number.isNaN(pe.getTime()) &&
+    pe > ps &&
+    now >= ps &&
+    now <= pe
+  ) {
+    return { start: ps, end: pe };
+  }
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const start = new Date(y, m, 1, 0, 0, 0, 0);
+  const end = new Date(y, m + 1, 0, 23, 59, 59, 999);
+  return { start, end };
 }
 
 export function isUnlimitedSubscription(subscription = {}) {
@@ -55,25 +86,6 @@ export function getUnlimitedLimits(subscription = {}) {
   };
 }
 
-async function resetDailyWindowIfNeeded(subscriptionId, dayKey) {
-  const now = new Date();
-
-  await Subscription.updateOne(
-    {
-      _id: subscriptionId,
-      usageWindowDateKey: { $ne: dayKey }
-    },
-    {
-      $set: {
-        usageWindowDateKey: dayKey,
-        dailySmsUsed: 0,
-        dailyMinutesUsed: 0,
-        lastUsageReset: now
-      }
-    }
-  );
-}
-
 function logLimitExceeded({
   userId = null,
   subscriptionId = null,
@@ -102,9 +114,6 @@ export async function checkUnlimitedUsageBeforeAction({
   smsIncrement = 0,
   minutesIncrementSeconds = 0
 }) {
-  const dayKey = getServerDayKey();
-  await resetDailyWindowIfNeeded(subscriptionId, dayKey);
-
   const subscription = await Subscription.findById(subscriptionId).lean();
   if (!subscription || !isUnlimitedSubscription(subscription)) {
     console.log("[USAGE CHECK] PASSED (not unlimited — no usage gate)", {
@@ -118,11 +127,28 @@ export async function checkUnlimitedUsageBeforeAction({
     };
   }
 
+  if (!userId) {
+    console.warn("[USAGE CHECK] unlimited plan but missing userId — allowing request", {
+      channel,
+      subscriptionId: subscriptionId ? String(subscriptionId) : null,
+    });
+    return { allowed: true, subscription };
+  }
+
   const limits = getUnlimitedLimits(subscription);
-  const monthlySmsUsed = Number(subscription.usage?.smsUsed || 0);
-  const monthlyMinutesUsedSeconds = Number(subscription.usage?.minutesUsed || 0);
-  const dailySmsUsed = Number(subscription.dailySmsUsed || 0);
-  const dailyMinutesUsedSeconds = Number(subscription.dailyMinutesUsed || 0);
+  const now = new Date();
+  const monthlyWindow = getUnlimitedMonthlyWindow(subscription, now);
+  const { start: dayStart, end: dayEnd } = getServerDayBounds(now);
+
+  const [monthly, daily] = await Promise.all([
+    computeUsageInWindow(userId, monthlyWindow.start, monthlyWindow.end),
+    computeUsageInWindow(userId, dayStart, dayEnd),
+  ]);
+
+  const monthlySmsUsed = monthly.smsUsed;
+  const monthlyMinutesUsedSeconds = monthly.secondsUsed;
+  const dailySmsUsed = daily.smsUsed;
+  const dailyMinutesUsedSeconds = daily.secondsUsed;
 
   const exceededMonthlySms =
     monthlySmsUsed + smsIncrement > limits.monthlySmsLimit;
@@ -181,6 +207,11 @@ export async function checkUnlimitedUsageBeforeAction({
   };
 }
 
+/**
+ * Usage is no longer persisted on Subscription; unlimited caps are enforced in
+ * {@link checkUnlimitedUsageBeforeAction} from SMS/Call collections. Kept as a
+ * no-op for call-site compatibility.
+ */
 export async function incrementUnlimitedUsageAfterSuccess({
   subscriptionId,
   userId = null,
@@ -188,85 +219,10 @@ export async function incrementUnlimitedUsageAfterSuccess({
   smsIncrement = 0,
   minutesIncrementSeconds = 0
 }) {
-  if (smsIncrement <= 0 && minutesIncrementSeconds <= 0) {
-    return { success: true, skipped: true };
-  }
-
-  const dayKey = getServerDayKey();
-  await resetDailyWindowIfNeeded(subscriptionId, dayKey);
-
-  const subscription = await Subscription.findById(subscriptionId).lean();
-  if (!subscription || !isUnlimitedSubscription(subscription)) {
-    return { success: true, skipped: true };
-  }
-
-  const limits = getUnlimitedLimits(subscription);
-
-  const query = {
-    _id: subscriptionId,
-    status: "active",
-    usageWindowDateKey: dayKey
-  };
-
-  if (smsIncrement > 0) {
-    query["usage.smsUsed"] = { $lte: limits.monthlySmsLimit - smsIncrement };
-    query.dailySmsUsed = { $lte: limits.dailySmsLimit - smsIncrement };
-  }
-
-  if (minutesIncrementSeconds > 0) {
-    query["usage.minutesUsed"] = {
-      $lte: limits.monthlyMinutesLimitSeconds - minutesIncrementSeconds
-    };
-    query.dailyMinutesUsed = {
-      $lte: limits.dailyMinutesLimitSeconds - minutesIncrementSeconds
-    };
-  }
-
-  const incrementSet = {};
-  if (smsIncrement > 0) {
-    incrementSet["usage.smsUsed"] = smsIncrement;
-    incrementSet.dailySmsUsed = smsIncrement;
-  }
-  if (minutesIncrementSeconds > 0) {
-    incrementSet["usage.minutesUsed"] = minutesIncrementSeconds;
-    incrementSet.dailyMinutesUsed = minutesIncrementSeconds;
-  }
-
-  const updateResult = await Subscription.updateOne(query, {
-    $inc: incrementSet
-  });
-
-  if (updateResult.modifiedCount === 1) {
-    return { success: true };
-  }
-
-  const capUpdate = { $max: {} };
-  if (smsIncrement > 0) {
-    capUpdate.$max["usage.smsUsed"] = limits.monthlySmsLimit;
-    capUpdate.$max.dailySmsUsed = limits.dailySmsLimit;
-  }
-  if (minutesIncrementSeconds > 0) {
-    capUpdate.$max["usage.minutesUsed"] = limits.monthlyMinutesLimitSeconds;
-    capUpdate.$max.dailyMinutesUsed = limits.dailyMinutesLimitSeconds;
-  }
-
-  await Subscription.updateOne({ _id: subscriptionId }, capUpdate);
-
-  logLimitExceeded({
-    userId,
-    subscriptionId,
-    channel,
-    reason: "post_success_increment_blocked",
-    details: {
-      limits,
-      smsIncrement,
-      minutesIncrementSeconds
-    }
-  });
-
-  return {
-    success: false,
-    limitReached: true
-  };
+  void subscriptionId;
+  void userId;
+  void channel;
+  void smsIncrement;
+  void minutesIncrementSeconds;
+  return { success: true, skipped: true };
 }
-

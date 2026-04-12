@@ -44,6 +44,12 @@ export function applyCustomPackageToSubscription(subscription, customPackage) {
   const smsAllowed = Math.max(0, Number(customPackage.smsAllowed ?? 0));
   const callEnabled = customPackage.isCallEnabled !== false;
   const smsEnabled = customPackage.isSmsEnabled !== false;
+  const smsUsed = Math.max(0, Number(subscription?.usage?.smsUsed ?? 0));
+  const minutesUsedSeconds = Math.max(
+    0,
+    Number(subscription?.usage?.minutesUsed ?? 0)
+  );
+  const minutesUsed = minutesUsedSeconds / 60;
   const normalizedAllowedCountries = normalizeCountryList(customPackage.allowedCountries);
   const normalizedBlockedCountries = normalizeCountryList(customPackage.blockedCountries);
 
@@ -53,17 +59,21 @@ export function applyCustomPackageToSubscription(subscription, customPackage) {
     status: "custom_override",
     planType: "custom",
     planName: customPackage.overridePlan ? "Custom Package" : (subscription?.planName || "Custom Package"),
-    plan: customPackage.overridePlan ? "Custom Package" : (subscription?.plan || subscription?.planName || "Custom Package"),
-    minutesRemaining: minutesAllowed,
-    smsRemaining: smsAllowed,
+    minutesRemaining: Math.max(minutesAllowed - minutesUsed, 0),
+    smsRemaining: Math.max(smsAllowed - smsUsed, 0),
+    minutesLimit: minutesAllowed,
+    smsLimit: smsAllowed,
+    minutesUsed,
+    smsUsed,
     limits: {
       minutesTotal: minutesAllowed,
       smsTotal: smsAllowed,
       numbersTotal: Number(subscription?.limits?.numbersTotal ?? 1),
     },
     usage: {
-      minutesUsed: 0,
-      smsUsed: 0,
+      ...(subscription?.usage || {}),
+      minutesUsed: minutesUsedSeconds,
+      smsUsed,
     },
     isCallEnabled: callEnabled,
     isSmsEnabled: smsEnabled,

@@ -320,16 +320,20 @@ router.post("/affiliates/:id/users/:userId/assign-unlimited", requireAdmin, asyn
     applyPlanSnapshotToSubscription(subscription, plan);
     await subscription.save();
 
-    user.activeSubscriptionId = subscription._id;
-    user.subscriptionActive = true;
-    user.currentPlanId = plan._id;
-    user.currentSubscriptionLimits = {
-      minutesTotal: subscription.limits.minutesTotal,
-      smsTotal: subscription.limits.smsTotal,
-      numbersTotal: subscription.limits.numbersTotal
-    };
-    user.lastSubscriptionSyncAt = new Date();
-    await user.save();
+    await User.findByIdAndUpdate(user._id, {
+      $set: {
+        activeSubscriptionId: subscription._id,
+        currentPlanId: plan._id,
+        lastSubscriptionSyncAt: new Date(),
+      },
+      $unset: {
+        subscriptionActive: "",
+        currentSubscriptionLimits: "",
+        plan: "",
+        minutesUsed: "",
+        smsUsed: "",
+      },
+    });
 
     await markAffiliateReferralPaid({
       userId: user._id,

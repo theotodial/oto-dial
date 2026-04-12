@@ -6,6 +6,7 @@ import PhoneNumber from "../../models/PhoneNumber.js";
 import Subscription from "../../models/Subscription.js";
 import User from "../../models/User.js";
 import StripeInvoice from "../../models/StripeInvoice.js";
+import { getLatestSubscription } from "../../services/subscriptionService.js";
 
 const router = express.Router();
 
@@ -25,11 +26,10 @@ router.get("/:id/costs", requireAdmin, async (req, res) => {
       });
     }
 
-    // Get user's subscription
-    const subscription = await Subscription.findOne({
-      userId,
-      status: "active"
-    }).populate("planId");
+    const latestLean = await getLatestSubscription(userId);
+    const subscription = latestLean
+      ? await Subscription.findById(latestLean._id).populate("planId")
+      : null;
 
     // Get user's phone numbers
     const phoneNumbers = await PhoneNumber.find({

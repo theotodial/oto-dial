@@ -3,7 +3,12 @@ import multer from "multer";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 import { cacheKeys, deleteCachedKey } from "../services/cache.service.js";
-import { buildPublicSubscriptionState, getCachedUserSubscription, buildEffectiveUsage } from "../services/subscriptionService.js";
+import {
+  buildPublicSubscriptionState,
+  buildEffectiveUsage,
+  computeUserActivityUsage,
+  loadUserSubscription,
+} from "../services/subscriptionService.js";
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -55,23 +60,49 @@ router.get("/profile", async (req, res) => {
  */
 router.get("/me", async (req, res) => {
   try {
-    const subscription = await getCachedUserSubscription(req.user._id);
+    const userId = req.user._id;
+    const [user, resolvedSubscription, activityUsage] = await Promise.all([
+      User.findById(userId).select("_id name email isEmailVerified"),
+      loadUserSubscription(userId),
+      computeUserActivityUsage(userId),
+    ]);
+
     const effective = buildEffectiveUsage({
-      subscription,
-      customPackage: subscription?.customPackage || null,
+      subscription: resolvedSubscription,
+      activityUsage,
+    });
+
+    console.log("[USAGE DEBUG]", {
+      userId: String(userId),
+      subscription: resolvedSubscription
+        ? {
+            id: String(resolvedSubscription._id),
+            status: resolvedSubscription.status,
+            smsRemaining: resolvedSubscription.smsRemaining,
+            minutesRemaining: resolvedSubscription.minutesRemaining,
+          }
+        : null,
+      customPackage: resolvedSubscription?.customPackage
+        ? {
+            id: String(resolvedSubscription.customPackage._id),
+            smsAllowed: Number(resolvedSubscription.customPackage.smsAllowed ?? 0),
+            minutesAllowed: Number(resolvedSubscription.customPackage.minutesAllowed ?? 0),
+          }
+        : null,
+      result: effective,
     });
 
     return res.json({
       success: true,
       user: {
-        _id: req.user._id,
-        id: req.user._id,
-        name: req.user.name || "",
-        email: req.user.email,
-        isEmailVerified: req.user.isEmailVerified !== false
+        _id: user?._id || req.user._id,
+        id: user?._id || req.user._id,
+        name: user?.name || req.user.name || "",
+        email: user?.email || req.user.email,
+        isEmailVerified: user?.isEmailVerified !== false
       },
-      subscription: buildPublicSubscriptionState(subscription),
-      customPackage: subscription?.customPackage || null,
+      subscription: buildPublicSubscriptionState(resolvedSubscription),
+      customPackage: resolvedSubscription?.customPackage || null,
       usage: effective,
     });
   } catch (err) {

@@ -2,7 +2,6 @@ import express from "express";
 import requireAdmin from "../../middleware/requireAdmin.js";
 import AdminLog from "../../models/AdminLog.js";
 import User from "../../models/User.js";
-import Subscription from "../../models/Subscription.js";
 import CustomPackage from "../../models/CustomPackage.js";
 import { clearAdminUsersCache } from "../../services/adminUsersCacheService.js";
 import { invalidateUserSubscriptionCache } from "../../services/subscriptionService.js";
@@ -215,56 +214,11 @@ router.post("/:id/verify-email", requireAdmin, async (req, res) => {
 });
 
 router.post("/:id/adjust-usage", requireAdmin, async (req, res) => {
-  try {
-    const minutes = Number(req.body.minutes || 0);
-    const sms = Number(req.body.sms || 0);
-
-    if (!Number.isFinite(minutes) || !Number.isFinite(sms)) {
-      return res.status(400).json({
-        success: false,
-        error: "minutes and sms must be numbers"
-      });
-    }
-
-    const subscription = await Subscription.findOne({
-      userId: req.params.id,
-      status: { $in: ["active", "trialing", "pending_activation", "past_due", "incomplete"] }
-    }).sort({ updatedAt: -1, createdAt: -1 });
-
-    if (!subscription) {
-      return res.status(404).json({
-        success: false,
-        error: "No subscription found for usage adjustment"
-      });
-    }
-
-    const nextSmsUsed = Math.max(0, Number(subscription.usage?.smsUsed || 0) + sms);
-    const nextMinutesSeconds = Math.max(
-      0,
-      Number(subscription.usage?.minutesUsed || 0) + Math.round(minutes * 60)
-    );
-
-    subscription.usage = {
-      ...(subscription.usage || {}),
-      smsUsed: nextSmsUsed,
-      minutesUsed: nextMinutesSeconds,
-    };
-    await subscription.save();
-    await invalidateUserSubscriptionCache(req.params.id);
-
-    res.json({
-      success: true,
-      message: "Usage adjusted successfully",
-      subscription
-    });
-    clearAdminUsersCache();
-  } catch (err) {
-    console.error("Adjust usage admin error:", err);
-    res.status(500).json({
-      success: false,
-      error: "Failed to adjust usage"
-    });
-  }
+  return res.status(400).json({
+    success: false,
+    error:
+      "Usage is derived from SMS and Call records only; subscription.usage is no longer writable. Correct source data or adjust plan limits instead.",
+  });
 });
 
 router.put("/:id/custom-package", requireAdmin, async (req, res) => {

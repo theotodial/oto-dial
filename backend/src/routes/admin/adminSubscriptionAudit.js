@@ -135,7 +135,7 @@ router.get("/", async (req, res) => {
 
     // Find users with active subscriptions but no Stripe customer ID
     const usersWithActiveSubs = await User.find({
-      subscriptionActive: true,
+      activeSubscriptionId: { $ne: null },
       $or: [
         { stripeCustomerId: { $exists: false } },
         { stripeCustomerId: null }

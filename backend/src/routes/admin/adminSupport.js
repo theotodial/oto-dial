@@ -131,7 +131,7 @@ router.get("/", requireAdmin, async (req, res) => {
     }
 
     const tickets = await SupportTicket.find(query)
-      .populate("user", "email name stripeCustomerId activeSubscriptionId subscriptionActive")
+      .populate("user", "email name stripeCustomerId activeSubscriptionId")
       .populate("resolvedBy", "email name")
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -173,7 +173,7 @@ router.get("/", requireAdmin, async (req, res) => {
 router.get("/:id", requireAdmin, async (req, res) => {
   try {
     const ticket = await SupportTicket.findById(req.params.id)
-      .populate("user", "email name stripeCustomerId activeSubscriptionId subscriptionActive")
+      .populate("user", "email name stripeCustomerId activeSubscriptionId")
       .populate("resolvedBy", "email name");
 
     if (!ticket) {
@@ -279,7 +279,7 @@ router.patch("/:id", requireAdmin, async (req, res) => {
 
     const updatedTicket = await SupportTicket.findById(req.params.id)
       .populate("resolvedBy", "email name")
-      .populate("user", "email name stripeCustomerId activeSubscriptionId subscriptionActive");
+      .populate("user", "email name stripeCustomerId activeSubscriptionId");
 
     const subscriptionContext = updatedTicket.user?._id
       ? await Subscription.findOne({
@@ -310,7 +310,7 @@ router.post("/:id/repair-subscription", requireAdmin, async (req, res) => {
   try {
     const ticket = await SupportTicket.findById(req.params.id).populate(
       "user",
-      "email name stripeCustomerId activeSubscriptionId subscriptionActive"
+      "email name stripeCustomerId activeSubscriptionId"
     );
 
     if (!ticket) {
@@ -353,7 +353,7 @@ router.post("/:id/repair-subscription", requireAdmin, async (req, res) => {
     await ticket.save();
 
     const refreshedTicket = await SupportTicket.findById(ticket._id)
-      .populate("user", "email name stripeCustomerId activeSubscriptionId subscriptionActive")
+      .populate("user", "email name stripeCustomerId activeSubscriptionId")
       .populate("resolvedBy", "email name");
 
     const subscriptionContext = refreshedTicket.user?._id

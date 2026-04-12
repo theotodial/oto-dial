@@ -4,7 +4,7 @@ import { useAppState } from "./AppStateContext";
 const SubscriptionContext = createContext(null);
 
 export function SubscriptionProvider({ children }) {
-  const { subscription, isReady, isRefreshing, refetchBootstrap } = useAppState();
+  const { subscription, usage, isReady, isRefreshing, refetchBootstrap } = useAppState();
 
   const refreshSubscription = useCallback(async () => {
     const data = await refetchBootstrap();
@@ -13,7 +13,13 @@ export function SubscriptionProvider({ children }) {
 
   return (
     <SubscriptionContext.Provider
-      value={{ subscription, loading: isRefreshing && !isReady, hydrated: isReady, refreshSubscription }}
+      value={{
+        subscription,
+        usage,
+        loading: isRefreshing && !isReady,
+        hydrated: isReady,
+        refreshSubscription,
+      }}
     >
       {children}
     </SubscriptionContext.Provider>

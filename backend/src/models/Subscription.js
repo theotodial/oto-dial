@@ -161,7 +161,13 @@ const subscriptionSchema = new mongoose.Schema(
     lastUsageReset: {
       type: Date,
       default: Date.now
-    }        
+    },
+
+    // Mirrored from Plan on assign/change; when false, voice APIs reject calls.
+    voiceCallsEnabled: {
+      type: Boolean,
+      default: true
+    }
   },
   {
     timestamps: true

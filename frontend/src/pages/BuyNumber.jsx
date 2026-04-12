@@ -20,7 +20,7 @@ function BuyNumber() {
   const [success, setSuccess] = useState('');
   const [countryNotice, setCountryNotice] = useState('');
   const isMountedRef = useRef(true);
-  const subscriptionActive = Boolean(subscription?.active);
+  const billingActive = Boolean(subscription?.isActive ?? subscription?.active);
   const availableCountryOptions = SUPPORTED_COUNTRIES.filter(
     (country) => country.numberProvisioningEnabled !== false
   );
@@ -42,7 +42,7 @@ function BuyNumber() {
     checkUserStatus();
     
     // Auto-load default numbers on page load (like Google Voice/TextNow)
-    if (subscriptionActive && userNumbers.length === 0) {
+    if (billingActive && userNumbers.length === 0) {
       loadDefaultNumbers();
     }
     
@@ -53,24 +53,24 @@ function BuyNumber() {
 
   useEffect(() => {
     if (userNumbers.length > 0) return;
-    if (!subscriptionActive) {
+    if (!billingActive) {
       setError('Active subscription required to buy a number');
     } else {
       setError((prev) =>
         prev === 'Active subscription required to buy a number' ? '' : prev
       );
     }
-  }, [subscriptionActive, userNumbers.length]);
+  }, [billingActive, userNumbers.length]);
 
   // Load default numbers when subscription becomes active or country changes
   useEffect(() => {
-    if (subscriptionActive && userNumbers.length === 0 && !loading && availableNumbers.length === 0) {
+    if (billingActive && userNumbers.length === 0 && !loading && availableNumbers.length === 0) {
       loadDefaultNumbers();
     }
-  }, [subscriptionActive, userNumbers.length, loading, selectedCountry]);
+  }, [billingActive, userNumbers.length, loading, selectedCountry]);
 
   const loadDefaultNumbers = async () => {
-    if (!subscriptionActive || searching) return;
+    if (!billingActive || searching) return;
 
     if (!isSelectedCountryProvisioningEnabled) {
       if (!isMountedRef.current) return;
@@ -142,7 +142,7 @@ function BuyNumber() {
   };
 
   const handleSearch = async () => {
-    if (!subscriptionActive) {
+    if (!billingActive) {
       setError('Active subscription required to search numbers');
       return;
     }
@@ -213,7 +213,7 @@ function BuyNumber() {
       return;
     }
 
-    if (!subscriptionActive) {
+    if (!billingActive) {
       setError('Active subscription required to buy a number');
       navigate('/dashboard');
       return;
@@ -323,7 +323,7 @@ function BuyNumber() {
           </div>
         )}
 
-        {!subscriptionActive && (
+        {!billingActive && (
           <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 text-yellow-700 dark:text-yellow-300 rounded-xl">
             <p className="font-semibold mb-2">Subscription Required</p>
             <p className="text-sm mb-3">You need an active subscription to buy a phone number.</p>
@@ -366,7 +366,7 @@ function BuyNumber() {
                     : ''
                 );
               }}
-              disabled={!subscriptionActive || searching}
+              disabled={!billingActive || searching}
               className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
             >
               <optgroup label="Available now">
@@ -409,12 +409,12 @@ function BuyNumber() {
                   : selectedCountry === 'US'
                     ? 'Area code (e.g., 212) or number pattern'
                     : 'Number pattern or leave blank'}
-                disabled={!subscriptionActive || searching || !isSelectedCountryProvisioningEnabled}
+                disabled={!billingActive || searching || !isSelectedCountryProvisioningEnabled}
                 className="flex-1 px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-xl text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
               />
               <button
                 onClick={handleSearch}
-                disabled={!subscriptionActive || searching || !isSelectedCountryProvisioningEnabled}
+                disabled={!billingActive || searching || !isSelectedCountryProvisioningEnabled}
                 className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {searching ? 'Searching...' : 'Search'}
@@ -491,9 +491,9 @@ function BuyNumber() {
           <div className="pt-6 border-t border-gray-200 dark:border-slate-700">
             <button
               onClick={handlePurchase}
-              disabled={!subscriptionActive || buying || !selectedNumber || userNumbers.length > 0 || !isSelectedCountryProvisioningEnabled}
+              disabled={!billingActive || buying || !selectedNumber || userNumbers.length > 0 || !isSelectedCountryProvisioningEnabled}
               className={`w-full py-4 rounded-xl font-semibold transition-all ${
-                !subscriptionActive || buying || !selectedNumber || userNumbers.length > 0 || !isSelectedCountryProvisioningEnabled
+                !billingActive || buying || !selectedNumber || userNumbers.length > 0 || !isSelectedCountryProvisioningEnabled
                   ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                   : 'bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600 text-white shadow-lg hover:shadow-xl'
               }`}

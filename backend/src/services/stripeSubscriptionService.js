@@ -17,6 +17,7 @@ import {
   applyPlanSnapshotToSubscription
 } from "./subscriptionPlanSnapshotService.js";
 import { getServerDayKey } from "./unlimitedUsageService.js";
+import { getLatestSubscription } from "./subscriptionService.js";
 
 const MUTABLE_MONGO_STATUSES = ["active", "pending_activation", "past_due", "incomplete"];
 const REPAIRABLE_STRIPE_STATUSES = new Set(["active", "trialing", "past_due", "incomplete"]);
@@ -456,13 +457,17 @@ async function activateSubscriptionAtomic({
       {
         $set: {
           activeSubscriptionId: target._id,
-          subscriptionActive: true,
           currentPlanId: target.planId,
-          currentSubscriptionLimits: target.limits,
-          plan: plan?.name || target.planKey || null,
           lastSubscriptionSyncAt: new Date(),
-          stripeCustomerId: user.stripeCustomerId || target.stripeCustomerId || null
-        }
+          stripeCustomerId: user.stripeCustomerId || target.stripeCustomerId || null,
+        },
+        $unset: {
+          subscriptionActive: "",
+          currentSubscriptionLimits: "",
+          plan: "",
+          minutesUsed: "",
+          smsUsed: "",
+        },
       },
       { session }
     );
@@ -491,11 +496,15 @@ async function applyAddonFromCheckoutSession(session) {
     throw new Error("Invalid add-on checkout metadata");
   }
 
-  const [user, addon, subscription] = await Promise.all([
+  const [user, addon, latestLean] = await Promise.all([
     User.findById(userId),
     AddonPlan.findById(addonId),
-    Subscription.findOne({ userId, status: "active" })
+    getLatestSubscription(userId),
   ]);
+
+  const subscription = latestLean
+    ? await Subscription.findById(latestLean._id)
+    : null;
 
   if (!user) {
     throw new Error("Add-on purchase user not found");
@@ -504,7 +513,7 @@ async function applyAddonFromCheckoutSession(session) {
     throw new Error("Add-on definition missing or inactive");
   }
   if (!subscription) {
-    throw new Error("Active subscription missing for add-on credit assignment");
+    throw new Error("Subscription missing for add-on credit assignment");
   }
 
   const now = new Date();
@@ -613,10 +622,9 @@ async function syncSubscriptionFromStripeObject(stripeSubscription, stripe, sour
 
   let subscription = await Subscription.findOne({ stripeSubscriptionId: subscriptionId });
   if (!subscription) {
-    subscription = await Subscription.findOne({
-      userId: user._id,
-      status: { $in: MUTABLE_MONGO_STATUSES }
-    }).sort({ createdAt: -1 });
+    subscription = await Subscription.findOne({ userId: user._id }).sort({
+      createdAt: -1,
+    });
   }
 
   if (!subscription) {
@@ -657,15 +665,20 @@ async function syncSubscriptionFromStripeObject(stripeSubscription, stripe, sour
     });
   } else if (status === "cancelled") {
     if (user.activeSubscriptionId?.toString() === subscription._id.toString()) {
-      user.activeSubscriptionId = null;
-      user.subscriptionActive = false;
-      user.currentPlanId = null;
-      user.currentSubscriptionLimits = {
-        minutesTotal: 0,
-        smsTotal: 0,
-        numbersTotal: 0
-      };
-      await user.save();
+      await User.findByIdAndUpdate(user._id, {
+        $set: {
+          activeSubscriptionId: null,
+          currentPlanId: null,
+          lastSubscriptionSyncAt: new Date(),
+        },
+        $unset: {
+          subscriptionActive: "",
+          currentSubscriptionLimits: "",
+          plan: "",
+          minutesUsed: "",
+          smsUsed: "",
+        },
+      });
     }
   }
 
@@ -1073,27 +1086,32 @@ export async function processSubscriptionDeleted(event, stripe) {
     return { success: false, error: "User not found" };
   }
 
-  const subscription = await Subscription.findOne({
-    $or: [
-      { stripeSubscriptionId: subscriptionId },
-      { userId: user._id, status: "active" }
-    ]
-  });
+  let subscription = await Subscription.findOne({ stripeSubscriptionId: subscriptionId });
+  if (!subscription) {
+    subscription = await Subscription.findOne({ userId: user._id }).sort({
+      createdAt: -1,
+    });
+  }
 
   if (subscription) {
     subscription.status = "cancelled";
     await subscription.save();
 
     if (user.activeSubscriptionId?.toString() === subscription._id.toString()) {
-      user.activeSubscriptionId = null;
-      user.subscriptionActive = false;
-      user.currentPlanId = null;
-      user.currentSubscriptionLimits = {
-        minutesTotal: 0,
-        smsTotal: 0,
-        numbersTotal: 0
-      };
-      await user.save();
+      await User.findByIdAndUpdate(user._id, {
+        $set: {
+          activeSubscriptionId: null,
+          currentPlanId: null,
+          lastSubscriptionSyncAt: new Date(),
+        },
+        $unset: {
+          subscriptionActive: "",
+          currentSubscriptionLimits: "",
+          plan: "",
+          minutesUsed: "",
+          smsUsed: "",
+        },
+      });
     }
   }
 
@@ -1231,8 +1249,7 @@ export async function selfHealSubscriptionForUser(userId, reason = "self_heal") 
   const userLinkedToActiveSub =
     !!activeSubscription &&
     !!user.activeSubscriptionId &&
-    user.activeSubscriptionId.toString() === activeSubscription._id.toString() &&
-    user.subscriptionActive;
+    user.activeSubscriptionId.toString() === activeSubscription._id.toString();
 
   if (userLinkedToActiveSub) {
     return { success: true, skipped: true, reason: "already_consistent" };

@@ -9,6 +9,7 @@ import {
   getCanonicalAddonPriceId,
   getCanonicalPlanPriceId
 } from "../config/stripeCatalog.js";
+import { getLatestSubscription } from "../services/subscriptionService.js";
 
 const router = express.Router();
 
@@ -37,6 +38,12 @@ router.post("/checkout", authenticateUser, async (req, res) => {
     const plan = await Plan.findById(planId);
     if (!plan || !plan.active) {
       return res.status(400).json({ error: "Plan not found or inactive" });
+    }
+
+    if (plan.adminOnly) {
+      return res.status(403).json({
+        error: "This plan is not available for self-service checkout."
+      });
     }
 
     const effectivePriceId = getCanonicalPlanPriceId(plan);
@@ -171,13 +178,9 @@ router.post("/checkout/addon", authenticateUser, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Ensure user has an active subscription before buying add-ons
-    const activeSubscription = await Subscription.findOne({
-      userId: user._id,
-      status: "active"
-    });
+    const latestSub = await getLatestSubscription(user._id);
 
-    if (!activeSubscription) {
+    if (!latestSub || latestSub.status !== "active") {
       return res.status(400).json({
         error: "You need an active subscription before purchasing add-ons."
       });
