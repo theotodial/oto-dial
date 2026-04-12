@@ -2,6 +2,7 @@ import { Resend } from "resend";
 
 const DEFAULT_FROM = "OTODIAL <no-reply@otodial.com>";
 const DEFAULT_REPLY_TO = "info@otodial.com";
+const DEFAULT_FALLBACK_FROM = "OTODIAL <onboarding@resend.dev>";
 
 let resendSingleton = null;
 
@@ -19,6 +20,35 @@ function resolveReplyTo() {
   const raw = String(process.env.RESEND_REPLY_TO || "").trim();
   if (raw) return raw;
   return DEFAULT_REPLY_TO;
+}
+
+function resolveFallbackFromEmail() {
+  const raw = String(process.env.RESEND_FALLBACK_FROM || "").trim();
+  if (raw) return raw;
+  return DEFAULT_FALLBACK_FROM;
+}
+
+function isSenderIdentityError(error) {
+  const haystack = [
+    error?.message,
+    error?.error?.message,
+    error?.name,
+    error?.response?.data?.message,
+    error?.response?.data?.error,
+    error?.cause?.message,
+  ]
+    .filter(Boolean)
+    .join(" | ")
+    .toLowerCase();
+
+  return (
+    haystack.includes("verify") ||
+    haystack.includes("verified") ||
+    haystack.includes("sender") ||
+    haystack.includes("from address") ||
+    haystack.includes("domain") ||
+    haystack.includes("forbidden")
+  );
 }
 
 /**
@@ -42,6 +72,10 @@ export function logResendConfigAtStartup() {
   console.log("🔑 RESEND KEY PREFIX:", key ? key.slice(0, 5) : "(empty)");
   console.log("📧 FROM (RESEND_FROM):", process.env.RESEND_FROM || "(unset → default no-reply@otodial.com)");
   console.log("📧 Using sender:", resolveFromEmail());
+  console.log(
+    "📧 Fallback sender:",
+    process.env.RESEND_FALLBACK_FROM || "(unset → OTODIAL <onboarding@resend.dev>)"
+  );
   console.log("↩️ Reply-To:", resolveReplyTo());
 }
 
@@ -73,6 +107,7 @@ export async function sendEmail({
   templateUsed,
 }) {
   const FROM_EMAIL = resolveFromEmail();
+  const FALLBACK_FROM_EMAIL = resolveFallbackFromEmail();
   const replyTo = resolveReplyTo();
 
   if (templateUsed) {
@@ -105,6 +140,31 @@ export async function sendEmail({
     console.log(`✅ Email success → ${emailType} → ${to}`);
     return response;
   } catch (error) {
+    if (FALLBACK_FROM_EMAIL !== FROM_EMAIL && isSenderIdentityError(error)) {
+      console.warn(
+        `⚠️ Email sender rejected for ${emailType} → ${to}. Retrying with fallback sender ${FALLBACK_FROM_EMAIL}`
+      );
+
+      try {
+        const fallbackResponse = await resend.emails.send({
+          from: FALLBACK_FROM_EMAIL,
+          to,
+          replyTo,
+          subject,
+          html,
+        });
+
+        console.log(`✅ Email success via fallback sender → ${emailType} → ${to}`);
+        return fallbackResponse;
+      } catch (fallbackError) {
+        console.error(
+          `❌ Email fallback failed → ${emailType} → ${to}:`,
+          fallbackError?.message || String(fallbackError)
+        );
+        throw fallbackError;
+      }
+    }
+
     console.error(`❌ Email failed → ${emailType} → ${to}:`, error?.message || String(error));
     throw error;
   }

@@ -1,21 +1,85 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { io } from 'socket.io-client';
 import API from '../../api';
+
+const LIVE_LIMIT = 12;
+
+function formatPlanLabel(user) {
+  if (user.customPackage?.overridePlan || user.subscription?.status === 'custom_override') {
+    return 'Custom Package';
+  }
+  return user.subscription?.planName || user.subscriptionPlan || 'No plan';
+}
+
+function classifyUser(user) {
+  const subscriptionStatus = user.subscription?.status || user.subscriptionStatus || 'none';
+  if (user.status === 'banned' || user.status === 'suspended') return 'blocked';
+  if (!user.subscription && !user.customPackage) return 'no_subscription';
+  if (['active', 'trialing', 'pending_activation', 'past_due', 'custom_override'].includes(subscriptionStatus)) {
+    return 'active';
+  }
+  return 'all';
+}
 
 function AdminUsers() {
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalUsers, setTotalUsers] = useState(0);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('active'); // 'active', 'suspended', 'none'
+  const [activeTab, setActiveTab] = useState('all');
+  const [liveCalls, setLiveCalls] = useState([]);
+  const [liveSms, setLiveSms] = useState([]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     fetchUsers();
-  }, [page, search]);
+  }, [page, debouncedSearch, activeTab]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('adminToken');
+    if (!token) return undefined;
+
+    const socket = io(import.meta.env.VITE_API_URL || window.location.origin, {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+      auth: { token }
+    });
+
+    socket.on('admin:live_snapshot', (snapshot) => {
+      setLiveCalls(snapshot?.calls || []);
+      setLiveSms(snapshot?.sms || []);
+    });
+
+    socket.on('admin:live_calls', (event) => {
+      setLiveCalls((prev) => [event, ...prev].slice(0, LIVE_LIMIT));
+    });
+
+    socket.on('admin:live_sms', (event) => {
+      setLiveSms((prev) => [event, ...prev].slice(0, LIVE_LIMIT));
+    });
+
+    socket.on('connect_error', (socketError) => {
+      console.warn('Admin live feed unavailable:', socketError?.message || socketError);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -23,7 +87,8 @@ function AdminUsers() {
     try {
       const token = localStorage.getItem('adminToken');
       const params = new URLSearchParams();
-      if (search) params.append('search', search);
+      if (debouncedSearch) params.append('search', debouncedSearch);
+      params.append('filter', activeTab);
       params.append('page', page);
       params.append('limit', '20');
       
@@ -35,7 +100,8 @@ function AdminUsers() {
         setError(response.error);
       } else if (response.data?.success) {
         setUsers(response.data.users || []);
-        setTotalPages(response.data.pagination?.pages || 1);
+        setTotalPages(response.data.pages || response.data.pagination?.pages || 1);
+        setTotalUsers(response.data.total || response.data.pagination?.total || 0);
       } else {
         setError('Failed to load users');
       }
@@ -59,6 +125,8 @@ function AdminUsers() {
   const handleUserClick = (userId) => {
     navigate(`/adminbobby/users/${userId}`);
   };
+
+  const filteredUsers = users;
 
   if (loading && users.length === 0) {
     return (
@@ -118,6 +186,10 @@ function AdminUsers() {
           </button>
         </div>
 
+        <div className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+          Showing {filteredUsers.length} users on this page. Total matched users: {totalUsers}.
+        </div>
+
         {error && (
           <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg mb-6">
             {error}
@@ -128,6 +200,16 @@ function AdminUsers() {
         <div className="mb-6 border-b border-gray-200 dark:border-slate-700">
           <nav className="flex space-x-8">
             <button
+              onClick={() => setActiveTab('all')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'all'
+                  ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+              }`}
+            >
+              All Users
+            </button>
+            <button
               onClick={() => setActiveTab('active')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'active'
@@ -135,29 +217,61 @@ function AdminUsers() {
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
               }`}
             >
-              Active Subscription ({users.filter(u => u.subscriptionStatus === 'active').length})
+              Active
             </button>
             <button
-              onClick={() => setActiveTab('suspended')}
+              onClick={() => setActiveTab('no_subscription')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'suspended'
+                activeTab === 'no_subscription'
                   ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
               }`}
             >
-              Suspended / Cancelled ({users.filter(u => u.subscriptionStatus === 'suspended' || u.subscriptionStatus === 'cancelled').length})
+              No Subscription
             </button>
             <button
-              onClick={() => setActiveTab('none')}
+              onClick={() => setActiveTab('blocked')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'none'
+                activeTab === 'blocked'
                   ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
               }`}
             >
-              No Subscription ({users.filter(u => !u.subscriptionStatus || u.subscriptionStatus === 'none' || u.subscriptionStatus === null).length})
+              Blocked
             </button>
           </nav>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Live Calls</h3>
+            <div className="space-y-3">
+              {liveCalls.length === 0 ? (
+                <div className="text-sm text-gray-500 dark:text-gray-400">No recent live call events.</div>
+              ) : liveCalls.map((event, idx) => (
+                <div key={`${event.callId || idx}-${event.at}`} className="text-sm border-b border-gray-100 dark:border-slate-700 pb-2 last:border-b-0">
+                  <div className="font-medium text-gray-900 dark:text-white">{event.actor?.email || 'Unknown user'}</div>
+                  <div className="text-gray-600 dark:text-gray-400">{event.destination || 'Unknown destination'} • {event.status || event.eventType}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-500">{event.durationSeconds || 0}s • {new Date(event.at).toLocaleTimeString()}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Live SMS</h3>
+            <div className="space-y-3">
+              {liveSms.length === 0 ? (
+                <div className="text-sm text-gray-500 dark:text-gray-400">No recent live SMS events.</div>
+              ) : liveSms.map((event, idx) => (
+                <div key={`${event.messageId || idx}-${event.at}`} className="text-sm border-b border-gray-100 dark:border-slate-700 pb-2 last:border-b-0">
+                  <div className="font-medium text-gray-900 dark:text-white">{event.actor?.email || 'Unknown user'}</div>
+                  <div className="text-gray-600 dark:text-gray-400">{event.destination || 'Unknown destination'} • {event.status || event.eventType}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-500">{event.bodyPreview || 'No preview'}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Users Table */}
@@ -165,77 +279,59 @@ function AdminUsers() {
           <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
             <thead className="bg-gray-50 dark:bg-slate-700">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Email</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Subscription</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Telnyx Cost</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Phone Numbers</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Plan / Custom</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Minutes Left</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">SMS Left</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Created</th>
               </tr>
             </thead>
             <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
-              {users
-                .filter(user => {
-                  if (activeTab === 'active') return user.subscriptionStatus === 'active';
-                  if (activeTab === 'suspended') return user.subscriptionStatus === 'suspended' || user.subscriptionStatus === 'cancelled';
-                  return !user.subscriptionStatus || user.subscriptionStatus === 'none' || user.subscriptionStatus === null;
-                })
-                .map((user) => (
+              {filteredUsers.map((user) => (
                 <tr
                   key={user.id}
                   onClick={() => handleUserClick(user.id)}
                   className="hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer"
                 >
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">{user.name}</div>
+                  <td className="px-6 py-4">
+                    <div className="text-sm font-medium text-gray-900 dark:text-white">{user.email}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">{user.name || 'Unnamed user'}</div>
                     <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{user.id.toString().slice(-8)}</div>
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm text-gray-900 dark:text-white">{formatPlanLabel(user)}</div>
+                    {user.customPackage ? (
+                      <div className="text-xs text-indigo-600 dark:text-indigo-400">Custom override attached</div>
+                    ) : (
+                      <div className="text-xs text-gray-500 dark:text-gray-400">{user.subscription?.planType || 'No subscription'}</div>
+                    )}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                    {user.email}
+                    {user.subscription?.isUnlimited ? 'Unlimited' : Number(user.subscription?.minutesRemaining || 0).toFixed(1)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                    {user.subscription?.isUnlimited ? 'Unlimited' : Number(user.subscription?.smsRemaining || 0)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900 dark:text-white">{user.subscriptionPlan}</div>
                     <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded-full ${
-                      user.subscriptionStatus === 'active' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' :
-                      user.subscriptionStatus === 'suspended' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300' :
-                      user.subscriptionStatus === 'cancelled' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' :
+                      user.status === 'active' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' :
+                      user.status === 'suspended' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300' :
+                      user.status === 'banned' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' :
                       'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300'
                     }`}>
-                      {user.subscriptionStatus || 'none'}
+                      {user.status || 'unknown'}
                     </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-semibold text-gray-900 dark:text-white">
-                      ${(user.costs?.totalTelnyxCost || 0).toFixed(4)}
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {user.subscription?.status || 'no subscription'} • {user.isEmailVerified ? 'verified' : 'unverified'}
                     </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                      Calls: ${(user.costs?.telnyxCallCost || 0).toFixed(2)} | SMS: ${(user.costs?.telnyxSmsCost || 0).toFixed(2)}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                    {user.phoneNumbers?.length > 0 ? (
-                      <div className="space-y-1">
-                        {user.phoneNumbers.slice(0, 2).map((num, idx) => (
-                          <div key={idx} className="text-xs">{num}</div>
-                        ))}
-                        {user.phoneNumbers.length > 2 && (
-                          <div className="text-xs text-gray-500">+{user.phoneNumbers.length - 2} more</div>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-gray-400">None</span>
-                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {new Date(user.createdAt).toLocaleDateString()}
                   </td>
                 </tr>
               ))}
-              {users.filter(user => {
-                if (activeTab === 'active') return user.subscriptionStatus === 'active';
-                if (activeTab === 'suspended') return user.subscriptionStatus === 'suspended' || user.subscriptionStatus === 'cancelled';
-                return !user.subscriptionStatus || user.subscriptionStatus === 'none';
-              }).length === 0 && (
+              {filteredUsers.length === 0 && (
                 <tr>
                   <td colSpan="6" className="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
                     No users in this category

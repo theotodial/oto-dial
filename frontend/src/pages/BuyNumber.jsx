@@ -19,8 +19,8 @@ function BuyNumber() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [countryNotice, setCountryNotice] = useState('');
-  const [subscriptionActive, setSubscriptionActive] = useState(false);
   const isMountedRef = useRef(true);
+  const subscriptionActive = Boolean(subscription?.active);
   const availableCountryOptions = SUPPORTED_COUNTRIES.filter(
     (country) => country.numberProvisioningEnabled !== false
   );
@@ -52,19 +52,15 @@ function BuyNumber() {
   }, []);
 
   useEffect(() => {
-    if (!subscription) return;
-    const active =
-      subscription.planName !== 'No Plan' && subscription.status !== 'inactive';
-    setSubscriptionActive(!!active);
     if (userNumbers.length > 0) return;
-    if (!active) {
+    if (!subscriptionActive) {
       setError('Active subscription required to buy a number');
     } else {
       setError((prev) =>
         prev === 'Active subscription required to buy a number' ? '' : prev
       );
     }
-  }, [subscription, userNumbers.length]);
+  }, [subscriptionActive, userNumbers.length]);
 
   // Load default numbers when subscription becomes active or country changes
   useEffect(() => {

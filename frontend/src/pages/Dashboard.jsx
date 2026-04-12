@@ -62,7 +62,7 @@ const MenuIcon = () => (
 function Dashboard() {
   const navigate = useNavigate();
   const { user, refreshUser } = useAuth();
-  const { subscription, refreshSubscription } = useSubscription();
+  const { subscription, hydrated: subscriptionHydrated, refreshSubscription } = useSubscription();
   const { toggleSidebar, isOpen: sidebarOpen } = useMobileSidebar();
 
   const [balance, setBalance] = useState(0);
@@ -85,33 +85,27 @@ function Dashboard() {
   const isMountedRef = useRef(true);
 
   useEffect(() => {
-    if (subscription == null) return;
+    if (!subscriptionHydrated) return;
 
-    const inactive =
-      subscription.status === 'inactive' ||
-      subscription.planName === 'No Plan';
-
-    if (inactive) {
+    if (subscription == null || !subscription.active) {
       setPackageDetails({
-        remainingMinutes: 2500,
-        remainingSMS: 200,
-        planName: 'BASIC PLAN',
+        remainingMinutes: 0,
+        remainingSMS: 0,
+        planName: 'No Plan',
         displayUnlimited: false
       });
       return;
     }
 
     const isUnlimitedPlan =
-      Boolean(subscription.displayUnlimited) ||
-      String(subscription.planType || '').toLowerCase() === 'unlimited' ||
-      String(subscription.planName || '').toLowerCase().includes('unlimited');
+      Boolean(subscription.isUnlimited || subscription.displayUnlimited);
     setPackageDetails({
       remainingMinutes: isUnlimitedPlan ? '∞' : (subscription.minutesRemaining || 0),
       remainingSMS: isUnlimitedPlan ? '∞' : (subscription.smsRemaining || 0),
       planName: subscription.planName || 'No Plan',
       displayUnlimited: isUnlimitedPlan
     });
-  }, [subscription]);
+  }, [subscription, subscriptionHydrated]);
 
   /* ================= FETCH DASHBOARD ================= */
 
@@ -157,16 +151,7 @@ function Dashboard() {
       setAddonPlans([]);
     }
 
-    const activationHealthRes = await API.get('/api/subscription/activation-health').catch(() => ({
-      error: true
-    }));
-    if (!isMountedRef.current) return;
-    if (!activationHealthRes.error && activationHealthRes.data?.success) {
-      const issueData = activationHealthRes.data;
-      setActivationIssue(issueData.showIssueReport ? issueData : null);
-    } else {
-      setActivationIssue(null);
-    }
+    setActivationIssue(null);
     } finally {
       if (isMountedRef.current) setExtrasLoading(false);
     }

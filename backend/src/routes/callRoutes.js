@@ -11,6 +11,10 @@ import {
 } from "../utils/callLifecycle.js";
 import { tryDeductVoiceUsageForCall } from "../services/voiceCallUsageService.js";
 import { recordCallCost } from "../services/telnyxCostCalculator.js";
+import { emitAdminLiveCall } from "../services/adminLiveEventsService.js";
+import { evaluateFraudEvent } from "../services/fraudDetectionService.js";
+import { enforceTelecomPolicy } from "../services/telecomPolicyService.js";
+import { enforceUsageRateLimit } from "../services/usageRateLimitService.js";
 import { TERMINAL_STATUSES } from "../utils/callStateMachine.js";
 
 const router = express.Router();
@@ -98,6 +102,15 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
     }
 
     if (direction === "outbound" && source === "webrtc") {
+      const rateLimit = enforceUsageRateLimit({ userId: req.userId, channel: "call" });
+      if (!rateLimit.allowed) {
+        return res.status(429).json({
+          success: false,
+          error: "Call rate limit exceeded. Please wait before placing more calls.",
+          retryAfterMs: rateLimit.retryAfterMs,
+        });
+      }
+
       const destE164 = normalizeStrictE164ForDial(phoneNumber);
       if (!destE164) {
         await persistFailedCallAttempt(
@@ -113,6 +126,40 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       }
       phoneNumber = destE164;
       toNumber = destE164;
+
+      const policyCheck = await enforceTelecomPolicy({
+        userId: req.userId,
+        channel: "call",
+        destinationNumber: destE164,
+      });
+      if (!policyCheck.allowed) {
+        await persistFailedCallAttempt(
+          req,
+          { phoneNumber: destE164, fromNumber, toNumber: destE164 },
+          policyCheck.error
+        );
+        return res.status(403).json({
+          success: false,
+          error: policyCheck.error,
+        });
+      }
+
+      const fraudCheck = await evaluateFraudEvent({
+        userId: req.userId,
+        channel: "call",
+        destinationNumber: destE164,
+      });
+      if (!fraudCheck.allowed && fraudCheck.blocked) {
+        await persistFailedCallAttempt(
+          req,
+          { phoneNumber: destE164, fromNumber, toNumber: destE164 },
+          fraudCheck.reason
+        );
+        return res.status(403).json({
+          success: false,
+          error: fraudCheck.reason || "Call blocked by fraud protection.",
+        });
+      }
 
       const callerRaw = fromNumber;
       if (!callerRaw) {
@@ -202,6 +249,19 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       direction,
       status: call.status,
       to: normalizeCallPartyNumber(toNumber || phoneNumber),
+    });
+
+    emitAdminLiveCall({
+      eventType: "started",
+      userId: req.userId,
+      callId: call._id,
+      destination: normalizeCallPartyNumber(toNumber || phoneNumber),
+      from: fromNumber,
+      direction,
+      status: call.status,
+      durationSeconds: 0,
+    }).catch((error) => {
+      console.warn("[ADMIN LIVE] failed to emit call start:", error?.message || error);
     });
 
     res.json({ success: true, call });

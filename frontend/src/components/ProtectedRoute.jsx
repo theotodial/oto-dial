@@ -1,5 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import SkeletonApp from './SkeletonApp';
 
 /**
  * ProtectedRoute Component
@@ -10,28 +11,18 @@ import { useAuth } from '../context/AuthContext';
 function ProtectedRoute({ children }) {
   const auth = useAuth();
   const isAuthenticated = auth?.isAuthenticated ?? false;
-  const loading = auth?.loading ?? true;
+  const hydrated = auth?.hydrated ?? false;
   const location = useLocation();
 
-  // Show loading spinner while checking authentication
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-900">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-500 dark:text-gray-400">Verifying authentication...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Redirect to login if not authenticated, preserving the intended destination
   if (!isAuthenticated) {
     const qs = location.search || "";
     return <Navigate to={`/login${qs}`} state={{ from: location }} replace />;
   }
 
-  // Render the protected page
+  if (!hydrated) {
+    return <SkeletonApp />;
+  }
+
   return children;
 }
 

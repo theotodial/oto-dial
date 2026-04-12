@@ -268,6 +268,10 @@ export async function convertMongoSrvToDirectUri(srvUri) {
     }
   }
   existingQs.forEach((v, k) => merged.set(k, v));
+  if (user !== "" && !merged.has("authSource")) {
+    // Atlas users typically authenticate against admin; keep direct URI usable when TXT lookup fails.
+    merged.set("authSource", "admin");
+  }
   if (!merged.has("tls") && !merged.has("ssl")) {
     merged.set("tls", "true");
   }

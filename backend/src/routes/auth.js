@@ -5,7 +5,8 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
-import { selfHealSubscriptionForUser } from "../services/stripeSubscriptionService.js";
+import { scheduleBackgroundSelfHeal } from "../services/stripeSubscriptionService.js";
+import { cacheKeys, setCachedJson } from "../services/cache.service.js";
 import {
   attachAffiliateReferralToUser,
   buildOAuthState,
@@ -611,7 +612,9 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ error: "Email and password required" });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select(
+      "email password role name firstName isEmailVerified sessions status"
+    );
     const passwordOk = user ? await verifyPassword(password, user.password) : false;
     if (!user || !passwordOk) {
       return res.status(401).json({
@@ -686,13 +689,6 @@ router.post("/login", async (req, res) => {
       );
     }
 
-    // Self-heal subscription linkage on login to avoid paid-but-inactive states.
-    try {
-      await selfHealSubscriptionForUser(user._id, "login");
-    } catch (healErr) {
-      console.warn(`⚠️ Login self-heal skipped for user ${user._id}:`, healErr.message);
-    }
-
     // Prepare response with existing session info if any
     const existingSessionInfo = activeSessions.length > 0 ? {
       message: "You are already logged in on another device",
@@ -708,15 +704,23 @@ router.post("/login", async (req, res) => {
       user.isEmailVerified === true ||
       user.isEmailVerified === undefined;
 
+    const authUserPayload = {
+      id: user._id,
+      _id: user._id,
+      name: user.name || user.firstName || "",
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      isEmailVerified
+    };
+
+    await setCachedJson(cacheKeys.userProfile(user._id), authUserPayload, 300);
+    scheduleBackgroundSelfHeal(user._id, "login");
+
     res.json({
       success: true,
       token,
-      user: {
-        id: user._id,
-        email: user.email,
-        role: user.role,
-        isEmailVerified
-      },
+      user: authUserPayload,
       ...(existingSessionInfo && { sessionInfo: existingSessionInfo })
     });
   } catch (err) {

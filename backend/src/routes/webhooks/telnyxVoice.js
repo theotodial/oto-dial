@@ -4,6 +4,7 @@ import Call from "../../models/Call.js";
 import Subscription from "../../models/Subscription.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import { recordCallCost } from "../../services/telnyxCostCalculator.js";
+import { emitAdminLiveCall } from "../../services/adminLiveEventsService.js";
 import { normalizeCallPartyNumber } from "../../utils/callLifecycle.js";
 import {
   findCallForTelnyxEvent,
@@ -511,6 +512,19 @@ router.post("/", async (req, res) => {
       call.billedSeconds = billableSeconds;
 
       await call.save();
+
+      emitAdminLiveCall({
+        eventType: "ended",
+        userId: call.user,
+        callId: call._id,
+        destination: call.toNumber || call.phoneNumber,
+        from: call.fromNumber,
+        direction: call.direction,
+        status: finalStatus,
+        durationSeconds: billableSeconds,
+      }).catch((error) => {
+        console.warn("[ADMIN LIVE] failed to emit call end:", error?.message || error);
+      });
 
       if (billableSeconds > 0 && call.user) {
         try {

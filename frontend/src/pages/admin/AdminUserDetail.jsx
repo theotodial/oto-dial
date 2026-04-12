@@ -6,6 +6,12 @@ function AdminUserDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
   const [user, setUser] = useState(null);
+  const [subscription, setSubscription] = useState(null);
+  const [usage, setUsage] = useState(null);
+  const [recentCalls, setRecentCalls] = useState([]);
+  const [recentMessages, setRecentMessages] = useState([]);
+  const [costs, setCosts] = useState(null);
+  const [customPackage, setCustomPackage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState('');
@@ -25,6 +31,15 @@ function AdminUserDetail() {
   const [loadedSmsExpiry, setLoadedSmsExpiry] = useState('');
   const [loadedMinutesExpiry, setLoadedMinutesExpiry] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [usageAdjustMinutes, setUsageAdjustMinutes] = useState('');
+  const [usageAdjustSms, setUsageAdjustSms] = useState('');
+  const [packageMinutes, setPackageMinutes] = useState('');
+  const [packageSms, setPackageSms] = useState('');
+  const [packageExpiresAt, setPackageExpiresAt] = useState('');
+  const [packageAllowedCountries, setPackageAllowedCountries] = useState('');
+  const [packageBlockedCountries, setPackageBlockedCountries] = useState('');
+  const [packageCallsEnabled, setPackageCallsEnabled] = useState(true);
+  const [packageSmsEnabled, setPackageSmsEnabled] = useState(true);
 
   useEffect(() => {
     fetchUser();
@@ -50,7 +65,7 @@ function AdminUserDetail() {
     setError('');
     try {
       const token = localStorage.getItem('adminToken');
-      const response = await API.get(`/api/admin/users/${id}`, {
+      const response = await API.get(`/api/admin/users/${id}/details`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -58,6 +73,12 @@ function AdminUserDetail() {
         setError(response.error);
       } else if (response.data?.success) {
         setUser(response.data.user);
+        setSubscription(response.data.subscription || null);
+        setUsage(response.data.usage || null);
+        setRecentCalls(response.data.recentCalls || []);
+        setRecentMessages(response.data.recentMessages || []);
+        setCosts(response.data.costs || null);
+        setCustomPackage(response.data.customPackage || null);
       } else {
         setError('Failed to load user');
       }
@@ -443,6 +464,105 @@ function AdminUserDetail() {
     }
   };
 
+  const handleVerifyEmail = async () => {
+    setActionLoading('verify-email');
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.post(`/api/admin/users/${id}/verify-email`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.error) {
+        alert(response.error);
+      } else if (response.data?.success) {
+        await fetchUser();
+        alert(response.data.message || 'Email verified');
+      }
+    } catch (err) {
+      alert(err?.error || err?.response?.data?.error || 'Failed to verify email');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  const handleAdjustUsage = async () => {
+    setActionLoading('adjust-usage');
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.post(`/api/admin/users/${id}/adjust-usage`, {
+        minutes: Number(usageAdjustMinutes || 0),
+        sms: Number(usageAdjustSms || 0),
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.error) {
+        alert(response.error);
+      } else if (response.data?.success) {
+        setUsageAdjustMinutes('');
+        setUsageAdjustSms('');
+        await fetchUser();
+        alert(response.data.message || 'Usage adjusted');
+      }
+    } catch (err) {
+      alert(err?.error || err?.response?.data?.error || 'Failed to adjust usage');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  const handleSaveCustomPackage = async () => {
+    setActionLoading('custom-package');
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.put(`/api/admin/users/${id}/custom-package`, {
+        minutesAllowed: Number(packageMinutes || 0),
+        smsAllowed: Number(packageSms || 0),
+        expiresAt: packageExpiresAt || null,
+        isCallEnabled: packageCallsEnabled,
+        isSmsEnabled: packageSmsEnabled,
+        allowedCountries: packageAllowedCountries
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean),
+        blockedCountries: packageBlockedCountries
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean),
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.error) {
+        alert(response.error);
+      } else if (response.data?.success) {
+        await fetchUser();
+        alert(response.data.message || 'Custom package saved');
+      }
+    } catch (err) {
+      alert(err?.error || err?.response?.data?.error || 'Failed to save custom package');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  const handleClearCustomPackage = async () => {
+    setActionLoading('clear-custom-package');
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.delete(`/api/admin/users/${id}/custom-package`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.error) {
+        alert(response.error);
+      } else if (response.data?.success) {
+        await fetchUser();
+        alert(response.data.message || 'Custom package cleared');
+      }
+    } catch (err) {
+      alert(err?.error || err?.response?.data?.error || 'Failed to clear custom package');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex items-center justify-center">
@@ -558,9 +678,9 @@ function AdminUserDetail() {
                       }}
                       className="px-3 py-1 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
                     >
-                      {user.subscription ? 'Change Plan' : 'Assign Plan'}
+                      {subscription ? 'Change Plan' : 'Assign Plan'}
                     </button>
-                    {user.subscription && (
+                    {subscription && (
                       <button
                         onClick={handleLoadCredits}
                         disabled={actionLoading === 'load-credits'}
@@ -578,20 +698,20 @@ function AdminUserDetail() {
                     </button>
                   </div>
                 </div>
-                {user.subscription ? (
+                {subscription ? (
                   <dl className="grid grid-cols-2 gap-4">
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Plan</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white">{user.subscription.planName}</dd>
+                      <dd className="text-sm text-gray-900 dark:text-white">{subscription.planName}</dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Status</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white">{user.subscription.status}</dd>
+                      <dd className="text-sm text-gray-900 dark:text-white">{subscription.status}</dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Next Billing</dt>
                       <dd className="text-sm text-gray-900 dark:text-white">
-                        {new Date(user.subscription.nextBillingDate).toLocaleDateString()}
+                        {subscription.periodEnd ? new Date(subscription.periodEnd).toLocaleDateString() : 'N/A'}
                       </dd>
                     </div>
                   </dl>
@@ -677,45 +797,45 @@ function AdminUserDetail() {
               </div>
 
               {/* Usage */}
-              {user.usage && (
+              {usage && (
                 <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6">
                   <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Usage</h2>
                   <dl className="grid grid-cols-2 gap-4">
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Monthly Minutes Used</dt>
                       <dd className="text-sm text-gray-900 dark:text-white">
-                        {Number(user.usage.monthlyMinutesUsed || 0).toFixed(2)}
+                        {Number(usage.monthlyMinutesUsed || 0).toFixed(2)}
                       </dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Monthly SMS Used</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white">{Number(user.usage.monthlySmsUsed || 0)}</dd>
+                      <dd className="text-sm text-gray-900 dark:text-white">{Number(usage.monthlySmsUsed || 0)}</dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Loaded Minutes (active / total)</dt>
                       <dd className="text-sm text-gray-900 dark:text-white">
-                        {Number(user.usage.loadedMinutesActive || 0)} / {Number(user.usage.loadedMinutesTotal || 0)}
+                        {Number(usage.loadedMinutesActive || 0)} / {Number(usage.loadedMinutesTotal || 0)}
                       </dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Loaded SMS (active / total)</dt>
                       <dd className="text-sm text-gray-900 dark:text-white">
-                        {Number(user.usage.loadedSmsActive || 0)} / {Number(user.usage.loadedSmsTotal || 0)}
+                        {Number(usage.loadedSmsActive || 0)} / {Number(usage.loadedSmsTotal || 0)}
                       </dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Loaded Minutes Expiry</dt>
                       <dd className="text-sm text-gray-900 dark:text-white">
-                        {user.usage.loadedMinutesExpiry
-                          ? new Date(user.usage.loadedMinutesExpiry).toLocaleString()
+                        {usage.loadedMinutesExpiry
+                          ? new Date(usage.loadedMinutesExpiry).toLocaleString()
                           : 'No expiry'}
                       </dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Loaded SMS Expiry</dt>
                       <dd className="text-sm text-gray-900 dark:text-white">
-                        {user.usage.loadedSmsExpiry
-                          ? new Date(user.usage.loadedSmsExpiry).toLocaleString()
+                        {usage.loadedSmsExpiry
+                          ? new Date(usage.loadedSmsExpiry).toLocaleString()
                           : 'No expiry'}
                       </dd>
                     </div>
@@ -724,43 +844,173 @@ function AdminUserDetail() {
               )}
 
               {/* Cost Breakdown */}
-              {user.costs && (
+              {costs && (
                 <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6">
                   <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Cost Breakdown</h2>
                   <dl className="grid grid-cols-2 gap-4">
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Call Costs</dt>
                       <dd className="text-sm font-semibold text-red-600">
-                        ${user.costs?.calls?.totalCost?.toFixed(4) ?? '0.0000'}
+                        ${costs?.calls?.totalCost?.toFixed(4) ?? '0.0000'}
                       </dd>
                       <dd className="text-xs text-gray-500 dark:text-gray-400">
-                        {(user.costs?.calls?.count ?? 0)} calls, {(user.costs?.calls?.totalMinutes ?? 0).toFixed(2)} min
+                        {(costs?.calls?.count ?? 0)} calls, {(costs?.calls?.totalMinutes ?? 0).toFixed(2)} min
                       </dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">SMS Costs</dt>
                       <dd className="text-sm font-semibold text-red-600">
-                        ${user.costs?.sms?.totalCost?.toFixed(4) ?? '0.0000'}
+                        ${costs?.sms?.totalCost?.toFixed(4) ?? '0.0000'}
                       </dd>
                       <dd className="text-xs text-gray-500 dark:text-gray-400">
-                        {(user.costs?.sms?.count ?? 0)} SMS
+                        {(costs?.sms?.count ?? 0)} SMS
                       </dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Number Monthly</dt>
-                      <dd className="text-sm font-semibold text-red-600">${user.costs.phoneNumbers.monthlyCost?.toFixed(2)}/mo</dd>
+                      <dd className="text-sm font-semibold text-red-600">${costs.phoneNumbers.monthlyCost?.toFixed(2)}/mo</dd>
                     </div>
                     <div>
                       <dt className="text-sm text-gray-600 dark:text-gray-400">Number One-Time</dt>
-                      <dd className="text-sm font-semibold text-red-600">${user.costs.phoneNumbers.oneTimeCost?.toFixed(2)}</dd>
+                      <dd className="text-sm font-semibold text-red-600">${costs.phoneNumbers.oneTimeCost?.toFixed(2)}</dd>
                     </div>
                     <div className="col-span-2 pt-2 border-t border-gray-200 dark:border-slate-700">
                       <dt className="text-sm font-medium text-gray-700 dark:text-gray-300">Total Telnyx Cost</dt>
-                      <dd className="text-lg font-bold text-red-600">${user.costs.totalTelnyxCost?.toFixed(4)}</dd>
+                      <dd className="text-lg font-bold text-red-600">${costs.totalTelnyxCost?.toFixed(4)}</dd>
                     </div>
                   </dl>
                 </div>
               )}
+
+              <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Recent Activity</h2>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Recent Calls</h3>
+                    <div className="space-y-2">
+                      {recentCalls.length === 0 && <p className="text-sm text-gray-500 dark:text-gray-400">No recent calls</p>}
+                      {recentCalls.map((call) => (
+                        <div key={call._id} className="rounded border border-gray-200 dark:border-slate-700 px-3 py-2 text-sm">
+                          <div className="font-medium text-gray-900 dark:text-white">{call.phoneNumber || call.toNumber || call.fromNumber || 'Unknown number'}</div>
+                          <div className="text-gray-500 dark:text-gray-400">{call.status || 'unknown'} • {call.createdAt ? new Date(call.createdAt).toLocaleString() : 'Unknown time'}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Recent Messages</h3>
+                    <div className="space-y-2">
+                      {recentMessages.length === 0 && <p className="text-sm text-gray-500 dark:text-gray-400">No recent messages</p>}
+                      {recentMessages.map((message) => (
+                        <div key={message._id} className="rounded border border-gray-200 dark:border-slate-700 px-3 py-2 text-sm">
+                          <div className="font-medium text-gray-900 dark:text-white">{message.to || message.from || message.phoneNumber || 'Unknown number'}</div>
+                          <div className="text-gray-500 dark:text-gray-400">{message.text || message.body || 'No content'}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Custom Package</h2>
+                {customPackage ? (
+                  <dl className="grid grid-cols-2 gap-4">
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Minutes Allowed</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">{customPackage.minutesAllowed}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">SMS Allowed</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">{customPackage.smsAllowed}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Calls Enabled</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">{customPackage.isCallEnabled ? 'Yes' : 'No'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">SMS Enabled</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">{customPackage.isSmsEnabled ? 'Yes' : 'No'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Allowed Countries</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">{(customPackage.allowedCountries || []).join(', ') || 'All'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Blocked Countries</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">{(customPackage.blockedCountries || []).join(', ') || 'None'}</dd>
+                    </div>
+                  </dl>
+                ) : (
+                  <p className="text-sm text-gray-600 dark:text-gray-400">No custom package override configured</p>
+                )}
+                <div className="mt-6 space-y-3 border-t border-gray-200 dark:border-slate-700 pt-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <input
+                      type="number"
+                      min="0"
+                      value={packageMinutes}
+                      onChange={(e) => setPackageMinutes(e.target.value)}
+                      placeholder="Minutes allowed"
+                      className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      value={packageSms}
+                      onChange={(e) => setPackageSms(e.target.value)}
+                      placeholder="SMS allowed"
+                      className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white"
+                    />
+                    <input
+                      type="datetime-local"
+                      value={packageExpiresAt}
+                      onChange={(e) => setPackageExpiresAt(e.target.value)}
+                      className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white"
+                    />
+                    <input
+                      type="text"
+                      value={packageAllowedCountries}
+                      onChange={(e) => setPackageAllowedCountries(e.target.value)}
+                      placeholder="Allowed countries (e.g. ZW,US)"
+                      className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white"
+                    />
+                    <input
+                      type="text"
+                      value={packageBlockedCountries}
+                      onChange={(e) => setPackageBlockedCountries(e.target.value)}
+                      placeholder="Blocked countries (e.g. IN,PK)"
+                      className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white md:col-span-2"
+                    />
+                  </div>
+                  <div className="flex gap-4 text-sm text-gray-700 dark:text-gray-300">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={packageCallsEnabled} onChange={(e) => setPackageCallsEnabled(e.target.checked)} />
+                      Calls enabled
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={packageSmsEnabled} onChange={(e) => setPackageSmsEnabled(e.target.checked)} />
+                      SMS enabled
+                    </label>
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleSaveCustomPackage}
+                      disabled={actionLoading === 'custom-package'}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      Save Custom Package
+                    </button>
+                    <button
+                      onClick={handleClearCustomPackage}
+                      disabled={actionLoading === 'clear-custom-package'}
+                      className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50"
+                    >
+                      Clear Override
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Actions Sidebar */}
@@ -813,6 +1063,13 @@ function AdminUserDetail() {
                     Unsuspend User
                   </button>
                   <button
+                    onClick={handleVerifyEmail}
+                    disabled={actionLoading === 'verify-email' || user.isEmailVerified === true}
+                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    Verify Email
+                  </button>
+                  <button
                     onClick={handleDeleteUser}
                     disabled={deleting}
                     className="w-full px-4 py-2 bg-red-700 text-white rounded-lg hover:bg-red-800 disabled:opacity-50 font-semibold border-2 border-red-800"
@@ -836,10 +1093,33 @@ function AdminUserDetail() {
                 </div>
               </div>
 
-              {user.subscription && (
+              {subscription && (
                 <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6">
                   <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Subscription Actions</h2>
                   <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        value={usageAdjustMinutes}
+                        onChange={(e) => setUsageAdjustMinutes(e.target.value)}
+                        placeholder="Adjust minutes"
+                        className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white"
+                      />
+                      <input
+                        type="number"
+                        value={usageAdjustSms}
+                        onChange={(e) => setUsageAdjustSms(e.target.value)}
+                        placeholder="Adjust SMS"
+                        className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white"
+                      />
+                    </div>
+                    <button
+                      onClick={handleAdjustUsage}
+                      disabled={actionLoading === 'adjust-usage'}
+                      className="w-full px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 disabled:opacity-50"
+                    >
+                      Adjust Usage
+                    </button>
                     <button
                       onClick={() => handleAction('subscription/cancel', { userId: id })}
                       disabled={actionLoading === 'subscription/cancel'}
@@ -947,7 +1227,7 @@ function AdminUserDetail() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-md w-full p-6">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-              {user.subscription ? 'Change Subscription Plan' : 'Assign Subscription Plan'}
+              {subscription ? 'Change Subscription Plan' : 'Assign Subscription Plan'}
             </h2>
             
             <div className="space-y-4">
@@ -1037,13 +1317,13 @@ function AdminUserDetail() {
                   Cancel
                 </button>
                 <button
-                  onClick={user.subscription ? handleChangePlan : handleAssignPlan}
+                  onClick={subscription ? handleChangePlan : handleAssignPlan}
                   disabled={!selectedPlanId || (actionLoading === 'assign-plan' || actionLoading === 'change-plan')}
                   className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                 >
                   {actionLoading === 'assign-plan' || actionLoading === 'change-plan' 
                     ? 'Processing...' 
-                    : user.subscription 
+                    : subscription 
                       ? 'Change Plan' 
                       : 'Assign Plan'}
                 </button>

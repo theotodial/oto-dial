@@ -7,9 +7,250 @@ import PhoneNumber from "../../models/PhoneNumber.js";
 import Call from "../../models/Call.js";
 import SMS from "../../models/SMS.js";
 import TelnyxCost from "../../models/TelnyxCost.js";
+import CustomPackage from "../../models/CustomPackage.js";
 import { getActiveAddonAmounts } from "../../services/subscriptionAddonCreditService.js";
+import {
+  clearAdminUsersCache,
+  readAdminUsersCache,
+  writeAdminUsersCache,
+} from "../../services/adminUsersCacheService.js";
+import {
+  applyCustomPackageToSubscription,
+  getActiveCustomPackage,
+} from "../../services/customPackageService.js";
+import { buildPublicSubscriptionState } from "../../services/subscriptionService.js";
 
 const router = express.Router();
+const ACTIVE_ADMIN_SUBSCRIPTION_STATUSES = [
+  "active",
+  "trialing",
+  "pending_activation",
+  "past_due",
+  "incomplete",
+];
+
+function hasUserLevelSubscriptionState(user = {}) {
+  return (
+    user?.subscriptionActive === true ||
+    Boolean(user?.activeSubscriptionId) ||
+    Boolean(user?.currentPlanId)
+  );
+}
+
+function escapeRegex(value = "") {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildAdminUserListQuery(search = "") {
+  const trimmed = String(search || "").trim();
+  if (!trimmed) return {};
+  if (/^[0-9a-fA-F]{24}$/.test(trimmed)) {
+    return { _id: trimmed };
+  }
+  const anchored = new RegExp(`^${escapeRegex(trimmed)}`, "i");
+  return {
+    $or: [
+      { email: anchored },
+      { name: anchored },
+      { firstName: anchored },
+      { lastName: anchored },
+    ],
+  };
+}
+
+function buildAdminUserFilterMatch(filter = "all") {
+  const normalized = String(filter || "all").trim().toLowerCase();
+
+  if (normalized === "active") {
+    return {
+      $or: [
+        { "subscription.status": { $in: ACTIVE_ADMIN_SUBSCRIPTION_STATUSES } },
+        { customPackage: { $ne: null } },
+        { subscriptionActive: true },
+        { activeSubscriptionId: { $ne: null } },
+        { currentPlanId: { $ne: null } },
+      ],
+    };
+  }
+
+  if (normalized === "no_subscription") {
+    return {
+      subscription: null,
+      customPackage: null,
+      subscriptionActive: { $ne: true },
+      activeSubscriptionId: null,
+      currentPlanId: null,
+      status: { $nin: ["suspended", "banned"] },
+    };
+  }
+
+  if (normalized === "blocked") {
+    return {
+      status: { $in: ["suspended", "banned"] },
+    };
+  }
+
+  return null;
+}
+
+function buildUsageSummary(subscription) {
+  if (!subscription) return null;
+  const addonCredits = getActiveAddonAmounts(subscription);
+  return {
+    loadedSmsTotal: addonCredits.smsTotal,
+    loadedSmsActive: addonCredits.smsActive,
+    loadedSmsExpiry: addonCredits.smsExpiry,
+    loadedMinutesTotal: addonCredits.minutesTotal,
+    loadedMinutesActive: addonCredits.minutesActive,
+    loadedMinutesExpiry: addonCredits.minutesExpiry,
+    monthlySmsUsed: Number(subscription.usage?.smsUsed || 0),
+    monthlyMinutesUsed: Number(subscription.usage?.minutesUsed || 0) / 60,
+    dailySmsUsed: Number(subscription.dailySmsUsed || 0),
+    dailyMinutesUsed: Number(subscription.dailyMinutesUsed || 0) / 60,
+    monthlySmsLimit:
+      subscription.monthlySmsLimit ?? subscription.limits?.smsTotal ?? null,
+    monthlyMinutesLimit:
+      subscription.monthlyMinutesLimit ?? subscription.limits?.minutesTotal ?? null,
+    dailySmsLimit: subscription.dailySmsLimit ?? null,
+    dailyMinutesLimit: subscription.dailyMinutesLimit ?? null,
+  };
+}
+
+function buildSubscriptionFromLookup(subscription, customPackage) {
+  if (!subscription && !customPackage) {
+    return null;
+  }
+
+  return buildPublicSubscriptionState(
+    applyCustomPackageToSubscription(
+      subscription
+        ? {
+            _id: subscription._id,
+            id: subscription._id,
+            active:
+              subscription.status === "active" ||
+              subscription.status === "trialing" ||
+              subscription.status === "pending_activation" ||
+              subscription.status === "past_due",
+            status: subscription.status,
+            planName: subscription.planName || subscription.planKey || "Active Plan",
+            planType: subscription.planType || null,
+            displayUnlimited: Boolean(subscription.displayUnlimited),
+            isUnlimited: Boolean(subscription.displayUnlimited),
+            minutesRemaining: Math.max(
+              0,
+              Number(subscription.limits?.minutesTotal || 0) -
+                Number(subscription.usage?.minutesUsed || 0) / 60
+            ),
+            smsRemaining: Math.max(
+              0,
+              Number(subscription.limits?.smsTotal || 0) -
+                Number(subscription.usage?.smsUsed || 0)
+            ),
+            usage: subscription.usage,
+            limits: subscription.limits,
+            periodStart: subscription.periodStart || null,
+            periodEnd: subscription.periodEnd || null,
+          }
+        : null,
+      customPackage
+    )
+  );
+}
+
+function buildSubscriptionFromUserFallback(user, customPackage) {
+  if (!hasUserLevelSubscriptionState(user) && !customPackage) {
+    return null;
+  }
+
+  const minutesTotal = Number(user?.currentSubscriptionLimits?.minutesTotal || 0);
+  const smsTotal = Number(user?.currentSubscriptionLimits?.smsTotal || 0);
+  const minutesUsed = Number(user?.minutesUsed || 0);
+  const smsUsed = Number(user?.smsUsed || 0);
+
+  return buildPublicSubscriptionState(
+    applyCustomPackageToSubscription(
+      {
+        id: user?.activeSubscriptionId || user?._id,
+        _id: user?.activeSubscriptionId || user?._id,
+        active: hasUserLevelSubscriptionState(user),
+        status: "active",
+        planName: user?.plan || "Admin Assigned Plan",
+        planType: "admin_assigned",
+        isUnlimited: false,
+        displayUnlimited: false,
+        minutesRemaining: Math.max(0, minutesTotal - minutesUsed),
+        smsRemaining: Math.max(0, smsTotal - smsUsed),
+        limits: {
+          minutesTotal,
+          smsTotal,
+          numbersTotal: Number(user?.currentSubscriptionLimits?.numbersTotal || 0),
+        },
+        usage: {
+          minutesUsed,
+          smsUsed,
+        },
+        periodStart: null,
+        periodEnd: null,
+      },
+      customPackage
+    )
+  );
+}
+
+async function loadEffectiveSubscriptionForAdmin(userId) {
+  const [subscriptionDoc, customPackage] = await Promise.all([
+    Subscription.findOne({
+      userId,
+      status: { $in: ["active", "trialing", "pending_activation", "past_due", "incomplete"] },
+    })
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .lean(),
+    getActiveCustomPackage(userId),
+  ]);
+
+  if (!subscriptionDoc && !customPackage) {
+    return { subscriptionDoc: null, customPackage: null, effectiveSubscription: null };
+  }
+
+  const effectiveSubscription = buildPublicSubscriptionState(
+    applyCustomPackageToSubscription(
+      subscriptionDoc
+        ? {
+            _id: subscriptionDoc._id,
+            id: subscriptionDoc._id,
+            active:
+              subscriptionDoc.status === "active" ||
+              subscriptionDoc.status === "trialing" ||
+              subscriptionDoc.status === "pending_activation" ||
+              subscriptionDoc.status === "past_due",
+            status: subscriptionDoc.status,
+            planName: subscriptionDoc.planName || subscriptionDoc.planKey || "Active Plan",
+            planType: subscriptionDoc.planType || null,
+            displayUnlimited: Boolean(subscriptionDoc.displayUnlimited),
+            isUnlimited: Boolean(subscriptionDoc.displayUnlimited),
+            minutesRemaining: Math.max(
+              0,
+              Number(subscriptionDoc.limits?.minutesTotal || 0) -
+                Number(subscriptionDoc.usage?.minutesUsed || 0) / 60
+            ),
+            smsRemaining: Math.max(
+              0,
+              Number(subscriptionDoc.limits?.smsTotal || 0) -
+                Number(subscriptionDoc.usage?.smsUsed || 0)
+            ),
+            usage: subscriptionDoc.usage,
+            limits: subscriptionDoc.limits,
+            periodStart: subscriptionDoc.periodStart || null,
+            periodEnd: subscriptionDoc.periodEnd || null,
+          }
+        : null,
+      customPackage
+    )
+  );
+
+  return { subscriptionDoc, customPackage, effectiveSubscription };
+}
 
 /**
  * GET /api/admin/users
@@ -21,132 +262,290 @@ router.get(
   async (req, res) => {
     try {
       const page = parseInt(req.query.page, 10) || 1;
-      const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
+      const limit = Math.min(parseInt(req.query.limit, 10) || 20, 20);
       const search = req.query.search || "";
+      const filter = String(req.query.filter || "all").trim().toLowerCase();
       const skip = (page - 1) * limit;
-
-      // Build search query
-      let query = {};
-      if (search) {
-        query = {
-          $or: [
-            { email: { $regex: search, $options: "i" } },
-            { name: { $regex: search, $options: "i" } },
-            { firstName: { $regex: search, $options: "i" } },
-            { lastName: { $regex: search, $options: "i" } }
-          ]
-        };
+      const query = buildAdminUserListQuery(search);
+      const filterMatch = buildAdminUserFilterMatch(filter);
+      const cacheKey = JSON.stringify({
+        page,
+        limit,
+        filter,
+        search: String(search || "").trim().toLowerCase(),
+      });
+      const cached = readAdminUsersCache(cacheKey);
+      if (cached) {
+        return res.json(cached);
       }
 
-      // Get users with pagination
-      const [users, total] = await Promise.all([
-        User.find(query)
-          .select("-password")
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(limit)
-          .lean(),
-        User.countDocuments(query)
-      ]);
-
-      const userIds = users.map((u) => u._id);
-
-      const [subscriptions, phoneRows, costAgg] = await Promise.all([
-        Subscription.find({
-          userId: { $in: userIds },
-          status: "active"
-        })
-          .sort({ updatedAt: -1 })
-          .select("userId status planName planKey displayUnlimited")
-          .lean(),
-        PhoneNumber.find({ userId: { $in: userIds } })
-          .select("userId phoneNumber")
-          .lean(),
-        userIds.length
-          ? TelnyxCost.aggregate([
-              { $match: { userId: { $in: userIds } } },
+      const basePipeline = [
+        { $match: query },
+        {
+          $lookup: {
+            from: "subscriptions",
+            let: { userId: "$_id" },
+            pipeline: [
               {
-                $group: {
-                  _id: { userId: "$userId", resourceType: "$resourceType" },
-                  totalCost: { $sum: "$totalCostUsd" }
+                $match: {
+                  $expr: { $eq: ["$userId", "$$userId"] },
+                  status: { $in: ["active", "trialing", "pending_activation", "past_due", "incomplete"] }
+                }
+              },
+              { $sort: { updatedAt: -1, createdAt: -1 } },
+              { $limit: 1 },
+              {
+                $project: {
+                  _id: 1,
+                  userId: 1,
+                  status: 1,
+                  planName: 1,
+                  planKey: 1,
+                  planType: 1,
+                  displayUnlimited: 1,
+                  limits: 1,
+                  usage: 1,
+                  periodStart: 1,
+                  periodEnd: 1
                 }
               }
-            ])
-          : Promise.resolve([])
+            ],
+            as: "subscription"
+          }
+        },
+        {
+          $lookup: {
+            from: "custompackages",
+            let: { userId: "$_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ["$userId", "$$userId"] },
+                  active: true,
+                  $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }]
+                }
+              },
+              { $sort: { updatedAt: -1, createdAt: -1 } },
+              { $limit: 1 },
+              {
+                $project: {
+                  _id: 1,
+                  userId: 1,
+                  minutesAllowed: 1,
+                  smsAllowed: 1,
+                  expiresAt: 1,
+                  isCallEnabled: 1,
+                  isSmsEnabled: 1,
+                  allowedCountries: 1,
+                  blockedCountries: 1,
+                  overridePlan: 1,
+                  active: 1
+                }
+              }
+            ],
+            as: "customPackage"
+          }
+        },
+        {
+          $project: {
+            _id: 1,
+            email: 1,
+            name: 1,
+            firstName: 1,
+            lastName: 1,
+            status: 1,
+            isEmailVerified: 1,
+            createdAt: 1,
+            plan: 1,
+            subscriptionActive: 1,
+            activeSubscriptionId: 1,
+            currentPlanId: 1,
+            currentSubscriptionLimits: 1,
+            minutesUsed: 1,
+            smsUsed: 1,
+            subscription: { $arrayElemAt: ["$subscription", 0] },
+            customPackage: { $arrayElemAt: ["$customPackage", 0] }
+          }
+        }
+      ];
+
+      if (filterMatch) {
+        basePipeline.push({ $match: filterMatch });
+      }
+
+      const [users, totalRows] = await Promise.all([
+        User.aggregate([
+          ...basePipeline,
+          { $sort: { createdAt: -1 } },
+          { $skip: skip },
+          { $limit: limit },
+        ]),
+        User.aggregate([
+          ...basePipeline,
+          { $count: "total" },
+        ]),
       ]);
 
-      const subByUser = new Map();
-      for (const s of subscriptions) {
-        const k = String(s.userId);
-        if (!subByUser.has(k)) subByUser.set(k, s);
-      }
-
-      const phonesByUser = new Map();
-      for (const p of phoneRows) {
-        const k = String(p.userId);
-        if (!phonesByUser.has(k)) phonesByUser.set(k, []);
-        phonesByUser.get(k).push(p.phoneNumber);
-      }
-
-      const costsByUser = new Map();
-      for (const row of costAgg) {
-        const uid = String(row._id.userId);
-        if (!costsByUser.has(uid)) {
-          costsByUser.set(uid, { call: 0, sms: 0, number: 0 });
-        }
-        const bucket = costsByUser.get(uid);
-        const rt = row._id.resourceType;
-        if (rt === "call") bucket.call += row.totalCost || 0;
-        else if (rt === "sms") bucket.sms += row.totalCost || 0;
-        else if (rt === "number") bucket.number += row.totalCost || 0;
-      }
+      const total = Number(totalRows[0]?.total || 0);
 
       const usersWithSubs = users.map((user) => {
-        const uid = String(user._id);
-        const subscription = subByUser.get(uid);
-        const phoneNumbers = phonesByUser.get(uid) || [];
-        const costs = costsByUser.get(uid) || { call: 0, sms: 0, number: 0 };
-        const callCosts = costs.call;
-        const smsCosts = costs.sms;
-        const numberCosts = costs.number;
-        const totalCost = callCosts + smsCosts + numberCosts;
+        const effectiveSubscription =
+          buildSubscriptionFromLookup(user.subscription || null, user.customPackage || null) ||
+          buildSubscriptionFromUserFallback(user, user.customPackage || null);
 
         return {
-          ...user,
+          _id: user._id,
           id: user._id,
-          identity: {
-            email: user.email,
-            name: user.name || `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
-            accountStatus: user.status || "active"
+          email: user.email,
+          name: user.name || `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+          status: user.status || "active",
+          isEmailVerified: user.isEmailVerified !== false,
+          createdAt: user.createdAt,
+          subscription: effectiveSubscription,
+          customPackage: user.customPackage || null,
+          usage: {
+            minutesUsed: Number(user.subscription?.usage?.minutesUsed || 0) / 60,
+            smsUsed: Number(user.subscription?.usage?.smsUsed || 0),
           },
-          subscriptionStatus: subscription?.status || "none",
-          subscriptionPlan:
-            subscription?.planName ||
-            subscription?.planKey ||
-            (subscription?.displayUnlimited ? "Unlimited" : "none"),
-          phoneNumbers,
-          costs: {
-            totalTelnyxCost: totalCost,
-            telnyxCallCost: callCosts,
-            telnyxSmsCost: smsCosts,
-            telnyxNumberCost: numberCosts
-          }
+          subscriptionStatus: effectiveSubscription?.status || "none",
+          subscriptionPlan: effectiveSubscription?.planName || "none",
         };
       });
 
-      res.json({
+      const payload = {
         success: true,
         users: usersWithSubs,
+        total,
+        page,
+        pages: Math.max(1, Math.ceil(total / limit)),
         pagination: {
           page,
           limit,
           total,
-          pages: Math.ceil(total / limit)
-        }
-      });
+          pages: Math.max(1, Math.ceil(total / limit))
+        },
+      };
+      writeAdminUsersCache(cacheKey, payload);
+      res.json(payload);
     } catch (err) {
       console.error("Get users error:", err);
       res.status(500).json({ error: "Failed to fetch users" });
+    }
+  }
+);
+
+router.get(
+  "/:id/details",
+  authenticateUser,
+  async (req, res) => {
+    try {
+      const [user, subscriptionDoc, customPackage, recentCalls, recentMessages] = await Promise.all([
+        User.findById(req.params.id)
+          .select("_id email name firstName lastName status createdAt isEmailVerified")
+          .lean(),
+        Subscription.findOne({
+          userId: req.params.id,
+          status: { $in: ["active", "trialing", "pending_activation", "past_due", "incomplete"] }
+        })
+          .sort({ updatedAt: -1, createdAt: -1 })
+          .select("status planName planKey planType displayUnlimited limits usage periodStart periodEnd dailySmsUsed dailyMinutesUsed monthlySmsLimit monthlyMinutesLimit dailySmsLimit dailyMinutesLimit")
+          .lean(),
+        CustomPackage.findOne({
+          userId: req.params.id,
+          active: true,
+          $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }]
+        })
+          .sort({ updatedAt: -1, createdAt: -1 })
+          .select("minutesAllowed smsAllowed expiresAt isCallEnabled isSmsEnabled allowedCountries blockedCountries overridePlan active")
+          .lean(),
+        Call.find({ user: req.params.id })
+          .select("phoneNumber fromNumber toNumber direction status createdAt duration")
+          .sort({ createdAt: -1 })
+          .limit(20)
+          .lean(),
+        SMS.find({ user: req.params.id })
+          .select("to from phoneNumber text body status createdAt")
+          .sort({ createdAt: -1 })
+          .limit(20)
+          .lean()
+      ]);
+
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const [phoneNumbers, costs] = await Promise.all([
+        PhoneNumber.find({ userId: user._id })
+          .select("phoneNumber status monthlyCost carrierGroup country regionInformation")
+          .lean(),
+        TelnyxCost.aggregate([
+          { $match: { userId: user._id } },
+          {
+            $group: {
+              _id: "$resourceType",
+              totalCost: { $sum: "$totalCostUsd" },
+              count: { $sum: 1 },
+              totalUnits: { $sum: "$units" }
+            }
+          }
+        ]),
+      ]);
+
+      const callCostGroup = costs.find((c) => c._id === "call") || {};
+      const smsCostGroup = costs.find((c) => c._id === "sms") || {};
+      const numberCostGroup = costs.find((c) => c._id === "number") || {};
+      const primaryNumber = phoneNumbers[0] || {};
+      const effectiveSubscription = buildSubscriptionFromLookup(subscriptionDoc, customPackage);
+      const usage = buildUsageSummary(subscriptionDoc);
+
+      return res.json({
+        success: true,
+        user: {
+          _id: user._id,
+          id: user._id,
+          email: user.email,
+          status: user.status || "active",
+          isEmailVerified: user.isEmailVerified !== false,
+          createdAt: user.createdAt,
+          identity: {
+            id: user._id,
+            email: user.email,
+            name: user.name || `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+            accountStatus: user.status || "active",
+            country: primaryNumber.country || primaryNumber.regionInformation?.country || "N/A",
+            createdAt: user.createdAt,
+            isEmailVerified: user.isEmailVerified !== false,
+          },
+          phoneNumbers,
+        },
+        subscription: effectiveSubscription,
+        customPackage: customPackage || null,
+        usage,
+        recentCalls,
+        recentMessages,
+        costs: {
+          calls: {
+            totalCost: callCostGroup.totalCost || 0,
+            count: callCostGroup.count || 0,
+            totalMinutes: callCostGroup.totalUnits ? (callCostGroup.totalUnits / 60) : 0
+          },
+          sms: {
+            totalCost: smsCostGroup.totalCost || 0,
+            count: smsCostGroup.count || 0
+          },
+          phoneNumbers: {
+            monthlyCost: numberCostGroup.totalCost || 0,
+            oneTimeCost: 0
+          },
+          totalTelnyxCost:
+            (callCostGroup.totalCost || 0) +
+            (smsCostGroup.totalCost || 0) +
+            (numberCostGroup.totalCost || 0)
+        },
+      });
+    } catch (err) {
+      console.error("Get user details error:", err);
+      return res.status(500).json({ error: "Failed to fetch user details" });
     }
   }
 );
@@ -322,6 +721,8 @@ router.post(
         lastName: lastName || ""
       });
 
+      clearAdminUsersCache();
+
       res.json({
         success: true,
         user: {
@@ -382,6 +783,8 @@ router.delete(
         // Delete user
         User.findByIdAndDelete(userId)
       ]);
+
+      clearAdminUsersCache();
 
       console.log(`✅ User ${userId} and all associated data deleted by admin ${req.user._id}`);
 

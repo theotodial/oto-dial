@@ -140,7 +140,7 @@ function Recents() {
   const auth = useAuth();
   const user = auth?.user ?? null;
   const navigate = useNavigate();
-  const { subscription } = useSubscription();
+  const { subscription, hydrated: subscriptionHydrated } = useSubscription();
   
   // WebRTC call context - with safe defaults
   const callContext = useCall();
@@ -174,7 +174,8 @@ function Recents() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [userNumbers, setUserNumbers] = useState([]);
   const [dialCountryCode, setDialCountryCode] = useState('+1');
-  const subscriptionActive = Boolean(subscription && subscription.planName !== 'No Plan');
+  const subscriptionKnown = subscriptionHydrated;
+  const subscriptionActive = Boolean(subscription?.active);
   const subscriptionData = {
     remainingSMS: subscription?.smsRemaining || 0,
     minutesRemaining: subscription?.minutesRemaining ?? 0,
@@ -264,10 +265,10 @@ function Recents() {
   }, [chatMessages]);
   
   useEffect(() => {
-    if (!loading && subscription && subscription.planName === 'No Plan') {
+    if (!loading && subscriptionKnown && subscription && !subscription.active) {
       navigate('/dashboard', { replace: true });
     }
-  }, [loading, navigate, subscription]);
+  }, [loading, navigate, subscription, subscriptionKnown]);
 
   // Fetch user numbers - MUST be before conditional returns
   useEffect(() => {
@@ -1438,10 +1439,10 @@ function Recents() {
         <div className="flex w-72 flex-shrink-0 flex-col bg-gray-50 dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 min-h-0 overflow-hidden relative xl:w-80">
             <>
           {isLgDesktopVoice && <ActiveCallChrome isDesktop dockMode />}
-          {(!subscriptionActive || userNumbers.length === 0) && (
+          {((subscriptionKnown && !subscriptionActive) || userNumbers.length === 0) && (
             <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 flex-shrink-0">
               <p className="text-xs text-amber-700 dark:text-amber-300">
-                {!subscriptionActive && '⚠️ No active subscription. '}
+                {subscriptionKnown && !subscriptionActive && '⚠️ No active subscription. '}
                 {userNumbers.length === 0 && '⚠️ No phone number purchased.'}
               </p>
             </div>
@@ -1957,10 +1958,10 @@ function Recents() {
             <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900 relative min-h-0">
               <ActiveCallChrome isDesktop={false} dockMode />
               {/* Debug Info - Shows why calling might be blocked */}
-              {(!subscriptionActive || userNumbers.length === 0) && (
+              {((subscriptionKnown && !subscriptionActive) || userNumbers.length === 0) && (
                 <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800">
                   <p className="text-xs text-amber-700 dark:text-amber-300">
-                    {!subscriptionActive && '⚠️ No active subscription. '}
+                    {subscriptionKnown && !subscriptionActive && '⚠️ No active subscription. '}
                     {userNumbers.length === 0 && '⚠️ No phone number purchased.'}
                   </p>
                 </div>

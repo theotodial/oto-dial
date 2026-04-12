@@ -1,105 +1,23 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { createContext, useContext, useCallback } from "react";
 import API from "../api";
+import {
+  buildLoginFallbackPayload,
+  inactiveSubscriptionBootstrap,
+  useAppState,
+} from "./AppStateContext";
 
 const AuthContext = createContext(null);
 
-const USER_CACHE_KEY = "otodial_user_cache_v1";
-
 export function AuthProvider({ children }) {
-  const navigate = useNavigate();
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  const persistUserCache = useCallback((t, u) => {
-    const id = u?.id || u?._id;
-    if (!t || !id) return;
-    try {
-      localStorage.setItem(
-        USER_CACHE_KEY,
-        JSON.stringify({
-          tokenTail: String(t).slice(-16),
-          user: { ...u, id: String(id) }
-        })
-      );
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const fetchUserFromApi = useCallback(async () => {
-    const t = localStorage.getItem("token");
-    if (!t) return null;
-    const res = await API.get("/api/users/me");
-    if (res.error || !res.data?.user) return null;
-    const u = res.data.user;
-    persistUserCache(t, u);
-    return u;
-  }, [persistUserCache]);
-
-  const refreshUser = useCallback(async () => {
-    const u = await fetchUserFromApi();
-    if (u) setUser((prev) => ({ ...prev, ...u }));
-  }, [fetchUserFromApi]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const storedToken = localStorage.getItem("token");
-      if (storedToken) {
-        setToken(storedToken);
-        try {
-          const raw = localStorage.getItem(USER_CACHE_KEY);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            const tail = String(storedToken).slice(-16);
-            if (parsed?.tokenTail === tail && parsed?.user) {
-              setUser(parsed.user);
-            }
-          }
-        } catch {
-          /* ignore */
-        }
-        const u = await fetchUserFromApi();
-        if (!cancelled) {
-          setUser(u || {});
-          if (!u) {
-            try {
-              localStorage.removeItem(USER_CACHE_KEY);
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-      } else if (!cancelled) {
-        setUser(null);
-      }
-      if (!cancelled) setLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchUserFromApi]);
-
-  const setAuthFromToken = (newToken, userData = {}) => {
-    if (!newToken) return;
-    localStorage.removeItem("adminToken");
-    localStorage.removeItem("adminProfile");
-    localStorage.setItem("token", newToken);
-    setToken(newToken);
-    const id = userData.id || userData._id;
-    const merged = {
-      ...userData,
-      ...(id ? { id: String(id) } : {}),
-      isEmailVerified:
-        userData.isEmailVerified !== undefined
-          ? userData.isEmailVerified
-          : true,
-    };
-    setUser(merged);
-    persistUserCache(newToken, merged);
-  };
+  const {
+    token,
+    user,
+    isReady,
+    isRefreshing,
+    setAuthToken,
+    clearAppState,
+    refetchBootstrap,
+  } = useAppState();
 
   const login = async (email, password) => {
     const response = await API.post("/api/auth/login", { email, password });
@@ -109,16 +27,42 @@ export function AuthProvider({ children }) {
     }
 
     if (response.data?.token) {
-      localStorage.removeItem("adminToken");
-      localStorage.removeItem("adminProfile");
-      localStorage.setItem("token", response.data.token);
-      setToken(response.data.token);
-      const userData = response.data?.user || { email };
-      setUser(userData);
-      persistUserCache(response.data.token, userData);
+      const newToken = response.data.token;
+      const rawUser = response.data?.user || { email };
+      setAuthToken(newToken);
+      try {
+        await refetchBootstrap();
+      } catch (err) {
+        console.warn(
+          "[auth] Bootstrap failed after login; keeping session from login response:",
+          err?.message || err
+        );
+        let fallback = buildLoginFallbackPayload(rawUser);
+        if (!fallback) {
+          const me = await API.get("/api/users/me");
+          if (!me.error && me.data?.user) {
+            fallback = buildLoginFallbackPayload(me.data.user);
+          }
+        }
+        if (fallback) {
+          setAuthToken(newToken, fallback);
+        } else {
+          setAuthToken(newToken, {
+            success: true,
+            user: {
+              _id: "pending",
+              id: "pending",
+              name: "",
+              email: typeof rawUser?.email === "string" ? rawUser.email : "",
+              isEmailVerified: true,
+            },
+            subscription: inactiveSubscriptionBootstrap(),
+          });
+        }
+      }
       return {
         success: true,
-        user: userData,
+        user: response.data?.user || { email },
         sessionInfo: response.data?.sessionInfo || null,
       };
     }
@@ -140,16 +84,42 @@ export function AuthProvider({ children }) {
     }
 
     if (response.data?.token) {
-      localStorage.removeItem("adminToken");
-      localStorage.removeItem("adminProfile");
-      localStorage.setItem("token", response.data.token);
-      setToken(response.data.token);
-      const userData = response.data?.user || { email, ...additionalData };
-      setUser(userData);
-      persistUserCache(response.data.token, userData);
+      const newToken = response.data.token;
+      const rawUser = response.data?.user || { email, ...additionalData };
+      setAuthToken(newToken);
+      try {
+        await refetchBootstrap();
+      } catch (err) {
+        console.warn(
+          "[auth] Bootstrap failed after signup; keeping session from signup response:",
+          err?.message || err
+        );
+        let fallback = buildLoginFallbackPayload(rawUser);
+        if (!fallback) {
+          const me = await API.get("/api/users/me");
+          if (!me.error && me.data?.user) {
+            fallback = buildLoginFallbackPayload(me.data.user);
+          }
+        }
+        if (fallback) {
+          setAuthToken(newToken, fallback);
+        } else {
+          setAuthToken(newToken, {
+            success: true,
+            user: {
+              _id: "pending",
+              id: "pending",
+              name: "",
+              email: typeof rawUser?.email === "string" ? rawUser.email : "",
+              isEmailVerified: true,
+            },
+            subscription: inactiveSubscriptionBootstrap(),
+          });
+        }
+      }
       return {
         success: true,
-        user: userData,
+        user: response.data?.user || { email, ...additionalData },
         requiresEmailVerification: Boolean(response.data?.requiresEmailVerification),
         verificationEmailSent: response.data?.verificationEmailSent,
         message: response.data?.message,
@@ -159,33 +129,30 @@ export function AuthProvider({ children }) {
     return { success: false, error: "No token received" };
   };
 
-  const logout = () => {
-    localStorage.removeItem("token");
-    try {
-      localStorage.removeItem(USER_CACHE_KEY);
-    } catch {
-      /* ignore */
-    }
-    setToken(null);
-    setUser(null);
-    navigate("/login", { replace: true });
-  };
+  const logout = useCallback(() => {
+    setAuthToken(null);
+    clearAppState();
+  }, [clearAppState, setAuthToken]);
 
   return (
     <AuthContext.Provider
       value={{
         user,
         token,
-        loading,
+        loading: isRefreshing && !isReady,
+        hydrated: Boolean(isReady && user),
         isAuthenticated: !!token,
         login,
         signup,
         logout,
-        setAuthFromToken,
-        refreshUser,
+        setAuthFromToken: setAuthToken,
+        refreshUser: async () => {
+          const data = await refetchBootstrap();
+          return data?.user || null;
+        },
       }}
     >
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 }

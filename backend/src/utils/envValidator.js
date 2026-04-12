@@ -51,6 +51,7 @@ const optionalEnvVars = {
   // Do NOT put human-readable descriptions here — validateEnv assigns these to process.env when unset.
   RESEND_API_KEY: '',
   RESEND_FROM: '',
+  RESEND_FALLBACK_FROM: '',
   RESEND_REPLY_TO: '',
   APP_URL: '',
   PRICING_ONBOARDING_EMAIL_DELAY_MS: '',

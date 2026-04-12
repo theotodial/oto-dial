@@ -3,17 +3,21 @@ import "./loadEnv.js";
 
 import express from "express";
 import cors from "cors";
+import http from "http";
 import passport from "passport";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { Server as SocketIOServer } from "socket.io";
 
 import connectDB from "./config/db.js";
 import { getTelnyx } from "./config/telnyx.js";
 import { validateEnv } from "./src/utils/envValidator.js";
 import { sendEmailSafe, logResendConfigAtStartup } from "./src/services/email.service.js";
+import { configureAdminLiveEvents } from "./src/services/adminLiveEventsService.js";
 import { ensureStripeCatalogConsistency } from "./src/services/stripeCatalogBootstrapService.js";
 import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
+import { startSystemHealthService } from "./src/services/systemHealthService.js";
 import Subscription from "./src/models/Subscription.js";
 import SMS from "./src/models/SMS.js";
 import Contact from "./src/models/Contact.js";
@@ -73,6 +77,7 @@ import supportRoutes from "./src/routes/supportRoutes.js";
 import blogRoutes from "./src/routes/blogRoutes.js";
 import analyticsRoutes from "./src/routes/analyticsRoutes.js";
 import sitePublicRoutes from "./src/routes/sitePublic.js";
+import appBootstrapRoutes from "./src/routes/appBootstrap.js";
 import NotFoundLog from "./src/models/NotFoundLog.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
@@ -80,6 +85,11 @@ import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
 import telnyxWebhookRoutes from "./src/routes/webhooks/telnyx.js";
 
 const app = express();
+const server = http.createServer(app);
+const io = new SocketIOServer(server, {
+  cors: { origin: true, credentials: true },
+});
+configureAdminLiveEvents(io);
 const PORT = process.env.PORT || 5000;
 const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || "25mb";
 const __filename = fileURLToPath(import.meta.url);
@@ -371,6 +381,7 @@ app.use("/api/site", sitePublicRoutes);
 // PROTECTED
 // ========================
 app.use("/api/users", authenticateUser, loadSubscription, userRoutes);
+app.use("/api/app", authenticateUser, appBootstrapRoutes);
 // Public plan & add-on catalog (no auth)
 app.use("/api/subscription", subscriptionCatalogRoutes);
 // Subscription GET handlers load their own lean doc — skip loadSubscription to avoid duplicate DB + phone scans
@@ -484,28 +495,37 @@ app.use((err, req, res, next) => {
 // START
 // ========================
 async function ensurePerformanceIndexes() {
-  await Promise.all([
-    Subscription.collection.createIndex(
-      { userId: 1, createdAt: -1 },
-      { name: "userId_1_createdAt_-1", background: true }
-    ),
-    SMS.collection.createIndex(
-      { user: 1, createdAt: -1 },
-      { name: "user_1_createdAt_-1", background: true }
-    ),
-    SMS.collection.createIndex(
-      { user: 1, direction: 1, createdAt: -1 },
-      { name: "user_1_direction_1_createdAt_-1", background: true }
-    ),
-    Contact.collection.createIndex(
-      { userId: 1, name: 1 },
-      { name: "userId_1_name_1", background: true }
-    ),
-    Call.collection.createIndex(
-      { user: 1, createdAt: -1 },
-      { name: "user_1_createdAt_-1", background: true }
-    ),
-  ]);
+  const tasks = [
+    () =>
+      Subscription.collection.createIndex(
+        { userId: 1, createdAt: -1 },
+        { name: "userId_1_createdAt_-1", background: true }
+      ),
+    () =>
+      SMS.collection.createIndex(
+        { user: 1, createdAt: -1 },
+        { name: "user_1_createdAt_-1", background: true }
+      ),
+    () =>
+      SMS.collection.createIndex(
+        { user: 1, direction: 1, createdAt: -1 },
+        { name: "user_1_direction_1_createdAt_-1", background: true }
+      ),
+    () =>
+      Contact.collection.createIndex(
+        { userId: 1, name: 1 },
+        { name: "userId_1_name_1", background: true }
+      ),
+    () =>
+      Call.collection.createIndex(
+        { user: 1, createdAt: -1 },
+        { name: "user_1_createdAt_-1", background: true }
+      ),
+  ];
+
+  for (const task of tasks) {
+    await task();
+  }
   console.log("[MongoDB] Performance indexes synced");
 }
 
@@ -513,7 +533,11 @@ async function startServer() {
   try {
     await connectDB();
     console.log("✅ Database connected");
-    await ensurePerformanceIndexes();
+    try {
+      await ensurePerformanceIndexes();
+    } catch (indexErr) {
+      console.error("⚠️ Performance index sync failed:", indexErr.message);
+    }
 
     try {
       const catalogFix = await ensureStripeCatalogConsistency();
@@ -532,7 +556,13 @@ async function startServer() {
       console.error("⚠️ Subscription reconciliation scheduler failed to start:", reconciliationErr.message);
     }
 
-    app.listen(PORT, () => {
+    try {
+      startSystemHealthService();
+    } catch (healthErr) {
+      console.error("⚠️ System health service failed to start:", healthErr.message);
+    }
+
+    server.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
   } catch (err) {

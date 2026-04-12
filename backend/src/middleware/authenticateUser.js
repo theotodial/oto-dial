@@ -6,22 +6,32 @@ import {
   setCachedJson,
 } from "../services/cache.service.js";
 
-const USER_CACHE_TTL_SECONDS = 60;
+const USER_CACHE_TTL_SECONDS = 300;
 const USER_SELECT =
   "-password -sessions -__v";
+
+async function fetchFreshUserById(userId) {
+  const user = await User.findById(userId)
+    .select(USER_SELECT)
+    .maxTimeMS(200)
+    .lean();
+  if (user) {
+    await setCachedJson(cacheKeys.userProfile(userId), user, USER_CACHE_TTL_SECONDS);
+  }
+  return user;
+}
 
 async function getCachedUserById(userId) {
   const key = cacheKeys.userProfile(userId);
   const cached = await getCachedJson(key);
   if (cached) {
-    return cached;
+    if (cached.status) {
+      return cached;
+    }
+    console.warn("[auth] Cached user missing status, reloading from DB:", String(userId));
   }
 
-  const user = await User.findById(userId).select(USER_SELECT).lean();
-  if (user) {
-    await setCachedJson(key, user, USER_CACHE_TTL_SECONDS);
-  }
-  return user;
+  return fetchFreshUserById(userId);
 }
 
 const authenticateUser = async (req, res, next) => {
@@ -36,25 +46,29 @@ const authenticateUser = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // Only log errors, not successful auths
-
-    // 1️⃣ Attach userId to request
     req.userId = decoded.userId;
-
-    // 2️⃣ Load user from DB
     const user = await getCachedUserById(req.userId);
 
     if (!user) {
+      console.warn("[auth] User not found for token userId:", String(req.userId));
       return res.status(401).json({ error: "User not found" });
     }
 
     if (user.status !== "active") {
+      console.warn("[auth] User blocked by status check:", {
+        userId: String(req.userId),
+        status: user.status ?? null,
+      });
       return res.status(403).json({
         error: "User is suspended or banned"
       });
     }
 
-    // 3️⃣ Attach user object (VERY useful later)
+    console.log("[auth] AUTH USER:", {
+      userId: String(req.userId),
+      userStatus: user.status,
+      email: user.email,
+    });
     req.user = user;
 
     next();

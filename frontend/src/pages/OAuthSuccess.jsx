@@ -5,25 +5,38 @@ import { useAuth } from '../context/AuthContext';
 function OAuthSuccess() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { setAuthFromToken } = useAuth();
+  const { setAuthFromToken, refreshUser } = useAuth();
 
   useEffect(() => {
-    const token = searchParams.get('token');
+    let cancelled = false;
 
-    if (token) {
-      try {
-        // Set auth state via context and localStorage
-        setAuthFromToken(token, {});
+    const run = async () => {
+      const token = searchParams.get('token');
 
-        navigate('/recents', { replace: true });
-      } catch (e) {
-        console.error('Failed to store OAuth token', e);
+      if (!token) {
         navigate('/login', { replace: true });
+        return;
       }
-    } else {
-      navigate('/login', { replace: true });
-    }
-  }, [searchParams, navigate, setAuthFromToken]);
+
+      try {
+        setAuthFromToken(token);
+        await refreshUser();
+        if (!cancelled) {
+          navigate('/recents', { replace: true });
+        }
+      } catch (e) {
+        console.error('Failed to complete OAuth sign-in', e);
+        if (!cancelled) {
+          navigate('/login', { replace: true });
+        }
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, navigate, setAuthFromToken, refreshUser]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900">

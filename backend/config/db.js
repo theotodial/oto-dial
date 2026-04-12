@@ -57,7 +57,13 @@ const connectDB = async () => {
     await mongoose.disconnect().catch(() => {});
     console.log(`[MongoDB] Connecting (${label}):`, redactUri(uri));
     await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 25_000,
+      maxPoolSize: 50,
+      minPoolSize: 0,
+      maxIdleTimeMS: 300_000,
+      waitQueueTimeoutMS: 10_000,
+      connectTimeoutMS: 5_000,
+      socketTimeoutMS: 30_000,
+      serverSelectionTimeoutMS: 5_000,
       family: 4,
     });
     console.log("MongoDB Connected");
@@ -101,14 +107,23 @@ const connectDB = async () => {
         );
         const resolved = await convertMongoSrvToDirectUri(uri);
         if (resolved) {
-          await tryConnect(resolved, "resolved (mongodb+srv → mongodb://)");
-          return;
+          try {
+            await tryConnect(resolved, "resolved (mongodb+srv → mongodb://)");
+            return;
+          } catch (resolvedErr) {
+            lastErr = resolvedErr;
+            console.error(
+              "[MongoDB] Resolved direct URI connect failed:",
+              resolvedErr?.message || resolvedErr
+            );
+          }
         }
         console.error(
           "[MongoDB] DoH returned no SRV records; set MONGODB_URI_DIRECT to a standard mongodb:// string from Atlas."
         );
       } catch (dohErr) {
         console.error("[MongoDB] DNS-over-HTTPS resolution failed:", dohErr?.message || dohErr);
+        lastErr = dohErr;
       }
     }
 

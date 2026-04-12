@@ -169,27 +169,27 @@ function SubscriptionDetails() {
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Status</p>
                 <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                  (subscription?.status === 'active' || subscription?.subscription?.status === 'active') 
+                  subscription?.status === 'active'
                     ? 'bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-400'
                     : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300'
                 }`}>
-                  {subscription?.status || subscription?.subscription?.status || 'Inactive'}
+                  {subscription?.status || 'Inactive'}
                 </span>
               </div>
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Expiry Date</p>
                 <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                  {(subscription?.periodEnd || subscription?.subscription?.periodEnd) 
-                    ? new Date(subscription?.periodEnd || subscription?.subscription?.periodEnd).toLocaleDateString('en-US', { 
+                  {subscription?.periodEnd
+                    ? new Date(subscription.periodEnd).toLocaleDateString('en-US', { 
                         year: 'numeric', 
                         month: 'long', 
                         day: 'numeric' 
                       })
                     : 'N/A'}
                 </p>
-                {(subscription?.periodEnd || subscription?.subscription?.periodEnd) && (
+                {subscription?.periodEnd && (
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {Math.ceil((new Date(subscription?.periodEnd || subscription?.subscription?.periodEnd) - new Date()) / (1000 * 60 * 60 * 24))} days remaining
+                    {Math.ceil((new Date(subscription.periodEnd) - new Date()) / (1000 * 60 * 60 * 24))} days remaining
                   </p>
                 )}
               </div>
@@ -213,7 +213,7 @@ function SubscriptionDetails() {
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Remaining Minutes</p>
                 <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-                  {parseFloat(subscription?.minutesRemaining || subscription?.remainingMinutes || 0).toFixed(2)}
+                  {subscription?.isUnlimited ? '∞' : parseFloat(subscription?.minutesRemaining || 0).toFixed(2)}
                 </p>
               </div>
               <div>
@@ -225,7 +225,7 @@ function SubscriptionDetails() {
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Remaining SMS</p>
                 <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-                  {subscription?.smsRemaining || subscription?.remainingSMS || 0}
+                  {subscription?.isUnlimited ? '∞' : (subscription?.smsRemaining || 0)}
                 </p>
               </div>
             </div>

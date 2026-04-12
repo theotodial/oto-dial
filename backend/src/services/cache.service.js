@@ -65,7 +65,7 @@ async function getRedisClient() {
 
 export const cacheKeys = {
   userProfile(userId) {
-    return `user-profile:${String(userId)}`;
+    return `user:${String(userId)}`;
   },
   subscription(userId) {
     return `subscription:${String(userId)}`;

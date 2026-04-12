@@ -64,8 +64,7 @@ function Billing() {
         const subData = await refreshSubscription();
         if (!isMountedRef.current || cancelled) return;
 
-        const hasActivePlan =
-          subData && subData.planName !== "No Plan";
+        const hasActivePlan = Boolean(subData?.active);
 
         if (hasActivePlan) {
           setCurrentSubscription(subData);
@@ -75,9 +74,9 @@ function Billing() {
               : 'Subscription activated successfully.'
           );
 
-          if (!isAddonCheckout && user?.id && subData?.subscription?._id) {
+          if (!isAddonCheckout && user?.id && subData?._id) {
             try {
-              await trackSubscription(user.id, subData.subscription._id);
+              await trackSubscription(user.id, subData._id);
             } catch (err) {
               console.warn('Could not track subscription:', err);
             }
@@ -330,8 +329,7 @@ function Billing() {
       navigate('/login', { state: { from: { pathname: '/billing' } } });
       return;
     }
-    const hasActive =
-      currentSubscription?.planName && currentSubscription.planName !== 'No Plan';
+    const hasActive = Boolean(currentSubscription?.active);
     if (!hasActive) {
       setError('You need an active subscription before purchasing add-ons.');
       return;
@@ -391,7 +389,7 @@ function Billing() {
     effectivePlans.find((p) => p._id === defaultSelectedId) || effectivePlans[0] || null;
 
   const hasActiveSubscription =
-    !!currentSubscription?.planName && currentSubscription.planName !== 'No Plan';
+    Boolean(currentSubscription?.active);
 
   return (
     <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900">
@@ -433,9 +431,7 @@ function Billing() {
             {currentSubscription && (
               (() => {
                 const isUnlimitedCurrent =
-                  Boolean(currentSubscription.displayUnlimited) ||
-                  String(currentSubscription.planType || '').toLowerCase() === 'unlimited' ||
-                  String(currentSubscription.planName || '').toLowerCase().includes('unlimited');
+                  Boolean(currentSubscription.isUnlimited || currentSubscription.displayUnlimited);
                 return (
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
                 <span className="font-semibold text-emerald-600 dark:text-emerald-400">

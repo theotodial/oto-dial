@@ -27,7 +27,6 @@ function Dialer() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [subscriptionActive, setSubscriptionActive] = useState(false);
   const [dialCountryCode, setDialCountryCode] = useState('+1');
   const [showDialCountryDropdown, setShowDialCountryDropdown] = useState(false);
   
@@ -43,14 +42,7 @@ function Dialer() {
   } = useCall();
 
   const { subscription } = useSubscription();
-
-  useEffect(() => {
-    const active =
-      subscription &&
-      subscription.planName !== 'No Plan' &&
-      subscription.status !== 'inactive';
-    setSubscriptionActive(!!active);
-  }, [subscription]);
+  const subscriptionActive = Boolean(subscription?.active);
 
   const dialCountries = [
     { code: '+1', name: 'United States', flag: '🇺🇸' },

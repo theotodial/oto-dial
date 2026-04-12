@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import API from '../api';
 import { useCall } from '../context/CallContext';
+import { useSubscription } from '../context/SubscriptionContext';
 
 // Icons
 const SendIcon = () => (
@@ -60,6 +61,7 @@ const CallIcon = () => (
 
 function Chat() {
   const { makeCall } = useCall();
+  const { subscription } = useSubscription();
   const suspiciousActivityText =
     'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
   const isSuspiciousActivityError = (message) =>
@@ -80,8 +82,12 @@ function Chat() {
   const [userNumbers, setUserNumbers] = useState([]);
   const [error, setError] = useState('');
   const [sendError, setSendError] = useState('');
-  const [subscriptionData, setSubscriptionData] = useState({ remainingSMS: 0, planName: 'No Plan' });
   const messagesEndRef = useRef(null);
+  const subscriptionData = {
+    remainingSMS: subscription?.smsRemaining || 0,
+    planName: subscription?.planName || 'No Plan',
+    active: Boolean(subscription?.active),
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -100,8 +106,7 @@ function Chat() {
       try {
         await Promise.all([
           fetchChatData(),
-          fetchUserNumbers(),
-          fetchSubscription()
+          fetchUserNumbers()
         ]);
       } catch (err) {
         console.error('Error loading chat data:', err);
@@ -114,18 +119,6 @@ function Chat() {
       isMountedRef.current = false;
     };
   }, []);
-
-  const fetchSubscription = async () => {
-    if (!isMountedRef.current) return;
-    const response = await API.get('/api/subscription').catch(() => ({ error: true }));
-    if (!isMountedRef.current) return;
-    if (!response.error && response.data) {
-      setSubscriptionData({
-        remainingSMS: response.data.smsRemaining || 0,
-        planName: response.data.planName || 'No Plan'
-      });
-    }
-  };
 
   const fetchUserNumbers = async () => {
     if (!isMountedRef.current) return;

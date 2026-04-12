@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
-import API from '../api';
 import logo from '../assets/otodial-logo.png';
 
 function userInitials(u) {
@@ -63,33 +62,8 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isDarkMode, toggleTheme } = useTheme();
-  const { logout, token, user: authUser } = useAuth();
-  const [profile, setProfile] = useState(null);
-
-  useEffect(() => {
-    if (!token) {
-      setProfile(null);
-      return;
-    }
-    let cancelled = false;
-    const loadProfile = async () => {
-      const res = await API.get('/api/users/profile');
-      if (cancelled || res.error) return;
-      const u = res.data?.user;
-      if (u) setProfile(u);
-    };
-    loadProfile();
-    const onProfileUpdated = () => {
-      loadProfile();
-    };
-    window.addEventListener('oto-profile-updated', onProfileUpdated);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('oto-profile-updated', onProfileUpdated);
-    };
-  }, [token]);
-
-  const display = profile || authUser || {};
+  const { logout, user: authUser } = useAuth();
+  const display = authUser || {};
 
   const handleLogout = async () => {
     await logout();

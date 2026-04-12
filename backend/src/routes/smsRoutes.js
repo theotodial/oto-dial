@@ -9,6 +9,10 @@ import {
   incrementUnlimitedUsageAfterSuccess,
   isUnlimitedSubscription
 } from "../services/unlimitedUsageService.js";
+import { emitAdminLiveSms } from "../services/adminLiveEventsService.js";
+import { evaluateFraudEvent } from "../services/fraudDetectionService.js";
+import { enforceTelecomPolicy } from "../services/telecomPolicyService.js";
+import { enforceUsageRateLimit } from "../services/usageRateLimitService.js";
 
 const router = express.Router();
 
@@ -67,6 +71,34 @@ router.post("/send", async (req, res) => {
     const toFormatted = normalizeSmsDestination(to);
     if (!toFormatted) {
       return res.status(400).json({ error: "Invalid destination number" });
+    }
+
+    const policyCheck = await enforceTelecomPolicy({
+      userId: req.userId,
+      channel: "sms",
+      destinationNumber: toFormatted,
+    });
+    if (!policyCheck.allowed) {
+      return res.status(403).json({ error: policyCheck.error });
+    }
+
+    const rateLimit = enforceUsageRateLimit({ userId: req.userId, channel: "sms" });
+    if (!rateLimit.allowed) {
+      return res.status(429).json({
+        error: "SMS rate limit exceeded. Please wait before sending more messages.",
+        retryAfterMs: rateLimit.retryAfterMs,
+      });
+    }
+
+    const fraudCheck = await evaluateFraudEvent({
+      userId: req.userId,
+      channel: "sms",
+      destinationNumber: toFormatted,
+    });
+    if (!fraudCheck.allowed && fraudCheck.blocked) {
+      return res.status(403).json({
+        error: fraudCheck.reason || "SMS blocked by fraud protection.",
+      });
     }
 
     // Check subscription exists
@@ -168,6 +200,18 @@ router.post("/send", async (req, res) => {
       costPerSms: smsCostRate,
       carrier: response.data.carrier || null,
       carrierFees: 0 // Can be enhanced with actual carrier fee data
+    });
+
+    emitAdminLiveSms({
+      eventType: "sent",
+      userId: req.userId,
+      messageId: response.data.id,
+      destination: toFormatted,
+      from,
+      status: "sent",
+      bodyPreview: text,
+    }).catch((error) => {
+      console.warn("[ADMIN LIVE] failed to emit sms:", error?.message || error);
     });
 
     // ✅ Usage tracking - deduct usage for outbound SMS

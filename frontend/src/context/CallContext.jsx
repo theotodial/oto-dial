@@ -2228,54 +2228,7 @@ export const CallProvider = ({ children }) => {
     setIsMinimized(false);
   }, []);
 
-  // Auto-initialize client when component mounts (for receiving calls)
-  useEffect(() => {
-    const autoInit = async () => {
-      const token = localStorage.getItem('token');
-      if (token && !isClientReadyRef.current && !isInitializingRef.current && !isInitializedRef.current) {
-        console.log('📱 Auto-initializing WebRTC client for incoming calls...');
-
-        await fixPhoneConfiguration();
-
-        setTimeout(() => {
-          initializeClient().catch(e => {
-            console.log('📱 Auto-init failed:', e.message);
-          });
-        }, 500);
-      }
-    };
-    
-    autoInit();
-    
-    // Also set up a periodic health check to ensure client stays connected
-    const healthCheckInterval = setInterval(() => {
-      const token = localStorage.getItem('token');
-      // Use refs to avoid dependency on changing state
-      if (token && !isClientReadyRef.current && !isInitializingRef.current && !isInitializedRef.current) {
-        console.log('📱 Health check: Client not ready, reinitializing...');
-        initializeClient().catch(e => {
-          console.log('📱 Health check reinit failed:', e.message);
-        });
-      } else if (token && isClientReadyRef.current && telnyxClientRef.current) {
-        // Verify client is still connected
-        try {
-          // Check if client has a connection state
-          if (telnyxClientRef.current.connected === false) {
-            console.log('📱 Health check: Client disconnected, reconnecting...');
-            setIsClientReady(false);
-            isInitializedRef.current = false;
-            initializeClient().catch(e => {
-              console.log('📱 Health check reconnect failed:', e.message);
-            });
-          }
-        } catch (e) {
-          console.error('Health check client.connected read:', e);
-        }
-      }
-    }, 60000); // Check every 60 seconds (reduced frequency)
-    
-    return () => clearInterval(healthCheckInterval);
-  }, [fixPhoneConfiguration, initializeClient]); // Removed frequently changing deps
+  // WebRTC intentionally initializes lazily from user intent (dial/open voice), not on app boot.
 
   // Inbound calls: only via Telnyx WebRTC (telnyx.rtc.incoming / notifications). API polling was removed — it matched
   // stale DB rows after hangup and opened a second "Unknown" incoming UI while the real call was outbound.
