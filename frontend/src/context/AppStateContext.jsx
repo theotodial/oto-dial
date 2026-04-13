@@ -91,6 +91,8 @@ export function AppStateProvider({ children }) {
   const [isReady, setIsReady] = useState(() => !localStorage.getItem("token"));
   const [isRefreshing, setIsRefreshing] = useState(false);
   const hasFetchedRef = useRef(false);
+  /** After first successful bootstrap with a token, background refetches must NOT flip isReady (avoids unmounting the whole app). */
+  const sessionEstablishedRef = useRef(false);
   const lastBootstrapRefreshRef = useRef(0);
 
   const clearAppState = useCallback(() => {
@@ -103,6 +105,7 @@ export function AppStateProvider({ children }) {
     setUsage(null);
     setIsReady(!localStorage.getItem("token"));
     hasFetchedRef.current = false;
+    sessionEstablishedRef.current = false;
   }, []);
 
   const applyBootstrapData = useCallback((data, activeToken) => {
@@ -120,7 +123,9 @@ export function AppStateProvider({ children }) {
     setSubscription(nextSubscription);
     setUsage(nextUsage);
     setIsReady(true);
-    console.log("BOOTSTRAP DATA", data);
+    if (activeToken && nextUser) {
+      sessionEstablishedRef.current = true;
+    }
     return data;
   }, []);
 
@@ -139,7 +144,9 @@ export function AppStateProvider({ children }) {
     }
 
     setIsRefreshing(true);
-    setIsReady(false);
+    if (!sessionEstablishedRef.current) {
+      setIsReady(false);
+    }
     try {
       const res = await API.get("/api/app/bootstrap");
       if (res.error || !res.data?.success) {
@@ -270,6 +277,7 @@ export function AppStateProvider({ children }) {
     }
 
     hasFetchedRef.current = false;
+    sessionEstablishedRef.current = false;
     setIsReady(false);
     fetchBootstrap().catch(() => {
       /* handled in fetchBootstrap */

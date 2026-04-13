@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback } from "react";
+import { createContext, useContext, useCallback, useMemo } from "react";
 import API from "../api";
 import {
   buildLoginFallbackPayload,
@@ -20,7 +20,7 @@ export function AuthProvider({ children }) {
     refetchBootstrap,
   } = useAppState();
 
-  const login = async (email, password) => {
+  const login = useCallback(async (email, password) => {
     const response = await API.post("/api/auth/login", { email, password });
 
     if (response.error) {
@@ -70,9 +70,9 @@ export function AuthProvider({ children }) {
     }
 
     return { success: false, error: "No token received" };
-  };
+  }, [setAuthToken, refetchBootstrap]);
 
-  const signup = async (email, password, additionalData = {}) => {
+  const signup = useCallback(async (email, password, additionalData = {}) => {
     const payload = {
       email,
       password,
@@ -130,34 +130,45 @@ export function AuthProvider({ children }) {
     }
 
     return { success: false, error: "No token received" };
-  };
+  }, [setAuthToken, refetchBootstrap]);
 
   const logout = useCallback(() => {
     setAuthToken(null);
     clearAppState();
   }, [clearAppState, setAuthToken]);
 
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        token,
-        loading: isRefreshing && !isReady,
-        hydrated: Boolean(isReady && user),
-        isAuthenticated: !!token,
-        login,
-        signup,
-        logout,
-        setAuthFromToken: setAuthToken,
-        refreshUser: async () => {
-          const data = await refetchBootstrap();
-          return data?.user || null;
-        },
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+  const refreshUser = useCallback(async () => {
+    const data = await refetchBootstrap();
+    return data?.user || null;
+  }, [refetchBootstrap]);
+
+  const value = useMemo(
+    () => ({
+      user,
+      token,
+      loading: isRefreshing && !isReady,
+      hydrated: Boolean(isReady && user),
+      isAuthenticated: !!token,
+      login,
+      signup,
+      logout,
+      setAuthFromToken: setAuthToken,
+      refreshUser,
+    }),
+    [
+      user,
+      token,
+      isRefreshing,
+      isReady,
+      login,
+      signup,
+      logout,
+      setAuthToken,
+      refreshUser,
+    ]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

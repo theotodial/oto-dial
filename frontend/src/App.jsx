@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AppStateProvider } from './context/AppStateContext';
@@ -8,6 +9,17 @@ import ErrorBoundary from './components/ErrorBoundary';
 import AppShell from './components/AppShell';
 
 function App() {
+  const devRenderCountRef = useRef(0);
+  if (import.meta.env.DEV) {
+    devRenderCountRef.current += 1;
+    if (devRenderCountRef.current > 60) {
+      console.error(
+        '[otodial] App re-render count is very high — possible state loop:',
+        devRenderCountRef.current
+      );
+    }
+  }
+
   return (
     <ErrorBoundary>
       <ThemeProvider>

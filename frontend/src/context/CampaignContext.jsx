@@ -13,10 +13,12 @@ export function CampaignProvider({ children }) {
   const setCampaignMode = useCallback(
     async (mode) => {
       const m = mode === 'pro' ? 'pro' : 'lite';
+      const cur = user?.preferences?.campaignMode === 'pro' ? 'pro' : 'lite';
+      if (cur === m) return;
       await patchUserCampaignMode(m);
       mergeUser({ preferences: { campaignMode: m } });
     },
-    [mergeUser]
+    [mergeUser, user?.preferences?.campaignMode]
   );
 
   const setThreadCache = useCallback((phone, items) => {

@@ -414,13 +414,20 @@ export default function Campaign() {
     const t = setInterval(() => {
       setPollTick((x) => x + 1);
       refreshDetail(selectedId).catch(() => {});
-      refreshSubscription?.().catch(() => {});
+      const needsUsageBootstrap =
+        campaignMode === 'pro' ||
+        detail?.campaign?.status === 'running' ||
+        (analyticsOpen && selectedId);
+      if (needsUsageBootstrap) {
+        refreshSubscription?.().catch(() => {});
+      }
       if (analyticsOpen && selectedId) {
         refreshAnalytics(selectedId).catch(() => {});
       }
     }, 5000);
     return () => clearInterval(t);
   }, [
+    campaignMode,
     detail?.campaign?.status,
     selectedId,
     refreshDetail,

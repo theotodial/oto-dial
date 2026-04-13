@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback } from "react";
+import { createContext, useContext, useCallback, useMemo } from "react";
 import { useAppState } from "./AppStateContext";
 
 const SubscriptionContext = createContext(null);
@@ -11,16 +11,19 @@ export function SubscriptionProvider({ children }) {
     return data?.subscription || null;
   }, [refetchBootstrap]);
 
+  const value = useMemo(
+    () => ({
+      subscription,
+      usage,
+      loading: isRefreshing && !isReady,
+      hydrated: isReady,
+      refreshSubscription,
+    }),
+    [subscription, usage, isRefreshing, isReady, refreshSubscription]
+  );
+
   return (
-    <SubscriptionContext.Provider
-      value={{
-        subscription,
-        usage,
-        loading: isRefreshing && !isReady,
-        hydrated: isReady,
-        refreshSubscription,
-      }}
-    >
+    <SubscriptionContext.Provider value={value}>
       {children}
     </SubscriptionContext.Provider>
   );
