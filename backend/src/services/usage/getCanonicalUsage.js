@@ -40,6 +40,8 @@ export async function getCanonicalUsage(userId, subscriptionLean = null) {
     isUnlimitedSubscription(subscription) ||
     /unlimited/i.test(String(subscription.planName || ""));
 
+  const voiceOff = subscription.voiceCallsEnabled === false;
+
   return {
     smsUsed,
     minutesUsed,
@@ -49,6 +51,6 @@ export async function getCanonicalUsage(userId, subscriptionLean = null) {
     smsLimit,
     minutesLimit,
     isSmsEnabled: unlimited || smsLimit > 0,
-    isCallEnabled: unlimited || minutesLimit > 0,
+    isCallEnabled: !voiceOff && (unlimited || minutesLimit > 0),
   };
 }

@@ -84,6 +84,7 @@ function Dashboard() {
   const [activationIssue, setActivationIssue] = useState(null);
   const [addonsDrawerOpen, setAddonsDrawerOpen] = useState(false);
   const isMountedRef = useRef(true);
+  const isSmsCampaignPlan = subscription?.smsCampaignPlan === true;
 
   useEffect(() => {
     if (!subscriptionHydrated) return;
@@ -329,14 +330,16 @@ function Dashboard() {
         >
           <p className="text-sm opacity-90 mb-2">{packageDetails.planName}</p>
           <div className="space-y-3 mb-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm opacity-90">Remaining Minutes</span>
-              <span className="text-2xl font-bold">
-                {packageDetails.unlimitedMinutesDisplay
-                  ? '∞'
-                  : parseFloat(packageDetails?.remainingMinutes || 0).toFixed(2)}
-              </span>
-            </div>
+            {!isSmsCampaignPlan && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm opacity-90">Remaining Minutes</span>
+                <span className="text-2xl font-bold">
+                  {packageDetails.unlimitedMinutesDisplay
+                    ? '∞'
+                    : parseFloat(packageDetails?.remainingMinutes || 0).toFixed(2)}
+                </span>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <span className="text-sm opacity-90">Remaining SMS</span>
               <span className="text-2xl font-bold">
@@ -395,7 +398,7 @@ function Dashboard() {
       )}
 
       {/* Add-ons — compact trigger + slide-over drawer */}
-      {packageDetails.planName !== 'No Plan' && addonPlans.length > 0 && (
+      {packageDetails.planName !== 'No Plan' && !isSmsCampaignPlan && addonPlans.length > 0 && (
         <div className="mb-8">
           {addonsDrawerOpen && (
             <div className="fixed inset-0 z-[60] flex justify-end" role="dialog" aria-modal="true" aria-labelledby="addons-drawer-title">
@@ -608,7 +611,7 @@ function Dashboard() {
               View plan limits and change your subscription from the Billing page.
             </p>
           </div>
-          {packageDetails.planName !== 'No Plan' && addonPlans.length > 0 && (
+          {packageDetails.planName !== 'No Plan' && !isSmsCampaignPlan && addonPlans.length > 0 && (
             <button
               type="button"
               onClick={() => setAddonsDrawerOpen(true)}

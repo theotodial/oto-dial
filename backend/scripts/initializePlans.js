@@ -16,6 +16,10 @@ import {
   UNLIMITED_PLAN_NAME,
   UNLIMITED_PLAN_TYPE
 } from "../src/constants/unlimitedPlan.js";
+import {
+  SMS_CAMPAIGN_PLAN_TYPE,
+  SMS_CAMPAIGN_STRIPE_PRICE_ID
+} from "../src/constants/smsCampaignPlan.js";
 
 // Load environment variables
 dotenv.config();
@@ -109,13 +113,13 @@ async function initializePlans() {
         active: true
       },
       {
-        type: "sms_1700",
-        name: "1700 SMS",
-        planName: "1700 SMS",
-        price: 80,
+        type: SMS_CAMPAIGN_PLAN_TYPE,
+        name: "SMS Campaign",
+        planName: "SMS Campaign",
+        price: 90,
         currency: "USD",
-        stripeProductId: null,
-        stripePriceId: null,
+        stripeProductId: "prod_Tj3I37A5KEUqJG",
+        stripePriceId: SMS_CAMPAIGN_STRIPE_PRICE_ID,
         limits: {
           minutesTotal: 0,
           smsTotal: 1700,
@@ -123,8 +127,9 @@ async function initializePlans() {
         },
         dedicatedNumbers: 1,
         displayUnlimited: false,
-        adminOnly: true,
+        adminOnly: false,
         voiceCallsEnabled: false,
+        smsCampaignPlan: true,
         active: true
       }
     ];
@@ -132,11 +137,20 @@ async function initializePlans() {
     console.log('\n📦 Initializing subscription plans...\n');
 
     for (const planData of plans) {
-      // Check if plan already exists
       let plan = await Plan.findOne({ name: planData.name });
+      if (!plan && planData.type === SMS_CAMPAIGN_PLAN_TYPE) {
+        plan = await Plan.findOne({
+          $or: [
+            { type: "sms_1700" },
+            { name: "1700 SMS" },
+            { stripePriceId: SMS_CAMPAIGN_STRIPE_PRICE_ID }
+          ]
+        });
+      }
 
       if (plan) {
         // Update existing plan
+        plan.name = planData.name;
         plan.price = planData.price;
         plan.type = planData.type;
         plan.planName = planData.planName;
@@ -152,6 +166,7 @@ async function initializePlans() {
         plan.displayUnlimited = Boolean(planData.displayUnlimited);
         plan.adminOnly = Boolean(planData.adminOnly);
         plan.voiceCallsEnabled = planData.voiceCallsEnabled !== false;
+        plan.smsCampaignPlan = Boolean(planData.smsCampaignPlan);
         plan.active = planData.active;
         await plan.save();
         console.log(`✅ Updated plan: ${planData.name}`);

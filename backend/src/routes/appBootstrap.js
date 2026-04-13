@@ -1,5 +1,6 @@
 import express from "express";
 import User from "../models/User.js";
+import Plan from "../models/Plan.js";
 import { getLatestSubscription } from "../services/subscriptionService.js";
 import { getCanonicalUsage } from "../services/usage/getCanonicalUsage.js";
 import { isUnlimitedSubscription } from "../services/unlimitedUsageService.js";
@@ -32,6 +33,11 @@ router.get("/bootstrap", async (req, res) => {
       User.findById(userId).select("_id name email isEmailVerified features preferences").lean(),
       getLatestSubscription(userId),
     ]);
+
+    let planLean = null;
+    if (latestSub?.planId) {
+      planLean = await Plan.findById(latestSub.planId).select("smsCampaignPlan voiceCallsEnabled").lean();
+    }
 
     const user = userDoc
       ? {
@@ -73,6 +79,11 @@ router.get("/bootstrap", async (req, res) => {
         isUnlimited: Boolean(isUnlimitedSubscription(latestSub)),
         unlimitedMinutesDisplay: uiFlags.unlimitedMinutesDisplay,
         unlimitedSmsDisplay: uiFlags.unlimitedSmsDisplay,
+        voiceCallsEnabled:
+          latestSub.voiceCallsEnabled !== undefined && latestSub.voiceCallsEnabled !== null
+            ? latestSub.voiceCallsEnabled
+            : planLean?.voiceCallsEnabled !== false,
+        smsCampaignPlan: Boolean(latestSub.smsCampaignPlan || planLean?.smsCampaignPlan),
       };
 
       usage = {

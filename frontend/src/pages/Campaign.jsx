@@ -271,7 +271,7 @@ export default function Campaign() {
   }, []);
 
   const loadMessages = useCallback(async () => {
-    const res = await API.get('/api/messages?limit=100');
+    const res = await API.get('/api/messages?limit=2000');
     if (res.error || !res.data?.success) {
       setMessages([]);
       return;

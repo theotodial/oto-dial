@@ -72,6 +72,53 @@ function Home() {
       <NewFeaturesSection />
       <NewHowItWorks />
       <NewPricingSection />
+
+      <section className="py-16 px-4 bg-indigo-50 dark:bg-slate-800/80 border-y border-indigo-100 dark:border-slate-700">
+        <div className="max-w-5xl mx-auto grid gap-10 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] items-center">
+          <div>
+            <p className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wide mb-2">
+              SMS Campaign mode
+            </p>
+            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-4">
+              Run SMS campaigns without voice minutes
+            </h2>
+            <p className="text-lg text-gray-700 dark:text-gray-300 mb-4 leading-relaxed">
+              The SMS Campaign plan gives you a dedicated SMS allowance (inbound and outbound count toward the same
+              pool), pro campaign tools including messaging templates and analytics, and a streamlined in-app
+              experience focused on conversations—not dialers.
+            </p>
+            <ul className="space-y-2 text-gray-700 dark:text-gray-300 text-sm md:text-base mb-6">
+              <li className="flex gap-2">
+                <span className="text-indigo-600 dark:text-indigo-400 font-bold">✓</span>
+                1,700 SMS per month shared across send and receive
+              </li>
+              <li className="flex gap-2">
+                <span className="text-indigo-600 dark:text-indigo-400 font-bold">✓</span>
+                Templates, campaign workspace, and analytics
+              </li>
+              <li className="flex gap-2">
+                <span className="text-indigo-600 dark:text-indigo-400 font-bold">✓</span>
+                Voice calling not included—SMS-only subscription
+              </li>
+            </ul>
+            <Link
+              to="/billing"
+              className="inline-flex items-center justify-center px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md transition-colors"
+            >
+              View SMS Campaign plan
+            </Link>
+          </div>
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-indigo-100 dark:border-slate-600 p-6 shadow-lg">
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">From</p>
+            <p className="text-4xl font-bold text-gray-900 dark:text-white mb-1">$90</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">per month · billed in app via Stripe</p>
+            <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
+              After you subscribe, the app opens in Campaign mode so you can manage SMS threads, outreach, and
+              reporting in one place.
+            </p>
+          </div>
+        </div>
+      </section>
       
       {/* Highlight unlimited calling plan */}
       <section className="py-16 px-4 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500">

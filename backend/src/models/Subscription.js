@@ -167,6 +167,11 @@ const subscriptionSchema = new mongoose.Schema(
     voiceCallsEnabled: {
       type: Boolean,
       default: true
+    },
+
+    smsCampaignPlan: {
+      type: Boolean,
+      default: false
     }
   },
   {

@@ -9,6 +9,7 @@ import {
   invalidateUserSubscriptionCache,
   loadLatestSubscriptionDocument,
 } from "../services/subscriptionService.js";
+import { applyUserEntitlementsForPlan } from "../services/userPlanEntitlementsService.js";
 
 const router = express.Router();
 
@@ -190,6 +191,7 @@ router.post("/buy", async (req, res) => {
     applyPlanSnapshotToSubscription(subscription, plan);
     await subscription.save();
     await invalidateUserSubscriptionCache(userId);
+    await applyUserEntitlementsForPlan(userId, plan);
 
     res.status(201).json({
       message: "Subscription activated",

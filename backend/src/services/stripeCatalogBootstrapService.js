@@ -187,13 +187,16 @@ export async function ensureStripeCatalogConsistency() {
   return updates;
 }
 
-/** Admin-assignable Mongo-only plans (no Stripe); ensures they exist for GET /api/admin/plans. */
+/** Ensures SMS Campaign plan exists for admin + public catalog (Mongo is source of truth). */
 export async function ensureAdminAssignableInternalPlans() {
+  const { SMS_CAMPAIGN_PLAN_TYPE, SMS_CAMPAIGN_STRIPE_PRICE_ID } = await import(
+    "../constants/smsCampaignPlan.js"
+  );
   const spec = {
-    type: "sms_1700",
-    name: "1700 SMS",
-    planName: "1700 SMS",
-    price: 80,
+    type: SMS_CAMPAIGN_PLAN_TYPE,
+    name: "SMS Campaign",
+    planName: "SMS Campaign",
+    price: 90,
     currency: "USD",
     limits: {
       minutesTotal: 0,
@@ -202,15 +205,22 @@ export async function ensureAdminAssignableInternalPlans() {
     },
     dedicatedNumbers: 1,
     displayUnlimited: false,
-    adminOnly: true,
+    adminOnly: false,
     voiceCallsEnabled: false,
+    smsCampaignPlan: true,
     active: true,
-    stripeProductId: null,
-    stripePriceId: null
+    stripeProductId: "prod_Tj3I37A5KEUqJG",
+    stripePriceId: SMS_CAMPAIGN_STRIPE_PRICE_ID
   };
 
   const filter = {
-    $or: [{ name: spec.name }, { type: spec.type }]
+    $or: [
+      { name: spec.name },
+      { type: spec.type },
+      { stripePriceId: spec.stripePriceId },
+      { type: "sms_1700" },
+      { name: "1700 SMS" }
+    ]
   };
 
   await Plan.findOneAndUpdate(

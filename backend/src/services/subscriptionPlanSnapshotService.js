@@ -97,6 +97,7 @@ export function applyPlanSnapshotToSubscription(subscription, plan = {}) {
   subscription.dailyMinutesLimit = snapshot.dailyMinutesLimit;
 
   subscription.voiceCallsEnabled = plan.voiceCallsEnabled !== false;
+  subscription.smsCampaignPlan = Boolean(plan.smsCampaignPlan);
 
   return snapshot;
 }

@@ -38,6 +38,8 @@ export function inactiveSubscriptionBootstrap() {
     isUnlimited: false,
     unlimitedMinutesDisplay: false,
     unlimitedSmsDisplay: false,
+    voiceCallsEnabled: true,
+    smsCampaignPlan: false,
   };
 }
 

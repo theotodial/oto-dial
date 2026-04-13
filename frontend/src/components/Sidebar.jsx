@@ -72,8 +72,11 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
   if (voiceOn) {
     navItems.push({ path: '/recents', label: 'Voice', icon: RecentsIcon });
   }
+  if (campaignOn && !voiceOn) {
+    navItems.push({ path: '/campaign', label: 'Campaign', icon: CampaignIcon });
+  }
   navItems.push({ path: '/dashboard', label: 'Dashboard', icon: DashboardIcon });
-  if (campaignOn) {
+  if (campaignOn && voiceOn) {
     navItems.push({ path: '/campaign', label: 'Campaign', icon: CampaignIcon });
   }
   navItems.push({ path: '/support', label: 'Support', icon: SupportIcon });

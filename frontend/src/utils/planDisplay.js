@@ -21,6 +21,15 @@ export function isTrialPlan(plan) {
   return n === "trial" || n.startsWith("trial ");
 }
 
+export function isSmsCampaignCatalogPlan(plan) {
+  if (!plan) return false;
+  if (plan.smsCampaignPlan === true) return true;
+  const t = String(plan.type || "").toLowerCase();
+  if (t === "sms_campaign") return true;
+  const n = String(plan.name || "").toLowerCase();
+  return n.includes("sms campaign");
+}
+
 /** @typedef {{ text: string, included?: boolean }} PlanFeatureItem */
 
 /**
@@ -51,6 +60,16 @@ export function getPlanFeatureBullets(plan) {
       { text: "Email support", included: true },
     ];
   }
+  if (isSmsCampaignCatalogPlan(plan)) {
+    const s = Math.max(0, Number(plan?.limits?.smsTotal ?? 0));
+    return [
+      { text: "Free Virtual Number", included: true },
+      { text: `${s.toLocaleString()} SMS (inbound + outbound)`, included: true },
+      { text: "No voice minutes — SMS only", included: true },
+      { text: "Pro campaign: templates & analytics", included: true },
+      { text: "Email support", included: true },
+    ];
+  }
   const m = Math.max(0, Number(plan?.limits?.minutesTotal ?? 0));
   const s = Math.max(0, Number(plan?.limits?.smsTotal ?? 0));
   return [
@@ -65,6 +84,9 @@ export function planMarketingDescription(plan) {
   if (!plan) return "";
   if (isCatalogUnlimitedPlan(plan)) {
     return "Unlimited outbound calling for power users";
+  }
+  if (isSmsCampaignCatalogPlan(plan)) {
+    return "SMS-first campaigns with templates, analytics, and a shared SMS pool";
   }
   if (String(plan.name || "").toLowerCase().includes("basic")) {
     return "Perfect for individuals and small teams";

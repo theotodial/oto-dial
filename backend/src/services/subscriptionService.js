@@ -1,4 +1,5 @@
 import Subscription from "../models/Subscription.js";
+import Plan from "../models/Plan.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import { computeUsage } from "./usageComputationService.js";
 import { getCanonicalUsage } from "./usage/getCanonicalUsage.js";
@@ -42,6 +43,7 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
       isUnlimitedSubscription(subscription) ||
       /unlimited/i.test(String(subscription.planName || ""));
 
+    const voiceOff = subscription.voiceCallsEnabled === false;
     return {
       smsUsed,
       minutesUsed,
@@ -56,7 +58,7 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
       smsLimit,
       minutesLimit,
       isSmsEnabled: unlimited || smsLimit > 0,
-      isCallEnabled: unlimited || minutesLimit > 0,
+      isCallEnabled: !voiceOff && (unlimited || minutesLimit > 0),
       source: subscription.source || "subscription",
     };
   }
@@ -216,6 +218,24 @@ export async function loadUserSubscription(userId) {
 
   subscription = await resetDailyUsageWindowIfNeeded(subscription);
 
+  let subForUsage = subscription;
+  if (subscription.planId) {
+    const planDoc = await Plan.findById(subscription.planId)
+      .select("voiceCallsEnabled smsCampaignPlan")
+      .lean();
+    if (planDoc) {
+      subForUsage = {
+        ...subscription,
+        voiceCallsEnabled:
+          subscription.voiceCallsEnabled !== undefined && subscription.voiceCallsEnabled !== null
+            ? subscription.voiceCallsEnabled
+            : planDoc.voiceCallsEnabled !== false,
+        smsCampaignPlan:
+          Boolean(subscription.smsCampaignPlan) || Boolean(planDoc.smsCampaignPlan),
+      };
+    }
+  }
+
   const [numbers, customPackage, canonical] = await Promise.all([
     PhoneNumber.find({
       userId,
@@ -224,7 +244,7 @@ export async function loadUserSubscription(userId) {
       .select("phoneNumber")
       .lean(),
     getActiveCustomPackage(userId),
-    getCanonicalUsage(userId, subscription),
+    getCanonicalUsage(userId, subForUsage),
   ]);
 
   const smsLimit = canonical.smsLimit;
@@ -241,6 +261,8 @@ export async function loadUserSubscription(userId) {
     Boolean(subscription.displayUnlimited) ||
     isUnlimitedSubscription(subscription) ||
     /unlimited/i.test(String(subscription.planName || ""));
+
+  const voiceOff = subForUsage.voiceCallsEnabled === false;
 
   const rawStatus = subscription.status || null;
 
@@ -278,7 +300,9 @@ export async function loadUserSubscription(userId) {
     usageWindowDateKey: subscription.usageWindowDateKey || getServerDayKey(),
     periodStart: subscription.periodStart || null,
     periodEnd: subscription.periodEnd || null,
-    isCallEnabled: unlimited || minutesLimit > 0,
+    voiceCallsEnabled: subForUsage.voiceCallsEnabled !== false,
+    smsCampaignPlan: Boolean(subForUsage.smsCampaignPlan),
+    isCallEnabled: !voiceOff && (unlimited || minutesLimit > 0),
     isSmsEnabled: unlimited || smsLimit > 0,
     isManuallyEnabled,
     source: "subscription",
@@ -393,6 +417,8 @@ export function buildPublicSubscriptionState(subscription) {
       isUnlimited: false,
       unlimitedMinutesDisplay: false,
       unlimitedSmsDisplay: false,
+      voiceCallsEnabled: true,
+      smsCampaignPlan: false,
     };
   }
 
@@ -427,5 +453,7 @@ export function buildPublicSubscriptionState(subscription) {
       subscription.unlimitedMinutesDisplay ?? uiFlags.unlimitedMinutesDisplay,
     unlimitedSmsDisplay:
       subscription.unlimitedSmsDisplay ?? uiFlags.unlimitedSmsDisplay,
+    voiceCallsEnabled: subscription.voiceCallsEnabled !== false,
+    smsCampaignPlan: Boolean(subscription.smsCampaignPlan),
   };
 }

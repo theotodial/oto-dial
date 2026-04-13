@@ -19,7 +19,10 @@ export async function computeUsage(userId) {
   const [smsUsed, callAgg] = await Promise.all([
     SMS.countDocuments({
       user: normalizedUserId,
-      direction: { $in: ["outbound", "sent"] },
+      $or: [
+        { direction: "inbound" },
+        { direction: "outbound", status: { $ne: "failed" } },
+      ],
     }),
     Call.aggregate([
       { $match: { user: normalizedUserId, status: "completed" } },
@@ -70,8 +73,11 @@ export async function computeUsageInWindow(userId, windowStart, windowEnd) {
   const [smsUsed, callAgg] = await Promise.all([
     SMS.countDocuments({
       user: normalizedUserId,
-      direction: { $in: ["outbound", "sent"] },
       createdAt: { $gte: start, $lte: end },
+      $or: [
+        { direction: "inbound" },
+        { direction: "outbound", status: { $ne: "failed" } },
+      ],
     }),
     Call.aggregate([
       {

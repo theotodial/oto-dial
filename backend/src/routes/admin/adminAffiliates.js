@@ -7,6 +7,7 @@ import User from "../../models/User.js";
 import { applyPlanSnapshotToSubscription } from "../../services/subscriptionPlanSnapshotService.js";
 import { createAdminNotification } from "../../services/adminNotificationService.js";
 import { ensureAffiliateUnlimitedPlan, markAffiliateReferralPaid } from "../../services/affiliateService.js";
+import { applyUserEntitlementsForPlan } from "../../services/userPlanEntitlementsService.js";
 
 const router = express.Router();
 
@@ -334,6 +335,8 @@ router.post("/affiliates/:id/users/:userId/assign-unlimited", requireAdmin, asyn
         smsUsed: "",
       },
     });
+
+    await applyUserEntitlementsForPlan(user._id, plan);
 
     await markAffiliateReferralPaid({
       userId: user._id,

@@ -155,6 +155,10 @@ export default function CampaignLiteWorkspace({
   const [savingCrm, setSavingCrm] = useState(false);
   const [templateSig, setTemplateSig] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [showSaveContactModal, setShowSaveContactModal] = useState(false);
+  const [saveContactName, setSaveContactName] = useState('');
+  const [saveContactNumber, setSaveContactNumber] = useState('');
+  const [savingContact, setSavingContact] = useState(false);
   const notesTimer = useRef(null);
   const labelsRef = useRef([]);
   labelsRef.current = labelsDraft;
@@ -322,6 +326,54 @@ export default function CampaignLiteWorkspace({
       setError?.(e.message || 'Could not start chat');
     } finally {
       setCreatingChat(false);
+    }
+  };
+
+  const openSaveContactModal = useCallback(
+    (phone) => {
+      const p = String(phone || activeChatPhone || '').trim();
+      setSaveContactNumber(p);
+      setSaveContactName(getContactName(p) || '');
+      setShowSaveContactModal(true);
+    },
+    [activeChatPhone, getContactName]
+  );
+
+  const handleSaveContactSubmit = async (e) => {
+    e.preventDefault();
+    const name = String(saveContactName || '').trim();
+    const digits = String(saveContactNumber || '').replace(/\D/g, '');
+    if (!name || digits.length < 10) {
+      setError?.('Enter a name and valid phone number');
+      return;
+    }
+    setSavingContact(true);
+    try {
+      const res = await API.post('/api/contacts', {
+        name,
+        phoneNumber: digits,
+        notes: '',
+        labels: [],
+      });
+      if (res.error && !String(res.error).includes('already exists')) {
+        throw new Error(res.error);
+      }
+      setShowSaveContactModal(false);
+      const list = await fetchAllContacts(30);
+      setContacts(list);
+      if (activeChatPhone) {
+        const r = await API.get('/api/contacts/lookup', { params: { phone: activeChatPhone } });
+        if (!r.error && r.data?.contact) {
+          setLookupContact(r.data.contact);
+          setNotesDraft(r.data.contact.notes || '');
+          setLabelsDraft(Array.isArray(r.data.contact.labels) ? [...r.data.contact.labels] : []);
+        }
+      }
+      await loadMessages?.();
+    } catch (err) {
+      setError?.(err?.message || 'Failed to save contact');
+    } finally {
+      setSavingContact(false);
     }
   };
 
@@ -566,6 +618,13 @@ export default function CampaignLiteWorkspace({
                 <h2 className="text-lg font-bold text-gray-900 dark:text-white truncate min-w-0">
                   {displayTitle}
                 </h2>
+                <button
+                  type="button"
+                  onClick={() => openSaveContactModal(activeChatPhone)}
+                  className="shrink-0 text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:underline px-2 py-1 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
+                >
+                  Save contact
+                </button>
               </div>
               <CampaignSmsThread
                 threadPhone={activeChatPhone}
@@ -606,9 +665,18 @@ export default function CampaignLiteWorkspace({
               </p>
             )}
             {activeChatPhone && !lookupContact && (
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Not saved as a contact yet. Use <strong>New chat</strong> with a name to create one, or save from Voice.
-              </p>
+              <div className="space-y-3">
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Not saved as a contact yet. Save here or add a name when starting a new chat.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => openSaveContactModal(activeChatPhone)}
+                  className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold"
+                >
+                  Save to contacts
+                </button>
+              </div>
             )}
             {activeChatPhone && lookupContact && (
               <>
@@ -753,14 +821,25 @@ export default function CampaignLiteWorkspace({
               ))}
             </div>
             {activeChatPhone ? (
-              <CampaignSmsThread
-                threadPhone={activeChatPhone}
-                pollKey={pollTick}
-                getThreadCache={getThreadCache}
-                setThreadCache={setThreadCache}
-                insertSignal={templateSig}
-                className="flex-1 min-h-0"
-              />
+              <>
+                <div className="flex items-center justify-end px-3 py-2 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => openSaveContactModal(activeChatPhone)}
+                    className="text-sm font-semibold text-indigo-600 dark:text-indigo-400"
+                  >
+                    Save contact
+                  </button>
+                </div>
+                <CampaignSmsThread
+                  threadPhone={activeChatPhone}
+                  pollKey={pollTick}
+                  getThreadCache={getThreadCache}
+                  setThreadCache={setThreadCache}
+                  insertSignal={templateSig}
+                  className="flex-1 min-h-0"
+                />
+              </>
             ) : (
               <div className="flex-1 flex items-center justify-center text-gray-500 text-sm p-6">
                 Select a conversation
@@ -824,6 +903,61 @@ export default function CampaignLiteWorkspace({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showSaveContactModal && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4"
+          onClick={() => !savingContact && setShowSaveContactModal(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-md w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Save to contacts</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Saved contacts sync across your devices.
+            </p>
+            <form onSubmit={handleSaveContactSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={saveContactName}
+                  onChange={(e) => setSaveContactName(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Phone</label>
+                <input
+                  type="tel"
+                  value={saveContactNumber}
+                  onChange={(e) => setSaveContactNumber(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-gray-900 dark:text-white"
+                  required
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => !savingContact && setShowSaveContactModal(false)}
+                  className="flex-1 py-3 rounded-xl bg-gray-100 dark:bg-slate-700 font-semibold text-gray-800 dark:text-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingContact}
+                  className="flex-1 py-3 rounded-xl bg-indigo-600 text-white font-semibold disabled:opacity-50"
+                >
+                  {savingContact ? '…' : 'Save'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -122,7 +122,7 @@ export default function CampaignSmsThread({
     try {
       const normalizedSelected = normalizePhone(phoneNumber);
       const [messagesResponse, callsResponse] = await Promise.all([
-        API.get('/api/messages', { params: { thread: phoneNumber, limit: 100 } }).catch(() => ({
+        API.get('/api/messages', { params: { thread: phoneNumber, limit: 2000 } }).catch(() => ({
           error: true,
           data: null,
         })),

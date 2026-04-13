@@ -16,6 +16,7 @@ import {
   getActiveAddonAmounts,
   parseLoadedCreditsInput
 } from "../../services/subscriptionAddonCreditService.js";
+import { applyUserEntitlementsForPlan } from "../../services/userPlanEntitlementsService.js";
 
 const router = express.Router();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
@@ -203,6 +204,8 @@ async function performAdminAssignSubscription({ userId, planId, loadedCreditsInp
       smsUsed: "",
     },
   });
+
+  await applyUserEntitlementsForPlan(userId, plan);
 
   return {
     ok: true,
@@ -477,6 +480,8 @@ router.post("/subscription/change-plan", requireAdmin, async (req, res) => {
 
     await subscription.save();
 
+    await applyUserEntitlementsForPlan(userId, plan);
+
     res.json({
       success: true,
       message: "Subscription plan changed successfully",
@@ -708,6 +713,8 @@ router.post("/subscription/set-trial", requireAdmin, async (req, res) => {
 
     applyPlanSnapshotToSubscription(subscription, trialPlan);
     await subscription.save();
+
+    await applyUserEntitlementsForPlan(userId, trialPlan);
 
     res.json({
       success: true,

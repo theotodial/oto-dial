@@ -32,6 +32,10 @@ export function inferPlanTypeFromEntity(entity = {}) {
     .trim()
     .toLowerCase();
 
+  if (normalizedName.includes("sms campaign")) {
+    return "sms_campaign";
+  }
+
   if (normalizedName.includes("unlimited")) {
     return UNLIMITED_PLAN_TYPE;
   }

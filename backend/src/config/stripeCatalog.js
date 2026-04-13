@@ -6,12 +6,17 @@ import {
   UNLIMITED_PLAN_TYPE,
   UNLIMITED_STRIPE_PRICE_ID
 } from "../constants/unlimitedPlan.js";
+import {
+  SMS_CAMPAIGN_PLAN_TYPE,
+  SMS_CAMPAIGN_STRIPE_PRICE_ID
+} from "../constants/smsCampaignPlan.js";
 
 export const STRIPE_PLAN_PRICE_IDS = {
   basic: "price_1SlbCBCxZc7GK7QKVTtMnI97",
   super: "price_1SxHV2CxZc7GK7QKydR5iwQH",
   [UNLIMITED_PLAN_TYPE]: UNLIMITED_STRIPE_PRICE_ID,
-  [AFFILIATE_UNLIMITED_PLAN_TYPE]: AFFILIATE_UNLIMITED_STRIPE_PRICE_ID
+  [AFFILIATE_UNLIMITED_PLAN_TYPE]: AFFILIATE_UNLIMITED_STRIPE_PRICE_ID,
+  [SMS_CAMPAIGN_PLAN_TYPE]: SMS_CAMPAIGN_STRIPE_PRICE_ID
 };
 
 export const STRIPE_ADDON_PRICE_IDS = {
@@ -25,6 +30,13 @@ function normalizePlanName(name) {
 
 export function getCanonicalPlanPriceId(plan) {
   const explicitType = normalizePlanName(plan?.type || plan?.planType);
+  if (
+    explicitType === SMS_CAMPAIGN_PLAN_TYPE ||
+    plan?.stripePriceId === SMS_CAMPAIGN_STRIPE_PRICE_ID ||
+    Boolean(plan?.smsCampaignPlan)
+  ) {
+    return plan?.stripePriceId || STRIPE_PLAN_PRICE_IDS[SMS_CAMPAIGN_PLAN_TYPE];
+  }
   if (explicitType === AFFILIATE_UNLIMITED_PLAN_TYPE) {
     return STRIPE_PLAN_PRICE_IDS[AFFILIATE_UNLIMITED_PLAN_TYPE];
   }
@@ -55,6 +67,14 @@ export function getCanonicalPlanPriceId(plan) {
     Number(plan?.limits?.minutesTotal || 0) >= 3600
   ) {
     return STRIPE_PLAN_PRICE_IDS[UNLIMITED_PLAN_TYPE];
+  }
+  if (Number(plan?.price || 0) >= 80 && Number(plan?.price || 0) < 119) {
+    const looksSmsOnly =
+      Number(plan?.limits?.minutesTotal || 0) === 0 &&
+      Number(plan?.limits?.smsTotal || 0) >= 500;
+    if (looksSmsOnly) {
+      return plan?.stripePriceId || STRIPE_PLAN_PRICE_IDS[SMS_CAMPAIGN_PLAN_TYPE];
+    }
   }
   if (
     Number(plan?.price || 0) >= 29.99 ||
@@ -91,6 +111,9 @@ export function getCanonicalAddonPriceId(addon) {
 }
 
 export function getCanonicalPlanKeyFromPriceId(priceId) {
+  if (priceId === STRIPE_PLAN_PRICE_IDS[SMS_CAMPAIGN_PLAN_TYPE]) {
+    return SMS_CAMPAIGN_PLAN_TYPE;
+  }
   if (priceId === STRIPE_PLAN_PRICE_IDS[AFFILIATE_UNLIMITED_PLAN_TYPE]) {
     return AFFILIATE_UNLIMITED_PLAN_TYPE;
   }

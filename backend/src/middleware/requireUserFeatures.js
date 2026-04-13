@@ -1,6 +1,12 @@
 import { featuresMatchMiddleware } from "../utils/userFeatures.js";
 
 export function requireVoiceEnabled(req, res, next) {
+  if (req.subscription?.voiceCallsEnabled === false) {
+    return res.status(403).json({
+      error: "Voice is not included on your current plan",
+      code: "VOICE_PLAN_BLOCKED",
+    });
+  }
   if (!featuresMatchMiddleware(req.user, "voice")) {
     return res.status(403).json({
       error: "Voice is not enabled for this account",

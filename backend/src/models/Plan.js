@@ -98,6 +98,13 @@ const planSchema = new mongoose.Schema(
       default: true
     },
 
+    // SMS Campaign product: SMS-only plan, pro campaign UI, no voice; Mongo is source of truth.
+    smsCampaignPlan: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+
     // Use active boolean instead of status enum for consistency
     active: {
       type: Boolean,

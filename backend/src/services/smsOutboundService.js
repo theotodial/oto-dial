@@ -1,6 +1,7 @@
 import { getTelnyx } from "../../config/telnyx.js";
 import SMS from "../models/SMS.js";
 import PhoneNumber from "../models/PhoneNumber.js";
+import User from "../models/User.js";
 import {
   checkUnlimitedUsageBeforeAction,
   createSuspiciousActivityErrorPayload,
@@ -166,7 +167,16 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null }) {
       return { ok: false, error: "No phone number assigned", status: 400, retryable: false };
     }
 
-    if (!phone.messagingProfileId) {
+    const envProfileId = String(process.env.TELNYX_MESSAGING_PROFILE_ID || "").trim();
+    let messagingProfileId = String(phone.messagingProfileId || "").trim();
+    if (!messagingProfileId) {
+      const userDoc = await User.findById(userId).select("messagingProfileId").lean();
+      messagingProfileId = String(userDoc?.messagingProfileId || "").trim();
+    }
+    if (!messagingProfileId && envProfileId) {
+      messagingProfileId = envProfileId;
+    }
+    if (!messagingProfileId) {
       return {
         ok: false,
         error: "Messaging profile not configured for this number",
@@ -179,7 +189,7 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null }) {
     const from = format(phone.phoneNumber);
 
     const response = await telnyx.messages.send({
-      messaging_profile_id: phone.messagingProfileId,
+      messaging_profile_id: messagingProfileId,
       from,
       to: toFormatted,
       text,

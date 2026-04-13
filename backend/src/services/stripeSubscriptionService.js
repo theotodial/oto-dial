@@ -11,13 +11,16 @@ import { getStripe } from "../../config/stripe.js";
 import { syncPaidInvoicesFromStripe } from "./stripeInvoiceSyncService.js";
 import {
   getCanonicalPlanKeyFromPriceId,
-  isKnownAddonPriceId
+  isKnownAddonPriceId,
+  STRIPE_PLAN_PRICE_IDS
 } from "../config/stripeCatalog.js";
+import { SMS_CAMPAIGN_PLAN_TYPE } from "../constants/smsCampaignPlan.js";
 import {
   applyPlanSnapshotToSubscription
 } from "./subscriptionPlanSnapshotService.js";
 import { getServerDayKey } from "./unlimitedUsageService.js";
 import { getLatestSubscription } from "./subscriptionService.js";
+import { applyUserEntitlementsForPlan } from "./userPlanEntitlementsService.js";
 
 const MUTABLE_MONGO_STATUSES = ["active", "pending_activation", "past_due", "incomplete"];
 const REPAIRABLE_STRIPE_STATUSES = new Set(["active", "trialing", "past_due", "incomplete"]);
@@ -263,6 +266,19 @@ async function resolvePlan({
       return basicPlan;
     }
   }
+  if (canonicalPlanKey === SMS_CAMPAIGN_PLAN_TYPE) {
+    const smsCampaign = await Plan.findOne({
+      $or: [
+        { type: SMS_CAMPAIGN_PLAN_TYPE },
+        { stripePriceId: STRIPE_PLAN_PRICE_IDS[SMS_CAMPAIGN_PLAN_TYPE] },
+        { smsCampaignPlan: true }
+      ],
+      active: true
+    });
+    if (smsCampaign) {
+      return smsCampaign;
+    }
+  }
 
   if (planName) {
     const byName = await Plan.findOne({
@@ -476,6 +492,11 @@ async function activateSubscriptionAtomic({
     session.endSession();
 
     await updateAnalyticsForActivatedSubscription(user._id, target._id);
+
+    const planDoc = await Plan.findById(target.planId).lean();
+    if (planDoc) {
+      await applyUserEntitlementsForPlan(user._id, planDoc);
+    }
 
     return target;
   } catch (err) {
