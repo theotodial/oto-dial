@@ -34,7 +34,7 @@ function Billing() {
   const isMountedRef = useRef(true);
   const [searchParams] = useSearchParams();
   const { user, isAuthenticated } = useAuth();
-  const { subscription, refreshSubscription } = useSubscription();
+  const { subscription, usage, refreshSubscription } = useSubscription();
 
   useEffect(() => {
     setCurrentSubscription(subscription);
@@ -419,17 +419,26 @@ function Billing() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             {currentSubscription && (
               (() => {
-                const isUnlimitedCurrent =
-                  Boolean(currentSubscription.isUnlimited || currentSubscription.displayUnlimited);
+                const legacyAll = Boolean(
+                  currentSubscription.isUnlimited || currentSubscription.displayUnlimited
+                );
+                const uMin =
+                  currentSubscription.unlimitedMinutesDisplay ?? legacyAll;
+                const uSms =
+                  currentSubscription.unlimitedSmsDisplay ?? legacyAll;
+                const minPart = uMin
+                  ? "∞ minutes"
+                  : `${(Number(usage?.minutesRemaining ?? currentSubscription.minutesRemaining ?? 0)).toFixed(1)} minutes`;
+                const smsPart = uSms
+                  ? "∞ SMS"
+                  : `${Number(usage?.smsRemaining ?? currentSubscription.smsRemaining ?? 0)} SMS`;
                 return (
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
                 <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                   Current plan: {currentSubscription.planName}
                 </span>
                 <span className="block mt-0.5">
-                        {isUnlimitedCurrent
-                          ? "∞ minutes • ∞ SMS remaining"
-                          : `${(Number(currentSubscription.minutesRemaining ?? 0)).toFixed(1)} minutes • ${Number(currentSubscription.smsRemaining ?? 0)} SMS remaining`}
+                        {`${minPart} • ${smsPart} remaining`}
                 </span>
               </div>
                 );

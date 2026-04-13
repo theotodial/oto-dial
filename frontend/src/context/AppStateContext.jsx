@@ -33,6 +33,11 @@ export function inactiveSubscriptionBootstrap() {
     isActive: false,
     isManuallyEnabled: false,
     showUsage: false,
+    planType: null,
+    displayUnlimited: false,
+    isUnlimited: false,
+    unlimitedMinutesDisplay: false,
+    unlimitedSmsDisplay: false,
   };
 }
 

@@ -71,7 +71,8 @@ function Dashboard() {
     remainingMinutes: 0,
     remainingSMS: 0,
     planName: 'No Plan',
-    displayUnlimited: false
+    unlimitedMinutesDisplay: false,
+    unlimitedSmsDisplay: false,
   });
   const [extrasLoading, setExtrasLoading] = useState(false);
   const [error, setError] = useState('');
@@ -98,18 +99,24 @@ function Dashboard() {
         remainingMinutes: 0,
         remainingSMS: 0,
         planName: 'No Plan',
-        displayUnlimited: false
+        unlimitedMinutesDisplay: false,
+        unlimitedSmsDisplay: false,
       });
       return;
     }
 
-    const isUnlimitedPlan =
+    const legacyAll =
       Boolean(subscription.isUnlimited || subscription.displayUnlimited);
+    const unlimitedMinutes =
+      subscription.unlimitedMinutesDisplay ?? legacyAll;
+    const unlimitedSms = subscription.unlimitedSmsDisplay ?? legacyAll;
+
     setPackageDetails({
-      remainingMinutes: isUnlimitedPlan ? '∞' : (usage?.minutesRemaining ?? 0),
-      remainingSMS: isUnlimitedPlan ? '∞' : (usage?.smsRemaining ?? 0),
+      remainingMinutes: unlimitedMinutes ? '∞' : (usage?.minutesRemaining ?? 0),
+      remainingSMS: unlimitedSms ? '∞' : (usage?.smsRemaining ?? 0),
       planName: subscription.planName || 'No Plan',
-      displayUnlimited: isUnlimitedPlan
+      unlimitedMinutesDisplay: unlimitedMinutes,
+      unlimitedSmsDisplay: unlimitedSms,
     });
   }, [subscription, usage, subscriptionHydrated]);
 
@@ -325,7 +332,7 @@ function Dashboard() {
             <div className="flex items-center justify-between">
               <span className="text-sm opacity-90">Remaining Minutes</span>
               <span className="text-2xl font-bold">
-                {packageDetails.displayUnlimited
+                {packageDetails.unlimitedMinutesDisplay
                   ? '∞'
                   : parseFloat(packageDetails?.remainingMinutes || 0).toFixed(2)}
               </span>
@@ -333,7 +340,7 @@ function Dashboard() {
             <div className="flex items-center justify-between">
               <span className="text-sm opacity-90">Remaining SMS</span>
               <span className="text-2xl font-bold">
-                {packageDetails.displayUnlimited
+                {packageDetails.unlimitedSmsDisplay
                   ? '∞'
                   : (packageDetails?.remainingSMS || 0).toLocaleString()}
               </span>

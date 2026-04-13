@@ -7,7 +7,7 @@ import API from '../api';
 function SubscriptionDetails() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { refreshSubscription } = useSubscription();
+  const { refreshSubscription, usage } = useSubscription();
   const [subscription, setSubscription] = useState(null);
   const [statistics, setStatistics] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -213,7 +213,11 @@ function SubscriptionDetails() {
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Remaining Minutes</p>
                 <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-                  {subscription?.isUnlimited ? '∞' : parseFloat(subscription?.minutesRemaining ?? 0).toFixed(2)}
+                  {(subscription?.unlimitedMinutesDisplay ?? subscription?.isUnlimited)
+                    ? '∞'
+                    : parseFloat(
+                        usage?.minutesRemaining ?? subscription?.minutesRemaining ?? 0
+                      ).toFixed(2)}
                 </p>
               </div>
               <div>
@@ -225,7 +229,9 @@ function SubscriptionDetails() {
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Remaining SMS</p>
                 <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-                  {subscription?.isUnlimited ? '∞' : Number(subscription?.smsRemaining ?? 0)}
+                  {(subscription?.unlimitedSmsDisplay ?? subscription?.isUnlimited)
+                    ? '∞'
+                    : Number(usage?.smsRemaining ?? subscription?.smsRemaining ?? 0)}
                 </p>
               </div>
             </div>

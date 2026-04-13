@@ -3,6 +3,7 @@ import PhoneNumber from "../models/PhoneNumber.js";
 import { computeUsage } from "./usageComputationService.js";
 import { getCanonicalUsage } from "./usage/getCanonicalUsage.js";
 import { getServerDayKey, isUnlimitedSubscription } from "./unlimitedUsageService.js";
+import { getSubscriptionUsageDisplayFlags } from "../utils/subscriptionDisplayFlags.js";
 import {
   applyCustomPackageToSubscription,
   getActiveCustomPackage,
@@ -387,6 +388,11 @@ export function buildPublicSubscriptionState(subscription) {
       isActive: false,
       isManuallyEnabled: false,
       showUsage: false,
+      planType: null,
+      displayUnlimited: false,
+      isUnlimited: false,
+      unlimitedMinutesDisplay: false,
+      unlimitedSmsDisplay: false,
     };
   }
 
@@ -400,6 +406,7 @@ export function buildPublicSubscriptionState(subscription) {
       (Number(subscription.limits?.smsTotal ?? 0) > 0 ||
         Number(subscription.limits?.minutesTotal ?? 0) > 0)
   );
+  const uiFlags = getSubscriptionUsageDisplayFlags(subscription);
   return {
     id: subscription.id ?? subscription._id ?? null,
     status: subscription.status || "inactive",
@@ -413,5 +420,12 @@ export function buildPublicSubscriptionState(subscription) {
     isActive,
     isManuallyEnabled,
     showUsage: subscription.showUsage !== false,
+    planType: subscription.planType ?? null,
+    displayUnlimited: Boolean(subscription.displayUnlimited),
+    isUnlimited: Boolean(isUnlimitedSubscription(subscription)),
+    unlimitedMinutesDisplay:
+      subscription.unlimitedMinutesDisplay ?? uiFlags.unlimitedMinutesDisplay,
+    unlimitedSmsDisplay:
+      subscription.unlimitedSmsDisplay ?? uiFlags.unlimitedSmsDisplay,
   };
 }

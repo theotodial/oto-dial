@@ -2,6 +2,8 @@ import express from "express";
 import User from "../models/User.js";
 import { getLatestSubscription } from "../services/subscriptionService.js";
 import { getCanonicalUsage } from "../services/usage/getCanonicalUsage.js";
+import { isUnlimitedSubscription } from "../services/unlimitedUsageService.js";
+import { getSubscriptionUsageDisplayFlags } from "../utils/subscriptionDisplayFlags.js";
 
 const router = express.Router();
 
@@ -49,6 +51,7 @@ router.get("/bootstrap", async (req, res) => {
       const isManuallyEnabled =
         Number(rawLimits.smsTotal ?? 0) > 0 ||
         Number(rawLimits.minutesTotal ?? 0) > 0;
+      const uiFlags = getSubscriptionUsageDisplayFlags(latestSub);
 
       subscription = {
         id: latestSub._id,
@@ -60,6 +63,11 @@ router.get("/bootstrap", async (req, res) => {
         isActive: latestSub.status === "active",
         isManuallyEnabled,
         showUsage: true,
+        planType: latestSub.planType ?? null,
+        displayUnlimited: Boolean(latestSub.displayUnlimited),
+        isUnlimited: Boolean(isUnlimitedSubscription(latestSub)),
+        unlimitedMinutesDisplay: uiFlags.unlimitedMinutesDisplay,
+        unlimitedSmsDisplay: uiFlags.unlimitedSmsDisplay,
       };
 
       usage = {

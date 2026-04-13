@@ -29,7 +29,7 @@ export function getPlanFeatureBullets(plan) {
     return [
       "Free Virtual Number",
       "Unlimited voice minutes (fair-use policy)",
-      "Unlimited SMS (fair-use policy)",
+      "SMS not included — add SMS packs from Billing if needed",
       "Email support",
     ];
   }

@@ -50,7 +50,7 @@ const DEFAULT_MARKETING_PLANS = [
     features: [
       'Free Virtual Number',
       'Unlimited voice minutes (fair-use policy)',
-      'Unlimited SMS (fair-use policy)',
+      'SMS not included — add SMS packs from Billing if needed',
       'Email Support',
     ],
     cta: 'Get Started Instantly',
