@@ -6,7 +6,8 @@ import User from "../models/User.js";
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import { scheduleBackgroundSelfHeal } from "../services/stripeSubscriptionService.js";
-import { cacheKeys, setCachedJson } from "../services/cache.service.js";
+import { cacheKeys, deleteCachedKey } from "../services/cache.service.js";
+import { normalizeFeatures } from "../utils/userFeatures.js";
 import { loadLatestSubscriptionDocument } from "../services/subscriptionService.js";
 import {
   attachAffiliateReferralToUser,
@@ -592,7 +593,8 @@ router.post("/register", async (req, res) => {
         id: user._id,
         email: user.email,
         role: user.role,
-        isEmailVerified: false
+        isEmailVerified: false,
+        features: normalizeFeatures(user),
       }
     });
   } catch (err) {
@@ -706,6 +708,7 @@ router.post("/login", async (req, res) => {
       user.isEmailVerified === true ||
       user.isEmailVerified === undefined;
 
+    const featDoc = await User.findById(user._id).select("features").lean();
     const authUserPayload = {
       id: user._id,
       _id: user._id,
@@ -713,10 +716,11 @@ router.post("/login", async (req, res) => {
       email: user.email,
       role: user.role,
       status: user.status,
-      isEmailVerified
+      isEmailVerified,
+      features: normalizeFeatures(featDoc || user),
     };
 
-    await setCachedJson(cacheKeys.userProfile(user._id), authUserPayload, 300);
+    await deleteCachedKey(cacheKeys.userProfile(user._id));
     scheduleBackgroundSelfHeal(user._id, "login");
 
     res.json({

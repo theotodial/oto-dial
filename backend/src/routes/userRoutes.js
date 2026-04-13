@@ -8,6 +8,7 @@ import {
   buildEffectiveUsage,
   loadUserSubscription,
 } from "../services/subscriptionService.js";
+import { normalizeFeatures } from "../utils/userFeatures.js";
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -61,7 +62,7 @@ router.get("/me", async (req, res) => {
   try {
     const userId = req.user._id;
     const [user, resolvedSubscription] = await Promise.all([
-      User.findById(userId).select("_id name email isEmailVerified"),
+      User.findById(userId).select("_id name email isEmailVerified features"),
       loadUserSubscription(userId),
     ]);
 
@@ -105,7 +106,8 @@ router.get("/me", async (req, res) => {
         id: user?._id || req.user._id,
         name: user?.name || req.user.name || "",
         email: user?.email || req.user.email,
-        isEmailVerified: user?.isEmailVerified !== false
+        isEmailVerified: user?.isEmailVerified !== false,
+        features: normalizeFeatures(user || req.user),
       },
       subscription: buildPublicSubscriptionState(resolvedSubscription),
       customPackage: resolvedSubscription?.customPackage || null,

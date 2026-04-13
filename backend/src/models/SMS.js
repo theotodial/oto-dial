@@ -8,6 +8,13 @@ const smsSchema = new mongoose.Schema(
       ref: "User",
     },
 
+    campaign: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Campaign",
+      default: null,
+      index: true,
+    },
+
     to: {
       type: String,
       required: true

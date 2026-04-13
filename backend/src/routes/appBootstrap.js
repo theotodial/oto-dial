@@ -4,6 +4,7 @@ import { getLatestSubscription } from "../services/subscriptionService.js";
 import { getCanonicalUsage } from "../services/usage/getCanonicalUsage.js";
 import { isUnlimitedSubscription } from "../services/unlimitedUsageService.js";
 import { getSubscriptionUsageDisplayFlags } from "../utils/subscriptionDisplayFlags.js";
+import { normalizeFeatures } from "../utils/userFeatures.js";
 
 const router = express.Router();
 
@@ -28,7 +29,7 @@ router.get("/bootstrap", async (req, res) => {
     });
 
     const [userDoc, latestSub] = await Promise.all([
-      User.findById(userId).select("_id name email isEmailVerified").lean(),
+      User.findById(userId).select("_id name email isEmailVerified features").lean(),
       getLatestSubscription(userId),
     ]);
 
@@ -39,6 +40,7 @@ router.get("/bootstrap", async (req, res) => {
           name: userDoc.name || "",
           email: userDoc.email,
           isEmailVerified: userDoc.isEmailVerified !== false,
+          features: normalizeFeatures(userDoc),
         }
       : null;
 

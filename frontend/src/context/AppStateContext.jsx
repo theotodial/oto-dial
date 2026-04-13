@@ -41,6 +41,14 @@ export function inactiveSubscriptionBootstrap() {
   };
 }
 
+function normalizeClientFeatures(u) {
+  const f = u?.features;
+  return {
+    voiceEnabled: f?.voiceEnabled !== false,
+    campaignEnabled: Boolean(f?.campaignEnabled),
+  };
+}
+
 function normalizeUserFromLoginOrMe(u) {
   if (!u) return null;
   const id = u._id ?? u.id;
@@ -51,6 +59,7 @@ function normalizeUserFromLoginOrMe(u) {
     name: u.name || u.firstName || "",
     email: u.email,
     isEmailVerified: u.isEmailVerified !== false,
+    features: normalizeClientFeatures(u),
   };
 }
 
@@ -89,7 +98,10 @@ export function AppStateProvider({ children }) {
   }, []);
 
   const applyBootstrapData = useCallback((data, activeToken) => {
-    const nextUser = data?.user || null;
+    const rawUser = data?.user || null;
+    const nextUser = rawUser
+      ? { ...rawUser, features: normalizeClientFeatures(rawUser) }
+      : null;
     const nextSubscription = data?.subscription || null;
     const nextUsage = data?.usage ?? emptyUsageBootstrap();
     setUser(nextUser);

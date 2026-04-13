@@ -228,6 +228,17 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
+    features: {
+      voiceEnabled: {
+        type: Boolean,
+        default: true,
+      },
+      campaignEnabled: {
+        type: Boolean,
+        default: false,
+      },
+    },
+
     // Identity verification
     identityVerification: {
       status: {

@@ -43,6 +43,33 @@ function AdminUserDetail() {
   const [packageSmsEnabled, setPackageSmsEnabled] = useState(true);
   const [hasMongoSubscription, setHasMongoSubscription] = useState(false);
   const [subscriptionPeriodEnd, setSubscriptionPeriodEnd] = useState('');
+  const [featureSaving, setFeatureSaving] = useState(false);
+
+  const userFeatures = user?.features || { voiceEnabled: true, campaignEnabled: false };
+  const voiceFeatureOn = userFeatures.voiceEnabled !== false;
+  const campaignFeatureOn = Boolean(userFeatures.campaignEnabled);
+
+  const handleFeaturesSave = async (patch) => {
+    setFeatureSaving(true);
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.patch(`/api/admin/users/${id}/features`, patch, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.error) {
+        alert(response.error);
+      } else if (response.data?.success) {
+        await fetchUser();
+        alert(response.data.message || 'Features updated');
+      } else {
+        alert(response.data?.error || 'Failed to update features');
+      }
+    } catch (err) {
+      alert(err?.error || err?.response?.data?.error || 'Failed to update features');
+    } finally {
+      setFeatureSaving(false);
+    }
+  };
 
   useEffect(() => {
     fetchUser();
@@ -711,6 +738,37 @@ function AdminUserDetail() {
                     </dd>
                   </div>
                 </dl>
+              </div>
+
+              {/* Product access */}
+              <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Product access</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  Control whether this user sees the Voice dialer and the SMS Campaign workspace. Mongo subscription
+                  remains the source of truth for usage and billing.
+                </p>
+                <div className="space-y-4">
+                  <label className="flex items-center justify-between gap-4 cursor-pointer">
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">Enable Voice</span>
+                    <input
+                      type="checkbox"
+                      className="h-5 w-5 rounded border-gray-300"
+                      checked={voiceFeatureOn}
+                      disabled={featureSaving}
+                      onChange={(e) => handleFeaturesSave({ voiceEnabled: e.target.checked })}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-4 cursor-pointer">
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">Enable Campaign</span>
+                    <input
+                      type="checkbox"
+                      className="h-5 w-5 rounded border-gray-300"
+                      checked={campaignFeatureOn}
+                      disabled={featureSaving}
+                      onChange={(e) => handleFeaturesSave({ campaignEnabled: e.target.checked })}
+                    />
+                  </label>
+                </div>
               </div>
 
               {/* Subscription */}

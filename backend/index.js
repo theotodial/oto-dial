@@ -21,6 +21,9 @@ import {
 } from "./src/services/stripeCatalogBootstrapService.js";
 import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
 import { startSystemHealthService } from "./src/services/systemHealthService.js";
+import { initCampaignQueue } from "./src/services/campaignQueueService.js";
+import { runCampaignJob } from "./src/services/campaignSendWorker.js";
+import { startCampaignSchedulePoller } from "./src/services/campaignSchedulePoller.js";
 import Subscription from "./src/models/Subscription.js";
 import SMS from "./src/models/SMS.js";
 import Contact from "./src/models/Contact.js";
@@ -29,6 +32,10 @@ import Call from "./src/models/Call.js";
 import authenticateUser from "./src/middleware/authenticateUser.js";
 import requireAdmin from "./src/middleware/requireAdmin.js";
 import loadSubscription from "./src/middleware/loadSubscription.js";
+import {
+  requireVoiceEnabled,
+  requireCampaignEnabled,
+} from "./src/middleware/requireUserFeatures.js";
 
 // ========================
 // ENV VALIDATION
@@ -81,6 +88,7 @@ import blogRoutes from "./src/routes/blogRoutes.js";
 import analyticsRoutes from "./src/routes/analyticsRoutes.js";
 import sitePublicRoutes from "./src/routes/sitePublic.js";
 import appBootstrapRoutes from "./src/routes/appBootstrap.js";
+import campaignRoutes from "./src/routes/campaignRoutes.js";
 import debugRoutes from "./src/routes/debugRoutes.js";
 import NotFoundLog from "./src/models/NotFoundLog.js";
 
@@ -392,16 +400,23 @@ app.use("/api/subscription", subscriptionCatalogRoutes);
 // Subscription GET handlers load their own lean doc — skip loadSubscription to avoid duplicate DB + phone scans
 app.use("/api/subscription", authenticateUser, subscriptionRoutes);
 app.use("/api/stripe", authenticateUser, stripeCheckoutRoutes);
-app.use("/api/dialer", authenticateUser, loadSubscription, dialerRoutes);
+app.use("/api/dialer", authenticateUser, loadSubscription, requireVoiceEnabled, dialerRoutes);
 app.use("/api/numbers", authenticateUser, loadSubscription, numberRoutes);
 app.use("/api/numbers", authenticateUser, loadSubscription, telnyxNumbersRoutes);
-app.use("/api/calls", authenticateUser, loadSubscription, callRoutes);
+app.use("/api/calls", authenticateUser, loadSubscription, requireVoiceEnabled, callRoutes);
 console.log("[CALL ROUTES MOUNTED] POST/GET /api/calls → authenticateUser + loadSubscription + callRoutes");
 app.use("/api/sms", authenticateUser, loadSubscription, smsRoutes);
+app.use(
+  "/api/campaign",
+  authenticateUser,
+  loadSubscription,
+  requireCampaignEnabled,
+  campaignRoutes
+);
 app.use("/api/messages", authenticateUser, loadSubscription, messageRoutes);
 app.use("/api/contacts", authenticateUser, contactRoutes);
 app.use("/api/push", pushRoutes);
-app.use("/api/webrtc", authenticateUser, loadSubscription, webrtcRoutes);
+app.use("/api/webrtc", authenticateUser, loadSubscription, requireVoiceEnabled, webrtcRoutes);
 app.use("/api/usage", authenticateUser, loadSubscription, usageStatisticsRoutes);
 app.use("/api/support", supportRoutes); // Support routes (authenticateUser is in the route file)
 app.use("/api/blog", blogRoutes); // Blog routes (public and admin routes inside)
@@ -571,6 +586,15 @@ async function startServer() {
       startSystemHealthService();
     } catch (healthErr) {
       console.error("⚠️ System health service failed to start:", healthErr.message);
+    }
+
+    try {
+      initCampaignQueue(async ({ campaignId, userId }) => {
+        await runCampaignJob(campaignId, userId);
+      });
+      startCampaignSchedulePoller();
+    } catch (campaignInfraErr) {
+      console.error("⚠️ Campaign scheduler/queue failed to start:", campaignInfraErr.message);
     }
 
     server.listen(PORT, () => {

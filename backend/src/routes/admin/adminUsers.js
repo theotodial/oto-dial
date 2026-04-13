@@ -22,6 +22,7 @@ import {
   buildPublicSubscriptionState,
   loadUserSubscription,
 } from "../../services/subscriptionService.js";
+import { normalizeFeatures } from "../../utils/userFeatures.js";
 
 const router = express.Router();
 
@@ -382,7 +383,7 @@ router.get(
     try {
       const [user, effectiveSubscription, recentCalls, recentMessages] = await Promise.all([
         User.findById(req.params.id)
-          .select("_id email name firstName lastName status createdAt isEmailVerified")
+          .select("_id email name firstName lastName status createdAt isEmailVerified features")
           .lean(),
         loadUserSubscription(req.params.id),
         Call.find({ user: req.params.id })
@@ -433,6 +434,7 @@ router.get(
           status: user.status || "active",
           isEmailVerified: user.isEmailVerified !== false,
           createdAt: user.createdAt,
+          features: normalizeFeatures(user),
           identity: {
             id: user._id,
             email: user.email,

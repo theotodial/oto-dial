@@ -4,6 +4,7 @@ import AdminLog from "../../models/AdminLog.js";
 import User from "../../models/User.js";
 import CustomPackage from "../../models/CustomPackage.js";
 import { clearAdminUsersCache } from "../../services/adminUsersCacheService.js";
+import { cacheKeys, deleteCachedKey } from "../../services/cache.service.js";
 import { invalidateUserSubscriptionCache } from "../../services/subscriptionService.js";
 import { sanitizeCustomPackageInput } from "../../services/customPackageService.js";
 
@@ -137,6 +138,53 @@ router.patch("/:id/password", requireAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       error: "Failed to update user password"
+    });
+  }
+});
+
+router.patch("/:id/features", requireAdmin, async (req, res) => {
+  try {
+    const voiceEnabled = req.body?.voiceEnabled;
+    const campaignEnabled = req.body?.campaignEnabled;
+    if (voiceEnabled === undefined && campaignEnabled === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: "Provide voiceEnabled and/or campaignEnabled",
+      });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+
+    if (!user.features) {
+      user.features = {};
+    }
+    if (voiceEnabled !== undefined) {
+      user.features.voiceEnabled = Boolean(voiceEnabled);
+    }
+    if (campaignEnabled !== undefined) {
+      user.features.campaignEnabled = Boolean(campaignEnabled);
+    }
+    user.markModified("features");
+    await user.save();
+    await deleteCachedKey(cacheKeys.userProfile(req.params.id));
+
+    res.json({
+      success: true,
+      message: "Feature flags updated",
+      features: {
+        voiceEnabled: user.features.voiceEnabled !== false,
+        campaignEnabled: Boolean(user.features.campaignEnabled),
+      },
+    });
+    clearAdminUsersCache();
+  } catch (err) {
+    console.error("Update user features error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to update feature flags",
     });
   }
 });

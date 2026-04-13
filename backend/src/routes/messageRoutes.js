@@ -29,7 +29,7 @@ router.get("/", async (req, res) => {
   try {
     const userId = req.userId;
     const limitRaw = Number.parseInt(req.query.limit, 10);
-    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 20) : 20;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 20;
     const thread = String(req.query.thread || "").trim();
     const query = { user: userId };
 
@@ -43,7 +43,7 @@ router.get("/", async (req, res) => {
     
     // Fetch SMS messages for this user
     const messages = await SMS.find(query)
-      .select("to from body createdAt direction status")
+      .select("to from body createdAt direction status campaign")
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
@@ -61,7 +61,8 @@ router.get("/", async (req, res) => {
         timestamp: msg.createdAt,
         direction: msg.direction || 'outbound',
         status: msg.status,
-        sender: msg.direction === 'inbound' ? 'other' : 'user'
+        sender: msg.direction === 'inbound' ? 'other' : 'user',
+        campaignId: msg.campaign ? String(msg.campaign) : null,
       }))
     });
   } catch (err) {

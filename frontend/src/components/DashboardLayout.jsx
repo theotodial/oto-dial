@@ -34,6 +34,7 @@ function DashboardLayout({ children }) {
     '/dashboard',
     '/recents',
     '/voice',
+    '/campaign',
     '/support'
   ];
 

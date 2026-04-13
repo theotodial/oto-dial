@@ -51,12 +51,11 @@ const MoonIcon = () => (
   </svg>
 );
 
-const navItems = [
-  { path: '/recents', label: 'Voice', icon: RecentsIcon },
-  { path: '/dashboard', label: 'Dashboard', icon: DashboardIcon },
-  { path: '/support', label: 'Support', icon: SupportIcon },
-];
-
+const CampaignIcon = () => (
+  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.25-1.929 7.25-5.25V18.75M5.436 13.683L3.604 5.416A1 1 0 004 5h2.5M5.436 13.683l6.092 3.348" />
+  </svg>
+);
 
 function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
   const location = useLocation();
@@ -64,6 +63,20 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
   const { isDarkMode, toggleTheme } = useTheme();
   const { logout, user: authUser } = useAuth();
   const display = authUser || {};
+  const f = authUser?.features || { voiceEnabled: true, campaignEnabled: false };
+  const voiceOn = f.voiceEnabled !== false;
+  const campaignOn = Boolean(f.campaignEnabled);
+  const homePath = voiceOn ? '/recents' : campaignOn ? '/campaign' : '/dashboard';
+
+  const navItems = [];
+  if (voiceOn) {
+    navItems.push({ path: '/recents', label: 'Voice', icon: RecentsIcon });
+  }
+  navItems.push({ path: '/dashboard', label: 'Dashboard', icon: DashboardIcon });
+  if (campaignOn) {
+    navItems.push({ path: '/campaign', label: 'Campaign', icon: CampaignIcon });
+  }
+  navItems.push({ path: '/support', label: 'Support', icon: SupportIcon });
 
   const handleLogout = async () => {
     await logout();
@@ -90,7 +103,7 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
       `}>
       {/* Logo */}
       <Link
-        to="/recents"
+        to={homePath}
         className="mb-8 block px-1"
         onClick={() => setMobileMenuOpen(false)}
         aria-label="OTO Dial home"

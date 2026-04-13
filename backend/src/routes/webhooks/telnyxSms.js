@@ -3,6 +3,15 @@ import SMS from "../../models/SMS.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import { recordSmsCost } from "../../services/telnyxCostCalculator.js";
 
+const INBOUND_OPT_OUT_KEYWORDS = new Set([
+  "STOP",
+  "STOPALL",
+  "UNSUBSCRIBE",
+  "CANCEL",
+  "END",
+  "QUIT",
+]);
+
 const router = express.Router();
 
 // Normalize phone number for comparison (strip + and spaces)
@@ -113,6 +122,25 @@ router.post("/", async (req, res) => {
     });
 
     console.log(`✅ Inbound SMS saved: ${fromNumber} -> ${toNumber} (userId: ${userId || 'unknown'}) [id: ${sms._id}]`);
+
+    if (userId) {
+      const upper = String(messageText || "").trim().toUpperCase();
+      const tokens = upper.split(/[^A-Z0-9]+/).filter(Boolean);
+      const hit =
+        INBOUND_OPT_OUT_KEYWORDS.has(upper) || tokens.some((t) => INBOUND_OPT_OUT_KEYWORDS.has(t));
+      if (hit) {
+        try {
+          const { recordOptOut, markCampaignRecipientsOptedOutForUser } = await import(
+            "../../services/optOutService.js"
+          );
+          await recordOptOut(userId, fromNumber);
+          await markCampaignRecipientsOptedOutForUser(userId, fromNumber);
+          console.log(`🚫 Opt-out recorded for ${fromNumber} (user ${userId})`);
+        } catch (optErr) {
+          console.warn("Opt-out handling failed:", optErr?.message || optErr);
+        }
+      }
+    }
 
     // RECORD COST IN IMMUTABLE LEDGER (TELNYX COST ENGINE)
     // This creates a permanent cost record based on admin-defined pricing

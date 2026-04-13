@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import Navbar from './Navbar';
 import DashboardLayout from './DashboardLayout';
 import ProtectedRoute from './ProtectedRoute';
+import FeatureProtectedRoute from './FeatureProtectedRoute';
 import PublicRoute from './PublicRoute';
 import GlobalCallOverlay from './GlobalCallOverlay';
 import EmailVerificationBanner from './EmailVerificationBanner';
@@ -15,6 +16,7 @@ import ResetPassword from '../pages/ResetPassword';
 import OAuthConsent from '../pages/OAuthConsent';
 import OAuthSuccess from '../pages/OAuthSuccess';
 import Recents from '../pages/Recents';
+import Campaign from '../pages/Campaign';
 import Dashboard from '../pages/Dashboard';
 import Contacts from '../pages/Contacts';
 import Billing from '../pages/Billing';
@@ -52,11 +54,18 @@ import Blog from '../pages/Blog';
 import BlogPost from '../pages/BlogPost';
 import AdminProtectedRoute from './AdminProtectedRoute';
 import AdminLayout from './AdminLayout';
+import SkeletonApp from './SkeletonApp';
 
 function HomeOrRedirect() {
-  const { token } = useAuth();
-  if (token) return <Navigate to="/recents" replace />;
-  return <Home />;
+  const { token, user, hydrated } = useAuth();
+  if (!token) return <Home />;
+  if (!hydrated) return <SkeletonApp />;
+  const f = user?.features || { voiceEnabled: true, campaignEnabled: false };
+  const voice = f.voiceEnabled !== false;
+  const camp = Boolean(f.campaignEnabled);
+  if (voice) return <Navigate to="/recents" replace />;
+  if (camp) return <Navigate to="/campaign" replace />;
+  return <Navigate to="/dashboard" replace />;
 }
 
 export default function AppShell() {
@@ -127,7 +136,42 @@ export default function AppShell() {
         <Route path="/adminbobby/site/seo" element={<AdminProtectedRoute><AdminLayout><SiteSeo /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/site/environment" element={<AdminProtectedRoute><AdminLayout><SiteEnvironment /></AdminLayout></AdminProtectedRoute>} />
 
-        <Route path="/recents" element={<ProtectedRoute><DashboardLayout><Recents /></DashboardLayout></ProtectedRoute>} />
+        <Route
+          path="/recents"
+          element={
+            <ProtectedRoute>
+              <DashboardLayout>
+                <FeatureProtectedRoute feature="voice">
+                  <Recents />
+                </FeatureProtectedRoute>
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/voice"
+          element={
+            <ProtectedRoute>
+              <DashboardLayout>
+                <FeatureProtectedRoute feature="voice">
+                  <Recents />
+                </FeatureProtectedRoute>
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/campaign"
+          element={
+            <ProtectedRoute>
+              <DashboardLayout>
+                <FeatureProtectedRoute feature="campaign">
+                  <Campaign />
+                </FeatureProtectedRoute>
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
         <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout><Dashboard /></DashboardLayout></ProtectedRoute>} />
         <Route path="/dialer" element={<Navigate to="/recents" replace />} />
         <Route path="/chat" element={<Navigate to="/recents" replace />} />
