@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import API from '../../api';
 import { notifySubscriptionChanged } from '../../utils/subscriptionSync';
+import { threadMatchesPeerPhone } from '../../utils/phoneThreadMatch';
 
 function normalizePhone(num) {
   return String(num || '').replace(/\D/g, '');
@@ -83,12 +84,15 @@ export default function CampaignSmsThread({
 }) {
   const messagesEndRef = useRef(null);
   const isMountedRef = useRef(true);
+  const threadPhoneRef = useRef(threadPhone);
+  threadPhoneRef.current = threadPhone;
   const lastInsertIdRef = useRef(null);
   const [userNumbers, setUserNumbers] = useState([]);
   const [chatItems, setChatItems] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
-  const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const sendInFlightRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -104,94 +108,148 @@ export default function CampaignSmsThread({
     setInputMessage((m) => (m ? `${m}\n${t}` : t));
   }, [insertSignal]);
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const numbersRes = await API.get('/api/numbers');
-        if (!isMountedRef.current || numbersRes.error) return;
-        setUserNumbers(numbersRes.data?.numbers || numbersRes.data || []);
-      } catch {
-        /* ignore */
-      }
-    };
-    load();
+  const loadUserNumbers = useCallback(async () => {
+    try {
+      const numbersRes = await API.get('/api/numbers');
+      if (!isMountedRef.current || numbersRes.error) return;
+      const list = numbersRes.data?.numbers ?? numbersRes.data ?? [];
+      setUserNumbers(Array.isArray(list) ? list : []);
+    } catch {
+      /* ignore */
+    }
   }, []);
 
-  const fetchChatMessages = useCallback(async (phoneNumber) => {
-    if (!phoneNumber) return;
-    try {
-      const normalizedSelected = normalizePhone(phoneNumber);
-      const [messagesResponse, callsResponse] = await Promise.all([
-        API.get('/api/messages', { params: { thread: phoneNumber, limit: 2000 } }).catch(() => ({
-          error: true,
-          data: null,
-        })),
-        API.get('/api/calls', { params: { thread: phoneNumber, limit: 100 } }).catch(() => ({
-          error: true,
-          data: null,
-        })),
-      ]);
-      const allItems = [];
-      if (messagesResponse.data?.messages) {
-        const filteredMessages = messagesResponse.data.messages
-          .filter((msg) => {
-            const msgPhone = msg.phone_number || msg.to || msg.from;
-            return normalizedSelected === normalizePhone(msgPhone);
-          })
-          .map((msg) => ({
-            ...msg,
-            type: 'message',
-            timestamp: msg.created_at || msg.timestamp || msg.createdAt,
-          }));
-        allItems.push(...filteredMessages);
-      }
-      if (callsResponse.data?.calls || callsResponse.data) {
-        const callsList = callsResponse.data?.calls || callsResponse.data || [];
-        const filteredCalls = callsList
-          .filter((call) => {
-            const callToPhone = call.to_number || call.toNumber || call.phoneNumber;
-            const callFromPhone = call.from_number || call.fromNumber;
-            return (
-              normalizedSelected === normalizePhone(callToPhone) ||
-              (callFromPhone && normalizedSelected === normalizePhone(callFromPhone))
-            );
-          })
-          .map((call) => ({
-            ...call,
-            type: 'call',
-            timestamp: call.createdAt || call.created_at || call.timestamp || call.date,
-            duration: call.durationSeconds ?? call.duration ?? call.call_duration ?? null,
-            durationSeconds: call.durationSeconds ?? call.duration ?? call.call_duration ?? null,
-            status: call.status || 'completed',
-            direction:
-              call.direction || (call.from_number || call.fromNumber ? 'outbound' : 'inbound'),
-          }));
-        allItems.push(...filteredCalls);
-      }
-      allItems.sort((a, b) => {
-        const dateA = new Date(a.timestamp || 0);
-        const dateB = new Date(b.timestamp || 0);
-        return dateA - dateB;
-      });
-      if (isMountedRef.current) {
-        setChatItems(allItems);
-        setThreadCache?.(phoneNumber, allItems);
-      }
-    } catch (err) {
-      console.error('Failed to fetch chat messages:', err);
-    }
-  }, [setThreadCache]);
+  useEffect(() => {
+    loadUserNumbers();
+  }, [loadUserNumbers, threadPhone]);
 
+  const THREAD_CHAT_MESSAGES_LIMIT = 150;
+  const THREAD_CHAT_CALLS_LIMIT = 40;
+
+  const mergeThreadItemsWithPending = useCallback((allItems, prev) => {
+    const pending = prev.filter((x) => x._localPending);
+    const stillPending = pending.filter((p) => {
+      const pText = String(p.message || p.text || '').trim();
+      return !allItems.some((s) => {
+        if (s.type !== 'message') return false;
+        const sText = String(s.message || s.text || s.body || '').trim();
+        if (sText !== pText) return false;
+        return s.direction === 'outbound' || s.sender === 'user';
+      });
+    });
+    const merged = [...allItems, ...stillPending].sort((a, b) => {
+      const dateA = new Date(a.timestamp || 0);
+      const dateB = new Date(b.timestamp || 0);
+      return dateA - dateB;
+    });
+    return merged;
+  }, []);
+
+  const buildThreadItems = useCallback((phoneNumber, messagesResponse, callsResponse) => {
+    const allItems = [];
+    if (messagesResponse?.data?.messages) {
+      const mapped = messagesResponse.data.messages.map((msg) => ({
+        ...msg,
+        type: 'message',
+        timestamp: msg.created_at || msg.timestamp || msg.createdAt,
+      }));
+      const filtered = mapped.filter((msg) => {
+        const peer = msg.phone_number || msg.to || msg.from;
+        return threadMatchesPeerPhone(phoneNumber, peer);
+      });
+      allItems.push(...(filtered.length > 0 ? filtered : mapped));
+    }
+    if (callsResponse?.data?.calls || callsResponse?.data) {
+      const callsList = callsResponse.data?.calls || callsResponse.data || [];
+      const filteredCalls = callsList
+        .filter((call) => {
+          const callToPhone = call.to_number || call.toNumber || call.phoneNumber;
+          const callFromPhone = call.from_number || call.fromNumber;
+          return (
+            threadMatchesPeerPhone(phoneNumber, callToPhone) ||
+            (callFromPhone && threadMatchesPeerPhone(phoneNumber, callFromPhone))
+          );
+        })
+        .map((call) => ({
+          ...call,
+          type: 'call',
+          timestamp: call.createdAt || call.created_at || call.timestamp || call.date,
+          duration: call.durationSeconds ?? call.duration ?? call.call_duration ?? null,
+          durationSeconds: call.durationSeconds ?? call.duration ?? call.call_duration ?? null,
+          status: call.status || 'completed',
+          direction:
+            call.direction || (call.from_number || call.fromNumber ? 'outbound' : 'inbound'),
+        }));
+      allItems.push(...filteredCalls);
+    }
+    allItems.sort((a, b) => {
+      const dateA = new Date(a.timestamp || 0);
+      const dateB = new Date(b.timestamp || 0);
+      return dateA - dateB;
+    });
+    return allItems;
+  }, []);
+
+  const fetchChatMessages = useCallback(
+    async (phoneNumber, options = {}) => {
+      const silent = Boolean(options.silent);
+      if (!phoneNumber) return;
+      try {
+        const messagesResponse = await API.get('/api/messages', {
+          params: { thread: phoneNumber, limit: THREAD_CHAT_MESSAGES_LIMIT },
+        }).catch(() => ({ error: true, data: null }));
+
+        if (threadPhoneRef.current !== phoneNumber) return;
+
+        const itemsMessagesOnly = buildThreadItems(phoneNumber, messagesResponse, null);
+        if (isMountedRef.current) {
+          setChatItems((prev) => {
+            const merged = mergeThreadItemsWithPending(itemsMessagesOnly, prev);
+            setThreadCache?.(phoneNumber, merged);
+            return merged;
+          });
+        }
+        if (!silent) setChatLoading(false);
+
+        const callsResponse = await API.get('/api/calls', {
+          params: { thread: phoneNumber, limit: THREAD_CHAT_CALLS_LIMIT },
+        }).catch(() => ({ error: true, data: null }));
+
+        if (!isMountedRef.current || threadPhoneRef.current !== phoneNumber) return;
+
+        const allItems = buildThreadItems(phoneNumber, messagesResponse, callsResponse);
+        setChatItems((prev) => {
+          const merged = mergeThreadItemsWithPending(allItems, prev);
+          setThreadCache?.(phoneNumber, merged);
+          return merged;
+        });
+      } catch (err) {
+        console.error('Failed to fetch chat messages:', err);
+        if (!silent && threadPhoneRef.current === phoneNumber) setChatLoading(false);
+      }
+    },
+    [buildThreadItems, mergeThreadItemsWithPending, setThreadCache]
+  );
+
+  // Initial / thread switch only — never tie to pollKey (Campaign pollTick every 5s was re-setting loading and glitching UI).
   useEffect(() => {
     if (threadPhone) {
       const cached = getThreadCache?.(threadPhone);
-      if (cached?.length) setChatItems(cached);
-      fetchChatMessages(threadPhone);
+      setChatItems(cached?.length ? cached : []);
+      setChatLoading(true);
+      fetchChatMessages(threadPhone, { silent: false });
       API.post('/api/messages/read-state', { phoneNumber: threadPhone }).catch(() => {});
     } else {
       setChatItems([]);
+      setChatLoading(false);
     }
-  }, [threadPhone, fetchChatMessages, pollKey, getThreadCache]);
+  }, [threadPhone, fetchChatMessages, getThreadCache]);
+
+  // Background refresh when parent poll fires; does not touch chatLoading.
+  useEffect(() => {
+    if (!threadPhone || pollKey < 1) return;
+    fetchChatMessages(threadPhone, { silent: true });
+  }, [pollKey, threadPhone, fetchChatMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -199,17 +257,45 @@ export default function CampaignSmsThread({
 
   const handleSendMessage = async (e) => {
     e?.preventDefault();
-    if (!inputMessage.trim() || sending || !threadPhone) return;
+    if (!inputMessage.trim() || !threadPhone || sendInFlightRef.current) return;
 
-    if (userNumbers.length === 0) {
-      setSendError('You need to purchase a number first.');
+    const numbersRes = await API.get('/api/numbers');
+    if (numbersRes.error) {
+      setSendError(numbersRes.error || 'Could not load your phone numbers. Try again.');
+      return;
+    }
+    const fresh = numbersRes.data?.numbers ?? numbersRes.data ?? [];
+    const list = Array.isArray(fresh) ? fresh : [];
+    setUserNumbers(list);
+    if (list.length === 0) {
+      setSendError('You need a number on your account. Ask support or buy one from the Dashboard.');
       return;
     }
 
     const messageText = inputMessage.trim();
+    const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const nowIso = new Date().toISOString();
+    const optimistic = {
+      id: optimisticId,
+      type: 'message',
+      _localPending: true,
+      direction: 'outbound',
+      sender: 'user',
+      status: 'sending',
+      message: messageText,
+      text: messageText,
+      body: messageText,
+      timestamp: nowIso,
+      created_at: nowIso,
+    };
+    setChatItems((prev) =>
+      [...prev, optimistic].sort(
+        (a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0)
+      )
+    );
     setInputMessage('');
-    setSending(true);
     setSendError('');
+    sendInFlightRef.current = true;
 
     try {
       const response = await API.post('/api/sms/send', {
@@ -218,17 +304,19 @@ export default function CampaignSmsThread({
       });
 
       if (response.error) {
+        setChatItems((prev) => prev.filter((x) => x.id !== optimisticId));
         setSendError(response.error);
         setInputMessage(messageText);
       } else {
         notifySubscriptionChanged();
-        await fetchChatMessages(threadPhone);
+        await fetchChatMessages(threadPhone, { silent: true });
       }
     } catch {
+      setChatItems((prev) => prev.filter((x) => x.id !== optimisticId));
       setSendError('Failed to send message. Please try again.');
       setInputMessage(messageText);
     } finally {
-      setSending(false);
+      sendInFlightRef.current = false;
     }
   };
 
@@ -245,7 +333,11 @@ export default function CampaignSmsThread({
   return (
     <div className={`flex flex-1 flex-col min-h-0 min-w-0 ${className}`}>
       <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0 bg-gray-50 dark:bg-slate-900">
-        {chatItems.length === 0 ? (
+        {chatLoading && chatItems.length === 0 ? (
+          <div className="text-center text-slate-500 dark:text-slate-400 text-sm py-12">
+            Loading messages…
+          </div>
+        ) : chatItems.length === 0 ? (
           <div className="text-center text-slate-500 dark:text-slate-400 text-sm py-12">
             No messages yet — start the conversation below.
           </div>
@@ -288,7 +380,8 @@ export default function CampaignSmsThread({
               );
             }
             const isOutbound = item.direction === 'outbound' || item.sender === 'user';
-            const del = deliveryLabel(item.status, item.direction);
+            const isPending = Boolean(item._localPending) || item.status === 'sending';
+            const del = isPending ? null : deliveryLabel(item.status, item.direction);
             return (
               <div
                 key={`msg-${item.id || idx}`}
@@ -299,7 +392,7 @@ export default function CampaignSmsThread({
                     isOutbound
                       ? 'bg-indigo-600 text-white'
                       : 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-600'
-                  }`}
+                  } ${isPending ? 'opacity-95 ring-1 ring-indigo-300/50 dark:ring-indigo-500/30' : ''}`}
                 >
                   {item.campaignId && (
                     <span
@@ -319,6 +412,11 @@ export default function CampaignSmsThread({
                     }`}
                   >
                     <span>{formatDate(item.timestamp || item.created_at)}</span>
+                    {isOutbound && isPending && (
+                      <span className="opacity-95" title="Sending or network slow">
+                        ⏱️ Sending…
+                      </span>
+                    )}
                     {isOutbound && del && <span className="opacity-90">· {del}</span>}
                   </div>
                 </div>
@@ -347,20 +445,16 @@ export default function CampaignSmsThread({
             }}
             placeholder="Type a message…"
             className="flex-1 px-4 py-2.5 rounded-full text-[15px] leading-snug focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-[#111111] dark:bg-[#1a1a1a] border border-slate-600/90 dark:border-slate-600 text-white placeholder:text-slate-500 placeholder:opacity-90"
-            disabled={sending}
           />
           <button
             type="submit"
-            disabled={!inputMessage.trim() || sending}
+            disabled={!inputMessage.trim()}
             className="w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            title="Send"
           >
-            {sending ? (
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-              </svg>
-            )}
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
           </button>
         </form>
       </div>

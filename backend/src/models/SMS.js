@@ -86,6 +86,9 @@ const smsSchema = new mongoose.Schema(
 
 smsSchema.index({ user: 1, createdAt: -1 });
 smsSchema.index({ user: 1, direction: 1, createdAt: -1 });
+// Thread list: $or on to/from with sort/limit
+smsSchema.index({ user: 1, to: 1, createdAt: -1 });
+smsSchema.index({ user: 1, from: 1, createdAt: -1 });
 smsSchema.plugin(mongoPerformancePlugin, { label: "messages" });
 
 export default mongoose.model("SMS", smsSchema);

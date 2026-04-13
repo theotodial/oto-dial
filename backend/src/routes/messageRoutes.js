@@ -13,11 +13,18 @@ function normalizePhone(phone) {
 function buildPhoneCandidates(phone) {
   const raw = String(phone || "").trim();
   const digits = normalizePhone(raw);
-  return Array.from(
-    new Set(
-      [raw, digits, digits ? `+${digits}` : null].filter(Boolean)
-    )
+  const set = new Set(
+    [raw, digits, digits ? `+${digits}` : null].filter(Boolean)
   );
+  if (digits.length === 10) {
+    set.add(`+1${digits}`);
+    set.add(`1${digits}`);
+  }
+  if (digits.length === 11 && digits.startsWith("1")) {
+    set.add(digits.slice(1));
+    set.add(`+${digits}`);
+  }
+  return Array.from(set);
 }
 
 /**

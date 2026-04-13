@@ -19,6 +19,26 @@ import { TERMINAL_STATUSES } from "../utils/callStateMachine.js";
 
 const router = express.Router();
 
+function normalizeThreadDigits(phone) {
+  if (!phone || typeof phone !== "string") return "";
+  return phone.replace(/\D/g, "");
+}
+
+function buildCallThreadCandidates(phone) {
+  const raw = String(phone || "").trim();
+  const digits = normalizeThreadDigits(raw);
+  const set = new Set([raw, digits, digits ? `+${digits}` : null].filter(Boolean));
+  if (digits.length === 10) {
+    set.add(`+1${digits}`);
+    set.add(`1${digits}`);
+  }
+  if (digits.length === 11 && digits.startsWith("1")) {
+    set.add(digits.slice(1));
+    set.add(`+${digits}`);
+  }
+  return Array.from(set);
+}
+
 const skipSubscriptionForCallCreate =
   process.env.CALL_DEBUG_SKIP_SUBSCRIPTION === "true";
 
@@ -302,17 +322,19 @@ router.get("/", async (req, res) => {
 
     const thread = String(req.query.thread || "").trim();
     if (thread) {
+      const candidates = buildCallThreadCandidates(thread);
       query.$or = [
-        { phoneNumber: thread },
-        { toNumber: thread },
-        { fromNumber: thread }
+        { phoneNumber: { $in: candidates } },
+        { toNumber: { $in: candidates } },
+        { fromNumber: { $in: candidates } }
       ];
     }
-    
+
     const limitRaw = parseInt(req.query.limit, 10);
+    const maxLimit = thread ? 200 : 20;
     const limit = Number.isFinite(limitRaw)
-      ? Math.min(Math.max(limitRaw, 1), 20)
-      : 20;
+      ? Math.min(Math.max(limitRaw, 1), maxLimit)
+      : thread ? 100 : 20;
     
     const calls = await Call.find(query)
       .select("phoneNumber toNumber fromNumber direction status createdAt durationSeconds")

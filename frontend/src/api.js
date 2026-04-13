@@ -5,8 +5,13 @@ import axios from "axios";
 // In production: uses VITE_API_URL if set, otherwise relative URLs
 const baseURL = import.meta.env.VITE_API_URL || "";
 
-const axiosInstance = axios.create({ baseURL });
-const sameOriginAxios = axios.create({ baseURL: "" });
+const REQUEST_TIMEOUT_MS = Math.min(
+  Math.max(Number.parseInt(import.meta.env.VITE_API_TIMEOUT_MS || "25000", 10), 5000),
+  120000
+);
+
+const axiosInstance = axios.create({ baseURL, timeout: REQUEST_TIMEOUT_MS });
+const sameOriginAxios = axios.create({ baseURL: "", timeout: REQUEST_TIMEOUT_MS });
 
 const getRequestPath = (rawUrl = "") => {
   if (!rawUrl || typeof rawUrl !== "string") return "";

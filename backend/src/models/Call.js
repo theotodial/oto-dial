@@ -194,6 +194,9 @@ const callSchema = new mongoose.Schema(
 );
 
 callSchema.index({ user: 1, createdAt: -1 });
+callSchema.index({ user: 1, phoneNumber: 1, createdAt: -1 });
+callSchema.index({ user: 1, toNumber: 1, createdAt: -1 });
+callSchema.index({ user: 1, fromNumber: 1, createdAt: -1 });
 callSchema.plugin(mongoPerformancePlugin, { label: "calls" });
 
 export default mongoose.model("Call", callSchema);

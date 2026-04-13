@@ -7,6 +7,7 @@ import { useSubscription } from '../context/SubscriptionContext';
 import ActiveCallChrome from '../components/ActiveCallChrome';
 import { fetchAllContacts } from '../utils/fetchAllContacts';
 import { notifySubscriptionChanged } from '../utils/subscriptionSync';
+import { threadMatchesPeerPhone } from '../utils/phoneThreadMatch';
 
 const ClockIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -158,13 +159,16 @@ function Recents() {
   const [chats, setChats] = useState([]);
   const [loading, setLoading] = useState(false);
   const isMountedRef = useRef(true);
+  const selectedChatRef = useRef(selectedChat);
+  selectedChatRef.current = selectedChat;
   
   // Inline chat state
   const [chatMessages, setChatMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
-  const [sending, setSending] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
   const [sendError, setSendError] = useState('');
   const messagesEndRef = useRef(null);
+  const smsSendLockRef = useRef(false);
   const suspiciousActivityText =
     'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
 
@@ -306,43 +310,63 @@ function Recents() {
     return num.replace(/\D/g, '');
   };
 
-  // Fetch messages and calls for selected chat (must be defined before useEffect that uses it)
-  const fetchChatMessages = useCallback(async (phoneNumber) => {
-    if (!phoneNumber) return;
-    try {
-      const normalizedSelected = normalizePhone(phoneNumber);
-      const [messagesResponse, callsResponse] = await Promise.all([
-        API.get('/api/messages', { params: { thread: phoneNumber, limit: 20 } }).catch(() => ({ error: true, data: null })),
-        API.get('/api/calls', { params: { thread: phoneNumber, limit: 20 } }).catch(() => ({ error: true, data: null }))
-      ]);
+  // Thread fetch: small SMS limit keeps DB + JSON fast; messages load first, calls merge after (no blocking spinner).
+  const THREAD_CHAT_MESSAGES_LIMIT = 150;
+  const THREAD_CHAT_CALLS_LIMIT = 40;
+
+  const mergeThreadItemsWithPending = useCallback((allItems, prev) => {
+    const pending = prev.filter((x) => x._localPending);
+    const stillPending = pending.filter((p) => {
+      const pText = String(p.message || p.text || '').trim();
+      return !allItems.some((s) => {
+        if (s.type !== 'message') return false;
+        const sText = String(s.message || s.text || s.body || '').trim();
+        if (sText !== pText) return false;
+        return s.direction === 'outbound' || s.sender === 'user';
+      });
+    });
+    return [...allItems, ...stillPending].sort((a, b) => {
+      const dateA = new Date(a.timestamp || 0);
+      const dateB = new Date(b.timestamp || 0);
+      return dateA - dateB;
+    });
+  }, []);
+
+  const buildThreadItems = useCallback(
+    (phoneNumber, messagesResponse, callsResponse) => {
       const allItems = [];
-      if (messagesResponse.data?.messages) {
-        const filteredMessages = messagesResponse.data.messages.filter(msg => {
-          const msgPhone = msg.phone_number || msg.to || msg.from;
-          return normalizedSelected === normalizePhone(msgPhone);
-        }).map(msg => ({
+      if (messagesResponse?.data?.messages) {
+        const mapped = messagesResponse.data.messages.map((msg) => ({
           ...msg,
           type: 'message',
           timestamp: msg.created_at || msg.timestamp || msg.createdAt
         }));
-        allItems.push(...filteredMessages);
+        const filtered = mapped.filter((msg) => {
+          const peer = msg.phone_number || msg.to || msg.from;
+          return threadMatchesPeerPhone(phoneNumber, peer);
+        });
+        allItems.push(...(filtered.length > 0 ? filtered : mapped));
       }
-      if (callsResponse.data?.calls || callsResponse.data) {
+      if (callsResponse?.data?.calls || callsResponse?.data) {
         const callsList = callsResponse.data?.calls || callsResponse.data || [];
-        const filteredCalls = callsList.filter(call => {
-          const callToPhone = call.to_number || call.toNumber || call.phoneNumber;
-          const callFromPhone = call.from_number || call.fromNumber;
-          return normalizedSelected === normalizePhone(callToPhone) ||
-                 (callFromPhone && normalizedSelected === normalizePhone(callFromPhone));
-        }).map(call => ({
-          ...call,
-          type: 'call',
-          timestamp: call.createdAt || call.created_at || call.timestamp || call.date,
-          duration: call.durationSeconds ?? call.duration ?? call.call_duration ?? null,
-          durationSeconds: call.durationSeconds ?? call.duration ?? call.call_duration ?? null,
-          status: call.status || 'completed',
-          direction: call.direction || (call.from_number || call.fromNumber ? 'outbound' : 'inbound')
-        }));
+        const filteredCalls = callsList
+          .filter((call) => {
+            const callToPhone = call.to_number || call.toNumber || call.phoneNumber;
+            const callFromPhone = call.from_number || call.fromNumber;
+            return (
+              threadMatchesPeerPhone(phoneNumber, callToPhone) ||
+              (callFromPhone && threadMatchesPeerPhone(phoneNumber, callFromPhone))
+            );
+          })
+          .map((call) => ({
+            ...call,
+            type: 'call',
+            timestamp: call.createdAt || call.created_at || call.timestamp || call.date,
+            duration: call.durationSeconds ?? call.duration ?? call.call_duration ?? null,
+            durationSeconds: call.durationSeconds ?? call.duration ?? call.call_duration ?? null,
+            status: call.status || 'completed',
+            direction: call.direction || (call.from_number || call.fromNumber ? 'outbound' : 'inbound')
+          }));
         allItems.push(...filteredCalls);
       }
       allItems.sort((a, b) => {
@@ -350,18 +374,53 @@ function Recents() {
         const dateB = new Date(b.timestamp || 0);
         return dateA - dateB;
       });
-      setChatMessages(allItems);
-    } catch (err) {
-      console.error('Failed to fetch chat messages:', err);
-    }
-  }, []);
+      return allItems;
+    },
+    []
+  );
 
-  // Fetch messages when selectedChat changes
+  const fetchChatMessages = useCallback(
+    async (phoneNumber) => {
+      if (!phoneNumber) return;
+      const forPhone = phoneNumber;
+      try {
+        const messagesResponse = await API.get('/api/messages', {
+          params: { thread: forPhone, limit: THREAD_CHAT_MESSAGES_LIMIT }
+        }).catch(() => ({ error: true, data: null }));
+
+        if (selectedChatRef.current !== forPhone) return;
+
+        const itemsMessagesOnly = buildThreadItems(forPhone, messagesResponse, null);
+        if (isMountedRef.current) {
+          setChatMessages((prev) => mergeThreadItemsWithPending(itemsMessagesOnly, prev));
+        }
+        setChatLoading(false);
+
+        const callsResponse = await API.get('/api/calls', {
+          params: { thread: forPhone, limit: THREAD_CHAT_CALLS_LIMIT }
+        }).catch(() => ({ error: true, data: null }));
+
+        if (!isMountedRef.current || selectedChatRef.current !== forPhone) return;
+
+        const allItems = buildThreadItems(forPhone, messagesResponse, callsResponse);
+        setChatMessages((prev) => mergeThreadItemsWithPending(allItems, prev));
+      } catch (err) {
+        console.error('Failed to fetch chat messages:', err);
+        if (selectedChatRef.current === forPhone) setChatLoading(false);
+      }
+    },
+    [buildThreadItems, mergeThreadItemsWithPending]
+  );
+
+  // Fetch messages when selectedChat changes (clear stale thread; ignore out-of-order responses via selectedChatRef)
   useEffect(() => {
     if (selectedChat) {
+      setChatMessages([]);
+      setChatLoading(true);
       fetchChatMessages(selectedChat);
     } else {
       setChatMessages([]);
+      setChatLoading(false);
     }
   }, [selectedChat, fetchChatMessages]);
 
@@ -534,14 +593,18 @@ function Recents() {
     }
   }, []);
 
+  // Only clear on real unmount — never tie this to fetchRecents deps or chat fetches can skip setState and leave chatLoading stuck true.
   useEffect(() => {
     isMountedRef.current = true;
-    fetchRecents(false);
-    fetchContacts();
-    fetchReadStateAndUnread();
     return () => {
       isMountedRef.current = false;
     };
+  }, []);
+
+  useEffect(() => {
+    fetchRecents(false);
+    fetchContacts();
+    fetchReadStateAndUnread();
   }, [fetchRecents, fetchContacts, fetchReadStateAndUnread]);
 
   const formatDate = (date) => {
@@ -829,10 +892,7 @@ function Recents() {
   // Send message inline
   const handleSendMessage = async (e) => {
     e?.preventDefault();
-    if (!inputMessage.trim() || sending || !selectedChat) return;
-
-    // Note: SMS limits are tracked but not enforced
-    // Usage is informational only
+    if (!inputMessage.trim() || !selectedChat || smsSendLockRef.current) return;
 
     if (userNumbers.length === 0) {
       setSendError('You need to purchase a number first.');
@@ -840,9 +900,29 @@ function Recents() {
     }
 
     const messageText = inputMessage.trim();
+    const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const nowIso = new Date().toISOString();
+    const optimistic = {
+      id: optimisticId,
+      type: 'message',
+      _localPending: true,
+      direction: 'outbound',
+      sender: 'user',
+      status: 'sending',
+      message: messageText,
+      text: messageText,
+      body: messageText,
+      timestamp: nowIso,
+      created_at: nowIso
+    };
+    setChatMessages((prev) =>
+      [...prev, optimistic].sort(
+        (a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0)
+      )
+    );
     setInputMessage('');
-    setSending(true);
     setSendError('');
+    smsSendLockRef.current = true;
 
     try {
       const response = await API.post('/api/sms/send', {
@@ -851,6 +931,7 @@ function Recents() {
       });
 
       if (response.error) {
+        setChatMessages((prev) => prev.filter((x) => x.id !== optimisticId));
         setSendError(response.error);
         setInputMessage(messageText);
       } else {
@@ -858,10 +939,11 @@ function Recents() {
         await Promise.all([fetchChatMessages(selectedChat), fetchRecents(false), refreshSubscription()]);
       }
     } catch (err) {
+      setChatMessages((prev) => prev.filter((x) => x.id !== optimisticId));
       setSendError('Failed to send message. Please try again.');
       setInputMessage(messageText);
     } finally {
-      setSending(false);
+      smsSendLockRef.current = false;
     }
   };
 
@@ -1361,7 +1443,11 @@ function Recents() {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
-                {chatMessages.length === 0 ? (
+                {chatLoading && chatMessages.length === 0 ? (
+                  <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-12">
+                    <p>Loading messages…</p>
+                  </div>
+                ) : chatMessages.length === 0 ? (
                   <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-12">
                     <MessageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
                     <p>No messages yet</p>
@@ -1394,11 +1480,21 @@ function Recents() {
                       );
                     }
                     const isOutbound = item.direction === 'outbound' || item.sender === 'user';
+                    const isPending = Boolean(item._localPending) || item.status === 'sending';
                     return (
                       <div key={`msg-${item.id || idx}`} className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${isOutbound ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white border border-gray-200 dark:border-slate-600'}`}>
+                        <div
+                          className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                            isOutbound ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white border border-gray-200 dark:border-slate-600'
+                          } ${isPending ? 'ring-1 ring-indigo-300/50 dark:ring-indigo-500/30' : ''}`}
+                        >
                           <p className="text-sm whitespace-pre-wrap break-words">{item.message || item.body || item.text}</p>
-                          <p className={`text-xs mt-1 ${isOutbound ? 'text-indigo-100' : 'text-gray-500 dark:text-gray-400'}`}>{formatDate(item.timestamp || item.created_at)}</p>
+                          <p className={`text-xs mt-1 flex flex-wrap items-center gap-x-2 ${isOutbound ? 'text-indigo-100' : 'text-gray-500 dark:text-gray-400'}`}>
+                            <span>{formatDate(item.timestamp || item.created_at)}</span>
+                            {isOutbound && isPending && (
+                              <span title="Sending or network slow">⏱️ Sending…</span>
+                            )}
+                          </p>
                         </div>
                       </div>
                     );
@@ -1426,9 +1522,22 @@ function Recents() {
               )}
               <div className="p-3 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex-shrink-0">
                 <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-                  <input type="text" value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} placeholder="Type a message..." className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-full text-gray-900 dark:text-white placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" disabled={sending} />
-                  <button type="submit" disabled={!inputMessage.trim() || sending} className="w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed shrink-0">
-                    {sending ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>}
+                  <input
+                    type="text"
+                    value={inputMessage}
+                    onChange={(e) => setInputMessage(e.target.value)}
+                    placeholder="Type a message..."
+                    className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-full text-gray-900 dark:text-white placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!inputMessage.trim()}
+                    className="w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                    title="Send"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                    </svg>
                   </button>
                 </form>
               </div>
@@ -1683,7 +1792,11 @@ function Recents() {
             <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900">
               {/* Messages Area */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                  {chatMessages.length === 0 ? (
+                  {chatLoading && chatMessages.length === 0 ? (
+                    <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
+                      <p>Loading messages…</p>
+                    </div>
+                  ) : chatMessages.length === 0 ? (
                     <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
                       <MessageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
                       <p>No messages yet</p>
@@ -1727,6 +1840,7 @@ function Recents() {
                       
                       // Handle messages
                       const isOutbound = item.direction === 'outbound' || item.sender === 'user';
+                      const isPending = Boolean(item._localPending) || item.status === 'sending';
                       return (
                         <div
                           key={`msg-${item.id || item._id || idx}`}
@@ -1737,11 +1851,18 @@ function Recents() {
                               isOutbound
                                 ? 'bg-indigo-600 text-white'
                                 : 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white'
-                            }`}
+                            } ${isPending ? 'ring-1 ring-indigo-300/50 dark:ring-indigo-500/30' : ''}`}
                           >
                             <p className="text-sm whitespace-pre-wrap break-words">{item.message || item.body || item.text}</p>
-                            <p className={`text-xs mt-1 ${isOutbound ? 'text-indigo-100' : 'text-gray-500 dark:text-gray-400'}`}>
-                              {formatDate(item.timestamp || item.created_at || item.createdAt)}
+                            <p
+                              className={`text-xs mt-1 flex flex-wrap items-center gap-x-2 ${
+                                isOutbound ? 'text-indigo-100' : 'text-gray-500 dark:text-gray-400'
+                              }`}
+                            >
+                              <span>{formatDate(item.timestamp || item.created_at || item.createdAt)}</span>
+                              {isOutbound && isPending && (
+                                <span title="Sending or network slow">⏱️ Sending…</span>
+                              )}
                             </p>
                           </div>
                         </div>
@@ -1778,20 +1899,16 @@ function Recents() {
                     onChange={(e) => setInputMessage(e.target.value)}
                     placeholder="Type a message..."
                     className="flex-1 px-4 py-2 bg-gray-100 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-full text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    disabled={sending}
                   />
                   <button
                     type="submit"
-                    disabled={!inputMessage.trim() || sending}
+                    disabled={!inputMessage.trim()}
                     className="w-10 h-10 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-full flex items-center justify-center transition-colors"
+                    title="Send"
                   >
-                    {sending ? (
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    ) : (
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                      </svg>
-                    )}
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                    </svg>
                   </button>
                 </form>
               </div>

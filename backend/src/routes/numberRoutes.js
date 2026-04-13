@@ -13,7 +13,7 @@ router.get(
     try {
       // Fetch actual PhoneNumber documents from database to get all fields
       const phoneNumbers = await PhoneNumber.find({
-        userId: req.user._id,
+        userId: req.userId || req.user?._id,
         status: "active"
       })
         .sort({ purchaseDate: -1, createdAt: -1 })
