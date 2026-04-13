@@ -1,10 +1,10 @@
 import API from '../api';
 
-/** Load all contact pages (max 50 per request, server-enforced). */
+/** Load all contact pages (limit per page is server-capped, typically 100). */
 export async function fetchAllContacts(maxPages = 40) {
   const all = [];
   for (let page = 1; page <= maxPages; page++) {
-    const res = await API.get('/api/contacts', { params: { page, limit: 20 } });
+    const res = await API.get('/api/contacts', { params: { page, limit: 100 } });
     if (res.error) break;
     const batch = res.data?.contacts || [];
     all.push(...batch);

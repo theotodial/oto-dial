@@ -157,6 +157,79 @@ router.patch("/preferences", async (req, res) => {
   }
 });
 
+const MAX_AUTO_REPLY_RULES = 24;
+
+function sanitizeAutoReplyRules(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    out.push({
+      keyword: String(r.keyword ?? "").slice(0, 80),
+      response: String(r.response ?? "").slice(0, 1600),
+      useAi: Boolean(r.useAi),
+      aiPrompt: String(r.aiPrompt ?? "").slice(0, 500),
+      isFallback: Boolean(r.isFallback),
+    });
+    if (out.length >= MAX_AUTO_REPLY_RULES) break;
+  }
+  return out;
+}
+
+/**
+ * GET /api/users/messaging-automation
+ */
+router.get("/messaging-automation", async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select("messagingAutomation").lean();
+    const ma = user?.messagingAutomation || {};
+    return res.json({
+      success: true,
+      messagingAutomation: {
+        autoReplyEnabled: Boolean(ma.autoReplyEnabled),
+        autoReplyRules: Array.isArray(ma.autoReplyRules) ? ma.autoReplyRules : [],
+      },
+    });
+  } catch (err) {
+    console.error("GET /users/messaging-automation error:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
+  }
+});
+
+/**
+ * PATCH /api/users/messaging-automation
+ */
+router.patch("/messaging-automation", async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+    if (req.body?.autoReplyEnabled !== undefined) {
+      user.messagingAutomation = user.messagingAutomation || {};
+      user.messagingAutomation.autoReplyEnabled = Boolean(req.body.autoReplyEnabled);
+    }
+    if (req.body?.autoReplyRules !== undefined) {
+      user.messagingAutomation = user.messagingAutomation || {};
+      user.messagingAutomation.autoReplyRules = sanitizeAutoReplyRules(req.body.autoReplyRules);
+    }
+    user.markModified("messagingAutomation");
+    await user.save();
+    await deleteCachedKey(cacheKeys.userProfile(req.user._id));
+    const ma = user.messagingAutomation || {};
+    return res.json({
+      success: true,
+      messagingAutomation: {
+        autoReplyEnabled: Boolean(ma.autoReplyEnabled),
+        autoReplyRules: Array.isArray(ma.autoReplyRules) ? ma.autoReplyRules : [],
+      },
+    });
+  } catch (err) {
+    console.error("PATCH /users/messaging-automation error:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
+  }
+});
+
 /**
  * PATCH /api/users/profile
  */

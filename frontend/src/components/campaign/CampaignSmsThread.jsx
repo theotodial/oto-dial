@@ -78,9 +78,12 @@ export default function CampaignSmsThread({
   className = '',
   getThreadCache,
   setThreadCache,
+  /** { id: number, text: string } — bump id to append text into the composer */
+  insertSignal = null,
 }) {
   const messagesEndRef = useRef(null);
   const isMountedRef = useRef(true);
+  const lastInsertIdRef = useRef(null);
   const [userNumbers, setUserNumbers] = useState([]);
   const [chatItems, setChatItems] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
@@ -92,6 +95,14 @@ export default function CampaignSmsThread({
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!insertSignal?.id || insertSignal.id === lastInsertIdRef.current) return;
+    lastInsertIdRef.current = insertSignal.id;
+    const t = String(insertSignal.text || '').trim();
+    if (!t) return;
+    setInputMessage((m) => (m ? `${m}\n${t}` : t));
+  }, [insertSignal]);
 
   useEffect(() => {
     const load = async () => {
@@ -233,7 +244,7 @@ export default function CampaignSmsThread({
 
   return (
     <div className={`flex flex-1 flex-col min-h-0 min-w-0 ${className}`}>
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0 bg-slate-50/80 dark:bg-slate-900/40">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0 bg-gray-50 dark:bg-slate-900">
         {chatItems.length === 0 ? (
           <div className="text-center text-slate-500 dark:text-slate-400 text-sm py-12">
             No messages yet — start the conversation below.
@@ -322,7 +333,7 @@ export default function CampaignSmsThread({
           {sendError}
         </div>
       )}
-      <div className="p-3 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex-shrink-0 shadow-[0_-4px_12px_rgba(0,0,0,0.04)] dark:shadow-none">
+      <div className="p-3 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-[#0d0d0d] flex-shrink-0 shadow-[0_-4px_12px_rgba(0,0,0,0.04)] dark:shadow-none">
         <form onSubmit={handleSendMessage} className="flex items-center gap-2">
           <input
             type="text"
@@ -334,8 +345,8 @@ export default function CampaignSmsThread({
                 handleSendMessage(e);
               }
             }}
-            placeholder="Reply (1:1 SMS)…"
-            className="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-full text-slate-900 dark:text-white placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="Type a message…"
+            className="flex-1 px-4 py-2.5 rounded-full text-[15px] leading-snug focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-[#111111] dark:bg-[#1a1a1a] border border-slate-600/90 dark:border-slate-600 text-white placeholder:text-slate-500 placeholder:opacity-90"
             disabled={sending}
           />
           <button

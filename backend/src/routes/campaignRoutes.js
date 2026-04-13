@@ -134,6 +134,36 @@ router.get("/templates", async (req, res) => {
   }
 });
 
+/**
+ * Workspace summary for Pro dashboard (single-account; team-ready aggregates).
+ */
+router.get("/workspace-stats", async (req, res) => {
+  try {
+    const userId = req.userId;
+    const since = new Date(Date.now() - 7 * 86400000);
+    const [smsSent, smsReplies, draftCampaigns, runningCampaigns] = await Promise.all([
+      SMS.countDocuments({ user: userId, direction: "outbound", createdAt: { $gte: since } }),
+      SMS.countDocuments({ user: userId, direction: "inbound", createdAt: { $gte: since } }),
+      Campaign.countDocuments({ userId, status: "draft" }),
+      Campaign.countDocuments({ userId, status: "running" }),
+    ]);
+    const replyRateApprox =
+      smsSent > 0 ? Math.min(100, Math.round((smsReplies / smsSent) * 100)) : null;
+    return res.json({
+      success: true,
+      windowDays: 7,
+      smsSent,
+      smsReplies,
+      replyRateApprox,
+      draftCampaigns,
+      runningCampaigns,
+    });
+  } catch (err) {
+    console.error("GET /campaign/workspace-stats:", err);
+    return res.status(500).json({ success: false, error: "Failed to load stats" });
+  }
+});
+
 router.post("/templates", async (req, res) => {
   try {
     const title = String(req.body?.title || "").trim();

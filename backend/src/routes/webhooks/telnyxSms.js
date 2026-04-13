@@ -124,6 +124,20 @@ router.post("/", async (req, res) => {
     console.log(`✅ Inbound SMS saved: ${fromNumber} -> ${toNumber} (userId: ${userId || 'unknown'}) [id: ${sms._id}]`);
 
     if (userId) {
+      try {
+        const { bumpLeadScoreOnInboundReply, maybeAutoReplyInbound } = await import(
+          "../../services/smsAutoReplyService.js"
+        );
+        await bumpLeadScoreOnInboundReply(userId, fromNumber);
+        await maybeAutoReplyInbound({
+          userId,
+          customerFrom: formatPhone(fromNumber),
+          messageText,
+        });
+      } catch (autoErr) {
+        console.warn("Inbound SMS automation (lead/auto-reply):", autoErr?.message || autoErr);
+      }
+
       const upper = String(messageText || "").trim().toUpperCase();
       const tokens = upper.split(/[^A-Z0-9]+/).filter(Boolean);
       const hit =

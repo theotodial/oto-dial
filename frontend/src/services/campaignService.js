@@ -135,6 +135,27 @@ export async function patchCampaignDraft(id, { name, messageBody } = {}) {
   return res.data.campaign;
 }
 
+export async function getWorkspaceStats() {
+  const res = await API.get('/api/campaign/workspace-stats');
+  if (res.error) throw new Error(res.error);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Failed to load stats');
+  return res.data;
+}
+
+export async function getMessagingAutomation() {
+  const res = await API.get('/api/users/messaging-automation');
+  if (res.error) throw new Error(res.error);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Failed to load');
+  return res.data.messagingAutomation;
+}
+
+export async function patchMessagingAutomation(payload) {
+  const res = await API.patch('/api/users/messaging-automation', payload);
+  if (res.error) throw new Error(res.error);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Save failed');
+  return res.data.messagingAutomation;
+}
+
 export async function downloadOptOutCsv() {
   const base = String(import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
   const token = localStorage.getItem('token');

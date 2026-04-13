@@ -248,6 +248,26 @@ const userSchema = new mongoose.Schema(
       },
     },
 
+    /** SMS automation (Pro); inbound auto-reply + rules */
+    messagingAutomation: {
+      autoReplyEnabled: {
+        type: Boolean,
+        default: false,
+      },
+      autoReplyRules: {
+        type: [
+          {
+            keyword: { type: String, default: "" },
+            response: { type: String, default: "" },
+            useAi: { type: Boolean, default: false },
+            aiPrompt: { type: String, default: "" },
+            isFallback: { type: Boolean, default: false },
+          },
+        ],
+        default: [],
+      },
+    },
+
     // Identity verification
     identityVerification: {
       status: {

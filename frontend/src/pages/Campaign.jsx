@@ -3,9 +3,9 @@ import API from '../api';
 import { useSubscription } from '../context/SubscriptionContext';
 import { useCampaign } from '../context/CampaignContext';
 import CampaignSmsThread from '../components/campaign/CampaignSmsThread';
+import CampaignLiteWorkspace from '../components/campaign/CampaignLiteWorkspace';
 import CampaignProResizableGrid from '../components/campaign/CampaignProResizableGrid';
 import CampaignCommandPalette from '../components/campaign/CampaignCommandPalette';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import {
   listCampaigns,
   getCampaign,
@@ -24,6 +24,9 @@ import {
   patchCampaignDraft,
   getThreadActivity,
   searchCampaignWorkspace,
+  getWorkspaceStats,
+  getMessagingAutomation,
+  patchMessagingAutomation,
 } from '../services/campaignService';
 import {
   renderMessage,
@@ -44,6 +47,8 @@ import {
 } from 'recharts';
 
 const LS_ACTIVE = 'otodial_campaign_active_windows_v2';
+const LS_LITE_TABS = 'otodial_campaign_lite_tabs';
+const LS_LITE_ACTIVE = 'otodial_campaign_lite_active';
 const CANONICAL = ['campaigns', 'chat', 'settings', 'tools', 'activity'];
 const MAX_PRO_PANES = 4;
 
@@ -236,6 +241,15 @@ export default function Campaign() {
   const [contactsForLabels, setContactsForLabels] = useState([]);
   const [labelFilter, setLabelFilter] = useState('');
   const [expandedPane, setExpandedPane] = useState(null);
+  const [workspaceStats, setWorkspaceStats] = useState(null);
+  const [messagingAutomation, setMessagingAutomation] = useState({
+    autoReplyEnabled: false,
+    autoReplyRules: [],
+  });
+  const [automationBusy, setAutomationBusy] = useState(false);
+  const campaignModeRef = useRef(campaignMode);
+  campaignModeRef.current = campaignMode;
+  const liteHydratedRef = useRef(false);
   const draftTimerRef = useRef(null);
 
   const segInfo = smsSegmentCount(composer);
@@ -290,7 +304,9 @@ export default function Campaign() {
       setLoading(true);
       setError('');
       try {
-        await Promise.all([loadCampaigns(), loadTemplates(), loadMessages()]);
+        await loadMessages();
+        if (!cancelled && campaignModeRef.current === 'lite') setLoading(false);
+        await Promise.all([loadCampaigns(), loadTemplates()]);
       } catch (e) {
         if (!cancelled) setError(e.message || 'Failed to load');
       } finally {
@@ -300,7 +316,62 @@ export default function Campaign() {
     return () => {
       cancelled = true;
     };
-  }, [loadCampaigns, loadTemplates]);
+  }, [loadCampaigns, loadTemplates, loadMessages]);
+
+  useEffect(() => {
+    if (campaignMode !== 'lite' || liteHydratedRef.current) return;
+    liteHydratedRef.current = true;
+    try {
+      const raw = localStorage.getItem(LS_LITE_TABS);
+      const tabs = raw ? JSON.parse(raw) : [];
+      const act = localStorage.getItem(LS_LITE_ACTIVE);
+      if (Array.isArray(tabs) && tabs.length) {
+        setChatTabs(tabs);
+        if (act && tabs.includes(act)) setActiveChatPhone(act);
+        else setActiveChatPhone(tabs[tabs.length - 1]);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [campaignMode]);
+
+  useEffect(() => {
+    if (campaignMode !== 'lite') return;
+    try {
+      localStorage.setItem(LS_LITE_TABS, JSON.stringify(chatTabs));
+      if (activeChatPhone) localStorage.setItem(LS_LITE_ACTIVE, activeChatPhone);
+    } catch {
+      /* ignore */
+    }
+  }, [campaignMode, chatTabs, activeChatPhone]);
+
+  useEffect(() => {
+    if (campaignMode !== 'pro' || toolsSubTab !== 'automation') return undefined;
+    let cancelled = false;
+    getMessagingAutomation()
+      .then((ma) => {
+        if (!cancelled && ma) setMessagingAutomation(ma);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignMode, toolsSubTab]);
+
+  useEffect(() => {
+    if (campaignMode !== 'pro' || toolsSubTab !== 'team') return undefined;
+    let cancelled = false;
+    getWorkspaceStats()
+      .then((s) => {
+        if (!cancelled) setWorkspaceStats(s);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaceStats(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignMode, toolsSubTab]);
 
   useEffect(() => {
     refreshDetail(selectedId).catch(() => {});
@@ -564,6 +635,35 @@ export default function Campaign() {
   const handleAddTabSubmit = (e) => {
     e?.preventDefault();
     openChatTab(addTabDraft);
+  };
+
+  const moveContactPipelineStage = async (contactId, stage) => {
+    if (!contactId || !stage) return;
+    try {
+      const r = await API.put(`/api/contacts/${contactId}`, { pipelineStage: stage });
+      if (r.error) throw new Error(r.error);
+      setContactsForLabels((prev) =>
+        prev.map((c) => (c._id === contactId ? { ...c, pipelineStage: stage } : c))
+      );
+    } catch (e) {
+      setError(e.message || 'Could not move contact');
+    }
+  };
+
+  const saveMessagingAutomation = async () => {
+    setAutomationBusy(true);
+    setError('');
+    try {
+      const ma = await patchMessagingAutomation({
+        autoReplyEnabled: messagingAutomation.autoReplyEnabled,
+        autoReplyRules: messagingAutomation.autoReplyRules || [],
+      });
+      setMessagingAutomation(ma);
+    } catch (e) {
+      setError(e.message || 'Save failed');
+    } finally {
+      setAutomationBusy(false);
+    }
   };
 
   const handleCreateCampaign = async () => {
@@ -1161,10 +1261,13 @@ export default function Campaign() {
 
   const renderToolsBody = () => (
     <div className="flex flex-col flex-1 min-h-0">
-      <div className="flex gap-1 p-2 border-b border-slate-200 dark:border-slate-700 shrink-0 flex-wrap">
+      <div className="flex gap-1 p-2 border-b border-slate-200 dark:border-slate-700 shrink-0 flex-wrap overflow-x-auto">
         <ToolsSubBtn id="templates" label="Templates" />
         <ToolsSubBtn id="csv" label="CSV" />
         <ToolsSubBtn id="analytics" label="Analytics" />
+        <ToolsSubBtn id="pipeline" label="Pipeline" />
+        <ToolsSubBtn id="automation" label="Auto-reply" />
+        <ToolsSubBtn id="team" label="Dashboard" />
       </div>
       <div className="flex-1 overflow-y-auto min-h-0 p-3">
         {toolsSubTab === 'templates' && (
@@ -1311,6 +1414,243 @@ export default function Campaign() {
             )}
           </div>
         )}
+        {toolsSubTab === 'pipeline' && (
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Drag contacts between stages. Updates are saved to each contact record.
+            </p>
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 min-h-[220px]">
+              {['new', 'contacted', 'qualified', 'closed'].map((stage) => (
+                <div
+                  key={stage}
+                  className="rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50/50 dark:bg-slate-900/40 flex flex-col min-h-[200px]"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const id = e.dataTransfer.getData('contactId');
+                    if (id) moveContactPipelineStage(id, stage);
+                  }}
+                >
+                  <div className="px-2 py-2 border-b border-slate-200 dark:border-slate-700 text-xs font-bold uppercase text-slate-500 shrink-0">
+                    {stage}
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-1.5 space-y-1 min-h-0">
+                    {contactsForLabels
+                      .filter((c) => (c.pipelineStage || 'new') === stage)
+                      .map((c) => (
+                        <div
+                          key={c._id}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('contactId', c._id);
+                            e.dataTransfer.effectAllowed = 'move';
+                          }}
+                          className="rounded-lg px-2 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 cursor-grab active:cursor-grabbing text-sm"
+                        >
+                          <div className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                            {c.name}
+                          </div>
+                          <div className="text-[11px] font-mono text-slate-500 truncate">{c.phoneNumber}</div>
+                          <div className="text-[10px] text-indigo-600 dark:text-indigo-400 mt-0.5">
+                            Score {c.leadScore ?? 0}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {contactsForLabels.length === 0 && (
+              <p className="text-sm text-slate-500 text-center py-6">No contacts loaded yet.</p>
+            )}
+          </div>
+        )}
+        {toolsSubTab === 'automation' && (
+          <div className="space-y-4 max-w-xl">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Keyword rules match inbound SMS (case-insensitive). Use one fallback rule for unmatched messages. AI
+              replies require OPENAI_API_KEY on the server.
+            </p>
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+              <input
+                type="checkbox"
+                checked={Boolean(messagingAutomation.autoReplyEnabled)}
+                onChange={(e) =>
+                  setMessagingAutomation((m) => ({ ...m, autoReplyEnabled: e.target.checked }))
+                }
+                className="rounded border-slate-300"
+              />
+              Auto-reply to inbound SMS
+            </label>
+            {(messagingAutomation.autoReplyRules || []).map((rule, idx) => (
+              <div
+                key={idx}
+                className="rounded-xl border border-slate-200 dark:border-slate-600 p-3 space-y-2 bg-white dark:bg-slate-900/30"
+              >
+                <div className="flex flex-wrap gap-3 items-center text-xs">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(rule.isFallback)}
+                      onChange={(e) => {
+                        const v = e.target.checked;
+                        setMessagingAutomation((m) => {
+                          const rules = [...(m.autoReplyRules || [])];
+                          rules[idx] = { ...rules[idx], isFallback: v };
+                          return { ...m, autoReplyRules: rules };
+                        });
+                      }}
+                    />
+                    Fallback
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(rule.useAi)}
+                      onChange={(e) => {
+                        const v = e.target.checked;
+                        setMessagingAutomation((m) => {
+                          const rules = [...(m.autoReplyRules || [])];
+                          rules[idx] = { ...rules[idx], useAi: v };
+                          return { ...m, autoReplyRules: rules };
+                        });
+                      }}
+                    />
+                    AI reply
+                  </label>
+                </div>
+                <input
+                  placeholder="Keyword (leave empty for fallback-only)"
+                  value={rule.keyword || ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setMessagingAutomation((m) => {
+                      const rules = [...(m.autoReplyRules || [])];
+                      rules[idx] = { ...rules[idx], keyword: v };
+                      return { ...m, autoReplyRules: rules };
+                    });
+                  }}
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-600 px-2 py-1.5 text-sm bg-white dark:bg-slate-900"
+                />
+                {!rule.useAi && (
+                  <textarea
+                    placeholder="Fixed SMS reply"
+                    value={rule.response || ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setMessagingAutomation((m) => {
+                        const rules = [...(m.autoReplyRules || [])];
+                        rules[idx] = { ...rules[idx], response: v };
+                        return { ...m, autoReplyRules: rules };
+                      });
+                    }}
+                    rows={2}
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-600 px-2 py-1.5 text-sm bg-white dark:bg-slate-900 resize-none"
+                  />
+                )}
+                {rule.useAi && (
+                  <input
+                    placeholder="Extra instructions for AI (optional)"
+                    value={rule.aiPrompt || ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setMessagingAutomation((m) => {
+                        const rules = [...(m.autoReplyRules || [])];
+                        rules[idx] = { ...rules[idx], aiPrompt: v };
+                        return { ...m, autoReplyRules: rules };
+                      });
+                    }}
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-600 px-2 py-1.5 text-sm bg-white dark:bg-slate-900"
+                  />
+                )}
+                <button
+                  type="button"
+                  className="text-xs text-red-600"
+                  onClick={() =>
+                    setMessagingAutomation((m) => ({
+                      ...m,
+                      autoReplyRules: (m.autoReplyRules || []).filter((_, i) => i !== idx),
+                    }))
+                  }
+                >
+                  Remove rule
+                </button>
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm"
+                onClick={() =>
+                  setMessagingAutomation((m) => ({
+                    ...m,
+                    autoReplyRules: [
+                      ...(m.autoReplyRules || []),
+                      {
+                        keyword: '',
+                        response: '',
+                        useAi: false,
+                        aiPrompt: '',
+                        isFallback: false,
+                      },
+                    ],
+                  }))
+                }
+              >
+                Add rule
+              </button>
+              <button
+                type="button"
+                disabled={automationBusy}
+                onClick={saveMessagingAutomation}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold disabled:opacity-50"
+              >
+                {automationBusy ? 'Saving…' : 'Save automation'}
+              </button>
+            </div>
+          </div>
+        )}
+        {toolsSubTab === 'team' && (
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Workspace summary (last {workspaceStats?.windowDays ?? 7} days). Team-wide rollups can extend this
+              endpoint later.
+            </p>
+            {workspaceStats ? (
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded-xl border border-slate-200 dark:border-slate-600 p-3 bg-slate-50 dark:bg-slate-800/50">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase">SMS sent</div>
+                  <div className="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">
+                    {workspaceStats.smsSent ?? 0}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-600 p-3 bg-slate-50 dark:bg-slate-800/50">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase">Replies</div>
+                  <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                    {workspaceStats.smsReplies ?? 0}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-600 p-3 bg-slate-50 dark:bg-slate-800/50">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase">Reply rate</div>
+                  <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 tabular-nums">
+                    {workspaceStats.replyRateApprox != null ? `${workspaceStats.replyRateApprox}%` : '—'}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-600 p-3 bg-slate-50 dark:bg-slate-800/50">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase">Running campaigns</div>
+                  <div className="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">
+                    {workspaceStats.runningCampaigns ?? 0}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="animate-pulse space-y-2 py-4">
+                <div className="h-16 bg-slate-200 dark:bg-slate-700 rounded-xl" />
+                <div className="h-16 bg-slate-200 dark:bg-slate-700 rounded-xl" />
+              </div>
+            )}
+          </div>
+        )}
         {toolsSubTab === 'analytics' && (
           <div className="space-y-3">
             {!selectedId && <p className="text-sm text-slate-500">Select a campaign in the list.</p>}
@@ -1367,7 +1707,7 @@ export default function Campaign() {
     if (id === 'campaigns') return 'Campaigns';
     if (id === 'chat') return 'Conversations';
     if (id === 'settings') return 'Campaign composer';
-    if (id === 'tools') return 'Templates · CSV · Analytics';
+    if (id === 'tools') return 'Tools · CRM · Automation';
     if (id === 'activity') return 'Activity timeline';
     return '';
   };
@@ -1455,9 +1795,6 @@ export default function Campaign() {
     return cmds;
   }, [smartResults, setCampaignMode, openChatTab]);
 
-  const liteResizeHandle =
-    'w-1.5 bg-slate-200/90 dark:bg-slate-600 hover:bg-indigo-300 dark:hover:bg-indigo-600 data-[panel-resize-handle-enabled=true]:data-[panel-group-direction=horizontal]:cursor-col-resize shrink-0 transition-colors';
-
   const toolbarBtn = (id, label) => {
     const on = activeWindows.includes(id);
     return (
@@ -1476,7 +1813,7 @@ export default function Campaign() {
     );
   };
 
-  if (loading) {
+  if (loading && campaignMode === 'pro') {
     return (
       <div className="flex flex-1 flex-col gap-3 p-6 max-w-md mx-auto w-full justify-center">
         <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded-lg animate-pulse w-2/3" />
@@ -1488,49 +1825,34 @@ export default function Campaign() {
 
   if (campaignMode === 'lite') {
     return (
-      <div className="flex flex-1 flex-col h-full min-h-0 bg-slate-100/80 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
-        <div className="lg:hidden flex gap-1 p-2 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shrink-0 shadow-sm">
+      <div className="flex flex-1 flex-col h-full min-h-0 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 overflow-hidden">
+        <div className="lg:hidden flex gap-1 p-2 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 shrink-0 shadow-sm">
           <TabBtn id="campaigns" label="Chats" />
           <TabBtn id="chat" label="Thread" />
         </div>
 
-        <div className="hidden lg:flex items-center gap-2 px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md shrink-0 flex-wrap shadow-sm">
-          <span className="text-xs font-bold text-slate-500 uppercase tracking-wide mr-1">Lite</span>
-          <button
-            type="button"
-            onClick={() => setCampaignMode('lite').catch((e) => setError(e.message))}
-            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white"
-          >
-            SMS
-          </button>
-          <button
-            type="button"
-            onClick={() => setCampaignMode('pro').catch((e) => setError(e.message))}
-            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-200/80 dark:bg-slate-700"
-          >
-            Pro
-          </button>
-          <select
-            className="text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5"
-            value=""
-            onChange={(e) => {
-              const t = templates.find((x) => x._id === e.target.value);
-              if (t) insertTemplate(t.content);
-              e.target.value = '';
-            }}
-          >
-            <option value="">Template…</option>
-            {templates.map((t) => (
-              <option key={t._id} value={t._id}>
-                {t.title}
-              </option>
-            ))}
-          </select>
+        <div className="hidden lg:flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 flex-wrap">
+          <div className="inline-flex rounded-xl p-1 bg-gray-100 dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700">
+            <button
+              type="button"
+              onClick={() => setCampaignMode('lite').catch((e) => setError(e.message))}
+              className="px-4 py-2 rounded-lg text-sm font-semibold bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm"
+            >
+              Lite mode
+            </button>
+            <button
+              type="button"
+              onClick={() => setCampaignMode('pro').catch((e) => setError(e.message))}
+              className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-slate-600/50"
+            >
+              Pro mode
+            </button>
+          </div>
           <div className="flex-1 min-w-[8px]" />
           <button
             type="button"
             onClick={() => setPaletteOpen(true)}
-            className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800"
+            className="text-sm px-4 py-2 rounded-xl border border-gray-200 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-gray-200"
           >
             Commands <kbd className="ml-1 opacity-70">⌘K</kbd>
           </button>
@@ -1542,94 +1864,34 @@ export default function Campaign() {
           </div>
         )}
 
-        <div className="hidden lg:flex flex-1 min-h-0 p-2 gap-0">
-          <PanelGroup direction="horizontal" autoSaveId="otodial-campaign-lite" className="flex-1 min-h-0">
-            <Panel defaultSize={30} minSize={18} className="min-h-0 min-w-0">
-              <div className="h-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm flex flex-col overflow-hidden">
-                <header className="px-3 py-2.5 border-b border-slate-200 dark:border-slate-700 font-semibold text-sm bg-slate-50/90 dark:bg-slate-800/90">
-                  Conversations
-                </header>
-                <div className="p-2 border-b border-slate-100 dark:border-slate-700 shrink-0">
-                  <input
-                    value={threadSearch}
-                    onChange={(e) => setThreadSearch(e.target.value)}
-                    placeholder="Search numbers…"
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-600 px-2 py-1.5 text-sm"
-                  />
-                </div>
-                <div className="flex-1 overflow-y-auto min-h-0 p-1">
-                  {filteredThreads.map((t) => (
-                    <button
-                      key={t.phone}
-                      type="button"
-                      onClick={() => openChatTab(t.phone)}
-                      className={`w-full text-left px-2 py-2 rounded-lg mb-0.5 text-sm ${
-                        activeChatPhone === t.phone
-                          ? 'bg-indigo-50 dark:bg-indigo-950/40 ring-1 ring-indigo-200 dark:ring-indigo-800'
-                          : 'hover:bg-slate-50 dark:hover:bg-slate-700/40'
-                      }`}
-                    >
-                      <div className="font-mono text-xs truncate">{t.phone}</div>
-                      <div className="text-[11px] text-slate-500 truncate">{t.preview}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </Panel>
-            <PanelResizeHandle className={liteResizeHandle} />
-            <Panel defaultSize={70} minSize={40} className="min-h-0 min-w-0">
-              <div className="h-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden flex flex-col">
-                {renderChatBody()}
-              </div>
-            </Panel>
-          </PanelGroup>
-        </div>
-
-        <div className="lg:hidden flex-1 min-h-0 overflow-hidden flex flex-col bg-slate-100/80 dark:bg-slate-950">
-          {mobileTab === 'campaigns' && (
-            <div className="flex-1 min-h-0 m-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden flex flex-col">
-              <header className="px-3 py-2.5 border-b font-semibold text-sm">Chats</header>
-              <div className="p-2 border-b">
-                <input
-                  value={threadSearch}
-                  onChange={(e) => setThreadSearch(e.target.value)}
-                  placeholder="Search…"
-                  className="w-full rounded-lg border px-2 py-2 text-sm"
-                />
-              </div>
-              <div className="flex-1 overflow-y-auto p-1">
-                {filteredThreads.map((t) => (
-                  <button
-                    key={t.phone}
-                    type="button"
-                    onClick={() => {
-                      openChatTab(t.phone);
-                      setMobileTab('chat');
-                    }}
-                    className="w-full text-left px-3 py-2 border-b border-slate-100 dark:border-slate-700 font-mono text-sm"
-                  >
-                    {t.phone}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {mobileTab === 'chat' && (
-            <div className="flex-1 min-h-0 m-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden flex flex-col">
-              {renderChatBody()}
-            </div>
-          )}
-        </div>
-
-        <CampaignCommandPalette
-          open={paletteOpen}
-          onClose={() => {
-            setPaletteOpen(false);
-            setPaletteQ('');
-          }}
-          query={paletteQ}
-          onQueryChange={setPaletteQ}
-          commands={paletteCommands}
+        <CampaignLiteWorkspace
+          templates={templates}
+          filteredThreads={filteredThreads}
+          threadSearch={threadSearch}
+          setThreadSearch={setThreadSearch}
+          activeChatPhone={activeChatPhone}
+          setActiveChatPhone={setActiveChatPhone}
+          chatTabs={chatTabs}
+          openChatTab={openChatTab}
+          closeChatTab={closeChatTab}
+          showAddTab={showAddTab}
+          setShowAddTab={setShowAddTab}
+          addTabDraft={addTabDraft}
+          setAddTabDraft={setAddTabDraft}
+          handleAddTabSubmit={handleAddTabSubmit}
+          pollTick={pollTick}
+          getThreadCache={getThreadCache}
+          setThreadCache={setThreadCache}
+          paletteOpen={paletteOpen}
+          setPaletteOpen={setPaletteOpen}
+          paletteCommands={paletteCommands}
+          paletteQ={paletteQ}
+          setPaletteQ={setPaletteQ}
+          loadMessages={loadMessages}
+          sidebarLoading={loading}
+          mobileTab={mobileTab}
+          setMobileTab={setMobileTab}
+          setError={setError}
         />
       </div>
     );
@@ -1644,22 +1906,23 @@ export default function Campaign() {
         <TabBtn id="templates" label="Tools" />
       </div>
 
-      <div className="hidden lg:flex items-center gap-2 px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md shrink-0 flex-wrap shadow-sm">
-        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide mr-1">Pro</span>
-        <button
-          type="button"
-          onClick={() => setCampaignMode('lite').catch((e) => setError(e.message))}
-          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-200/80 dark:bg-slate-700"
-        >
-          Lite
-        </button>
-        <button
-          type="button"
-          onClick={() => setCampaignMode('pro').catch((e) => setError(e.message))}
-          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white"
-        >
-          Full
-        </button>
+      <div className="hidden lg:flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 flex-wrap">
+        <div className="inline-flex rounded-xl p-1 bg-gray-100 dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700">
+          <button
+            type="button"
+            onClick={() => setCampaignMode('lite').catch((e) => setError(e.message))}
+            className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-slate-600/50"
+          >
+            Lite mode
+          </button>
+          <button
+            type="button"
+            onClick={() => setCampaignMode('pro').catch((e) => setError(e.message))}
+            className="px-4 py-2 rounded-lg text-sm font-semibold bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm"
+          >
+            Pro mode
+          </button>
+        </div>
         {toolbarBtn('campaigns', 'Campaigns')}
         {toolbarBtn('chat', 'Chat')}
         {toolbarBtn('settings', 'Composer')}

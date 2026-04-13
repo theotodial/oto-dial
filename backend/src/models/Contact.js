@@ -28,6 +28,16 @@ const contactSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    leadScore: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    pipelineStage: {
+      type: String,
+      enum: ["new", "contacted", "qualified", "closed"],
+      default: "new",
+    },
   },
   { timestamps: true }
 );
