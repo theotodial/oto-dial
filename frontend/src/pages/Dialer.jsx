@@ -42,7 +42,14 @@ function Dialer() {
   } = useCall();
 
   const { subscription } = useSubscription();
-  const billingActive = Boolean(subscription?.isActive ?? subscription?.active);
+  const canUseService = Boolean(subscription?.id ?? subscription?._id);
+  const billingUiActive = Boolean(subscription?.isActive ?? subscription?.active);
+  const isManuallyEnabled = Boolean(
+    subscription?.isManuallyEnabled ??
+      (Number(subscription?.limits?.smsTotal ?? 0) > 0 ||
+        Number(subscription?.limits?.minutesTotal ?? 0) > 0)
+  );
+  const subscriptionUsable = billingUiActive || isManuallyEnabled;
 
   const dialCountries = [
     { code: '+1', name: 'United States', flag: '🇺🇸' },
@@ -166,7 +173,7 @@ function Dialer() {
     console.log('📞 Dialer handleCall triggered');
     console.log('📞 State:', {
       phoneNumber,
-      billingActive,
+      canUseService,
       userNumbersCount: userNumbers.length,
       isClientReady,
       isInCall,
@@ -183,9 +190,9 @@ function Dialer() {
       return;
     }
 
-    if (!billingActive) {
+    if (!canUseService) {
       console.warn(
-        '[CALL FLOW] UI subscription flag is false — still calling makeCall; server will enforce subscription'
+        '[CALL FLOW] No subscription id in UI state — makeCall may fail; server enforces subscription'
       );
     }
     if (userNumbers.length === 0) {
@@ -288,9 +295,14 @@ function Dialer() {
             {isInitializing && (
               <span className="text-xs text-yellow-600 dark:text-yellow-400">Connecting...</span>
             )}
-            {!billingActive && (
+            {!canUseService && (
               <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/30 px-2 py-1 rounded">
-                Subscription Required
+                No subscription found
+              </div>
+            )}
+            {canUseService && !subscriptionUsable && (
+              <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded">
+                Subscription inactive — remaining balance available
               </div>
             )}
           </div>

@@ -1,7 +1,7 @@
 import express from "express";
 import User from "../models/User.js";
-import { computeUsage } from "../services/usageComputationService.js";
 import { getLatestSubscription } from "../services/subscriptionService.js";
+import { getCanonicalUsage } from "../services/usage/getCanonicalUsage.js";
 
 const router = express.Router();
 
@@ -25,10 +25,9 @@ router.get("/bootstrap", async (req, res) => {
       userId: String(userId || ""),
     });
 
-    const [userDoc, latestSub, usageActivity] = await Promise.all([
+    const [userDoc, latestSub] = await Promise.all([
       User.findById(userId).select("_id name email isEmailVerified").lean(),
       getLatestSubscription(userId),
-      computeUsage(userId),
     ]);
 
     const user = userDoc
@@ -45,10 +44,11 @@ router.get("/bootstrap", async (req, res) => {
     let usage = emptyUsage();
 
     if (latestSub) {
-      const smsLimit = Number(latestSub.limits?.smsTotal);
-      const minutesLimit = Number(latestSub.limits?.minutesTotal);
-      const smsUsed = usageActivity.smsUsed;
-      const minutesUsed = usageActivity.minutesUsed;
+      const canonical = await getCanonicalUsage(userId, latestSub);
+      const rawLimits = latestSub.limits || {};
+      const isManuallyEnabled =
+        Number(rawLimits.smsTotal ?? 0) > 0 ||
+        Number(rawLimits.minutesTotal ?? 0) > 0;
 
       subscription = {
         id: latestSub._id,
@@ -58,26 +58,27 @@ router.get("/bootstrap", async (req, res) => {
         limits: latestSub.limits ?? null,
         hasSubscription: true,
         isActive: latestSub.status === "active",
+        isManuallyEnabled,
         showUsage: true,
       };
 
       usage = {
-        smsUsed,
-        minutesUsed,
-        smsRemaining: smsLimit - smsUsed,
-        minutesRemaining: minutesLimit - minutesUsed,
-        smsLimit,
-        minutesLimit,
-        isSmsEnabled: smsLimit > 0,
-        isCallEnabled: minutesLimit > 0,
+        smsUsed: canonical.smsUsed,
+        minutesUsed: canonical.minutesUsed,
+        smsRemaining: canonical.smsRemaining,
+        minutesRemaining: canonical.minutesRemaining,
+        smsLimit: canonical.smsLimit,
+        minutesLimit: canonical.minutesLimit,
+        isSmsEnabled: canonical.isSmsEnabled,
+        isCallEnabled: canonical.isCallEnabled,
       };
 
       console.log("[FINAL USAGE CHECK]", {
         userId: String(userId || ""),
         subscriptionId: String(latestSub._id),
         status: latestSub.status,
-        smsUsed,
-        minutesUsed,
+        smsUsed: usage.smsUsed,
+        minutesUsed: usage.minutesUsed,
         smsRemaining: usage.smsRemaining,
         minutesRemaining: usage.minutesRemaining,
       });

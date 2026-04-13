@@ -176,7 +176,14 @@ function Recents() {
   const [userNumbers, setUserNumbers] = useState([]);
   const [dialCountryCode, setDialCountryCode] = useState('+1');
   const subscriptionKnown = subscriptionHydrated;
-  const billingActive = Boolean(subscription?.isActive ?? subscription?.active);
+  const canUseService = Boolean(subscription?.id ?? subscription?._id);
+  const billingUiActive = Boolean(subscription?.isActive ?? subscription?.active);
+  const isManuallyEnabled = Boolean(
+    subscription?.isManuallyEnabled ??
+      (Number(subscription?.limits?.smsTotal ?? 0) > 0 ||
+        Number(subscription?.limits?.minutesTotal ?? 0) > 0)
+  );
+  const subscriptionUsable = billingUiActive || isManuallyEnabled;
   const subscriptionData = {
     remainingSMS: usage?.smsRemaining ?? subscription?.smsRemaining ?? 0,
     minutesRemaining: usage?.minutesRemaining ?? subscription?.minutesRemaining ?? 0,
@@ -266,16 +273,10 @@ function Recents() {
   }, [chatMessages]);
   
   useEffect(() => {
-    if (
-      !loading &&
-      subscriptionKnown &&
-      subscription &&
-      subscription.hasSubscription === false &&
-      subscription.status === 'inactive'
-    ) {
+    if (!loading && subscriptionKnown && !canUseService) {
       navigate('/dashboard', { replace: true });
     }
-  }, [loading, navigate, subscription, subscriptionKnown]);
+  }, [loading, navigate, subscriptionKnown, canUseService]);
 
   // Fetch user numbers - MUST be before conditional returns
   useEffect(() => {
@@ -764,8 +765,8 @@ function Recents() {
       ? rawNumber
       : `${dialCountryCode}${rawNumber}`;
       
-    if (!billingActive) {
-      alert('Active subscription required to make calls');
+    if (!canUseService) {
+      alert('No subscription found. Subscribe to make calls.');
       return;
     }
     if (userNumbers.length === 0) {
@@ -1157,7 +1158,7 @@ function Recents() {
           <div className="p-4 border-b border-gray-200 dark:border-slate-700 flex-shrink-0">
             <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Voice</h1>
             <VoiceSubscriptionStrip
-              active={billingActive}
+              active={billingUiActive}
               data={subscriptionData}
               onOpenDetails={() => navigate('/subscription-details')}
             />
@@ -1303,7 +1304,7 @@ function Recents() {
                         <div className="flex gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-slate-700/80 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
                             onClick={(e) => { e.stopPropagation(); handleCall(phoneNumber); }}
-                            disabled={calling || !billingActive || userNumbers.length === 0}
+                            disabled={calling || !canUseService || userNumbers.length === 0}
                             className="flex-1 py-1.5 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center justify-center gap-1 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <PhoneIcon className="w-3.5 h-3.5" />
@@ -1348,7 +1349,7 @@ function Recents() {
               <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between flex-shrink-0 gap-2">
                 <h2 className="text-lg font-bold text-gray-900 dark:text-white truncate min-w-0">{getContactName(selectedChat) || selectedChat}</h2>
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  <button onClick={() => handleCall(selectedChat)} disabled={calling || !billingActive || userNumbers.length === 0} className="p-2 rounded-xl bg-green-500 hover:bg-green-600 text-white disabled:opacity-50" title="Call">
+                  <button onClick={() => handleCall(selectedChat)} disabled={calling || !canUseService || userNumbers.length === 0} className="p-2 rounded-xl bg-green-500 hover:bg-green-600 text-white disabled:opacity-50" title="Call">
                     <PhoneIcon className="w-5 h-5" />
                   </button>
                   <button onClick={() => openSaveContactModal(selectedChat)} className="p-2 rounded-xl text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20" title="Save to contacts">
@@ -1447,10 +1448,16 @@ function Recents() {
         <div className="flex w-72 flex-shrink-0 flex-col bg-gray-50 dark:bg-slate-900 border-l border-gray-200 dark:border-slate-700 min-h-0 overflow-hidden relative xl:w-80">
             <>
           {isLgDesktopVoice && <ActiveCallChrome isDesktop dockMode />}
-          {((subscriptionKnown && !billingActive) || userNumbers.length === 0) && (
+          {(userNumbers.length === 0 ||
+            (subscriptionKnown && !canUseService) ||
+            (subscriptionKnown && canUseService && !subscriptionUsable)) && (
             <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 flex-shrink-0">
               <p className="text-xs text-amber-700 dark:text-amber-300">
-                {subscriptionKnown && !billingActive && '⚠️ No active subscription. '}
+                {subscriptionKnown && !canUseService && '⚠️ No subscription found. '}
+                {subscriptionKnown &&
+                  canUseService &&
+                  !subscriptionUsable &&
+                  'ℹ️ Subscription inactive — remaining balance available. '}
                 {userNumbers.length === 0 && '⚠️ No phone number purchased.'}
               </p>
             </div>
@@ -1463,7 +1470,7 @@ function Recents() {
               </div>
             </div>
             <VoiceSubscriptionStrip
-              active={billingActive}
+              active={billingUiActive}
               data={subscriptionData}
               onOpenDetails={() => navigate('/subscription-details')}
               variant="inline"
@@ -1514,11 +1521,11 @@ function Recents() {
                   onPaste={handlePaste}
                   onKeyDown={(e) => {
                     handleKeyDown(e);
-                    if (e.key === 'Enter' && (phoneNumber.trim() || getLastDialableNumber()) && !calling && billingActive && userNumbers.length > 0) handleCall();
+                    if (e.key === 'Enter' && (phoneNumber.trim() || getLastDialableNumber()) && !calling && canUseService && userNumbers.length > 0) handleCall();
                   }}
                   placeholder="Enter phone number"
                   className="w-full text-lg font-semibold text-gray-900 dark:text-white h-10 px-3 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800 outline-none placeholder:text-gray-400 disabled:opacity-50"
-                  disabled={calling || !billingActive || userNumbers.length === 0}
+                  disabled={calling || !canUseService || userNumbers.length === 0}
                 />
                 {phoneNumber && (
                   <button
@@ -1555,7 +1562,7 @@ function Recents() {
                     onMouseLeave={() => pressTimer && clearTimeout(pressTimer)}
                     onTouchStart={() => { if (btn.digit === '0') pressTimer = setTimeout(() => handleLongPress('0'), 500); }}
                     onTouchEnd={() => pressTimer && clearTimeout(pressTimer)}
-                    disabled={calling || !billingActive || userNumbers.length === 0}
+                    disabled={calling || !canUseService || userNumbers.length === 0}
                     className="aspect-square w-full bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 active:bg-gray-100 dark:active:bg-slate-600 rounded-full border border-gray-200 dark:border-slate-700 transition-all active:scale-[0.96] text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center justify-center"
                   >
                     <span className="text-2xl font-bold leading-none">{btn.digit}</span>
@@ -1586,7 +1593,7 @@ function Recents() {
               )}
               <button
                 onClick={() => handleCall()}
-                disabled={(!phoneNumber.trim() && !getLastDialableNumber()) || calling || userNumbers.length === 0 || !billingActive}
+                disabled={(!phoneNumber.trim() && !getLastDialableNumber()) || calling || userNumbers.length === 0 || !canUseService}
                 className="w-12 h-12 bg-green-500 hover:bg-green-600 active:bg-green-700 text-white rounded-full flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-[0.96] shadow-sm hover:shadow-md"
                 title={phoneNumber.trim() ? 'Call' : 'Autodial last number'}
               >
@@ -1618,7 +1625,7 @@ function Recents() {
                   {getContactName(selectedChat) || selectedChat}
                 </h1>
                 <div className="flex items-center gap-0.5 flex-shrink-0">
-                  <button onClick={() => handleCall(selectedChat)} disabled={calling || !billingActive || userNumbers.length === 0} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 disabled:opacity-50" title="Call">
+                  <button onClick={() => handleCall(selectedChat)} disabled={calling || !canUseService || userNumbers.length === 0} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 disabled:opacity-50" title="Call">
                     <PhoneIcon className="w-6 h-6" />
                   </button>
                   <button onClick={() => openSaveContactModal(selectedChat)} className="p-2 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-600 dark:text-gray-300 hover:text-indigo-600" title="Save to contacts">
@@ -1925,7 +1932,7 @@ function Recents() {
                         <div className="flex gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-slate-700/80">
                           <button
                             onClick={(e) => { e.stopPropagation(); handleCall(phoneNumber); }}
-                            disabled={calling || !billingActive || userNumbers.length === 0}
+                            disabled={calling || !canUseService || userNumbers.length === 0}
                             className="flex-1 py-1.5 px-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-lg flex items-center justify-center gap-1 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <PhoneIcon className="w-3.5 h-3.5" />
@@ -1966,10 +1973,16 @@ function Recents() {
             <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900 relative min-h-0">
               <ActiveCallChrome isDesktop={false} dockMode />
               {/* Debug Info - Shows why calling might be blocked */}
-              {((subscriptionKnown && !billingActive) || userNumbers.length === 0) && (
+              {(userNumbers.length === 0 ||
+                (subscriptionKnown && !canUseService) ||
+                (subscriptionKnown && canUseService && !subscriptionUsable)) && (
                 <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800">
                   <p className="text-xs text-amber-700 dark:text-amber-300">
-                    {subscriptionKnown && !billingActive && '⚠️ No active subscription. '}
+                    {subscriptionKnown && !canUseService && '⚠️ No subscription found. '}
+                    {subscriptionKnown &&
+                      canUseService &&
+                      !subscriptionUsable &&
+                      'ℹ️ Subscription inactive — remaining balance available. '}
                     {userNumbers.length === 0 && '⚠️ No phone number purchased.'}
                   </p>
                 </div>
@@ -1984,7 +1997,7 @@ function Recents() {
                   </div>
                 </div>
                 <VoiceSubscriptionStrip
-                  active={billingActive}
+                  active={billingUiActive}
                   data={subscriptionData}
                   onOpenDetails={() => navigate('/subscription-details')}
                   variant="inline"
@@ -2056,13 +2069,13 @@ function Recents() {
                       onPaste={handlePaste}
                       onKeyDown={(e) => {
                         handleKeyDown(e);
-                        if (e.key === 'Enter' && (phoneNumber.trim() || getLastDialableNumber()) && !isCallBusy && billingActive && userNumbers.length > 0) {
+                        if (e.key === 'Enter' && (phoneNumber.trim() || getLastDialableNumber()) && !isCallBusy && canUseService && userNumbers.length > 0) {
                           handleCall();
                         }
                       }}
                       placeholder="Enter phone number"
                       className="w-full text-lg font-semibold text-gray-900 dark:text-white h-12 px-4 text-center bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl focus:border-indigo-500 dark:focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-800 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={isCallBusy || !billingActive || userNumbers.length === 0}
+                      disabled={isCallBusy || !canUseService || userNumbers.length === 0}
                     />
                     {phoneNumber && (
                       <button
@@ -2113,7 +2126,7 @@ function Recents() {
                           onTouchEnd={() => {
                             if (pressTimer) clearTimeout(pressTimer);
                           }}
-                        disabled={isCallBusy || !billingActive || userNumbers.length === 0}
+                        disabled={isCallBusy || !canUseService || userNumbers.length === 0}
                           className="aspect-square w-full bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 
                                      active:bg-gray-100 dark:active:bg-slate-600 rounded-full border border-gray-200 dark:border-slate-700 
                                      transition-all duration-150 active:scale-[0.96] 
@@ -2145,7 +2158,7 @@ function Recents() {
                     </button>
                     <button
                       onClick={() => handleCall()}
-                      disabled={(!phoneNumber.trim() && !getLastDialableNumber()) || calling || userNumbers.length === 0 || !billingActive}
+                      disabled={(!phoneNumber.trim() && !getLastDialableNumber()) || calling || userNumbers.length === 0 || !canUseService}
                       className="w-12 h-12 bg-green-500 hover:bg-green-600 active:bg-green-700 
                                  text-white rounded-full flex items-center justify-center 
                                  disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.96]

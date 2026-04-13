@@ -1,20 +1,13 @@
 import Subscription from "../models/Subscription.js";
 import PhoneNumber from "../models/PhoneNumber.js";
-import { getActiveAddonAmounts } from "./subscriptionAddonCreditService.js";
 import { computeUsage } from "./usageComputationService.js";
+import { getCanonicalUsage } from "./usage/getCanonicalUsage.js";
 import { getServerDayKey, isUnlimitedSubscription } from "./unlimitedUsageService.js";
 import {
   applyCustomPackageToSubscription,
   getActiveCustomPackage,
   isCustomPackageActive,
 } from "./customPackageService.js";
-import {
-  cacheKeys,
-  deleteCachedKey,
-  setCachedJson,
-} from "./cache.service.js";
-
-const SUBSCRIPTION_CACHE_TTL_SECONDS = 60;
 
 export function buildEffectiveUsage({ subscription, customPackage, activityUsage = null }) {
   if (subscription) {
@@ -42,6 +35,11 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
       0,
       Number(subscription.minutesLimit ?? subscription.limits?.minutesTotal ?? 0)
     );
+    const unlimited =
+      Boolean(subscription.isUnlimited) ||
+      Boolean(subscription.displayUnlimited) ||
+      isUnlimitedSubscription(subscription) ||
+      /unlimited/i.test(String(subscription.planName || ""));
 
     return {
       smsUsed,
@@ -56,8 +54,8 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
       ),
       smsLimit,
       minutesLimit,
-      isSmsEnabled: subscription.isSmsEnabled !== false,
-      isCallEnabled: subscription.isCallEnabled !== false,
+      isSmsEnabled: unlimited || smsLimit > 0,
+      isCallEnabled: unlimited || minutesLimit > 0,
       source: subscription.source || "subscription",
     };
   }
@@ -74,8 +72,8 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
       minutesRemaining: Math.max(0, minutesLimit - minutesUsed),
       smsLimit,
       minutesLimit,
-      isSmsEnabled: customPackage.isSmsEnabled !== false,
-      isCallEnabled: customPackage.isCallEnabled !== false,
+      isSmsEnabled: smsLimit > 0,
+      isCallEnabled: minutesLimit > 0,
       source: "customPackage",
     };
   }
@@ -217,7 +215,7 @@ export async function loadUserSubscription(userId) {
 
   subscription = await resetDailyUsageWindowIfNeeded(subscription);
 
-  const [numbers, customPackage, activityUsage] = await Promise.all([
+  const [numbers, customPackage, canonical] = await Promise.all([
     PhoneNumber.find({
       userId,
       status: "active",
@@ -225,24 +223,19 @@ export async function loadUserSubscription(userId) {
       .select("phoneNumber")
       .lean(),
     getActiveCustomPackage(userId),
-    computeUserActivityUsage(userId),
+    getCanonicalUsage(userId, subscription),
   ]);
 
-  const activeAddons = getActiveAddonAmounts(subscription);
-  const smsLimit = Math.max(
-    0,
-    Number(subscription.limits?.smsTotal ?? 0) + Number(activeAddons.smsActive ?? 0)
-  );
-  const minutesLimit = Math.max(
-    0,
-    Number(subscription.limits?.minutesTotal ?? 0) +
-      Number(activeAddons.minutesActive ?? 0)
-  );
-  const smsUsed = activityUsage.smsUsed;
-  const secondsUsed = activityUsage.secondsUsed;
-  const minutesUsed = activityUsage.minutesUsed;
-  const minutesRemaining = Math.max(minutesLimit - minutesUsed, 0);
-  const smsRemaining = Math.max(smsLimit - smsUsed, 0);
+  const smsLimit = canonical.smsLimit;
+  const minutesLimit = canonical.minutesLimit;
+  const smsUsed = canonical.smsUsed;
+  const secondsUsed = canonical.secondsUsed;
+  const minutesUsed = canonical.minutesUsed;
+  const minutesRemaining = canonical.minutesRemaining;
+  const smsRemaining = canonical.smsRemaining;
+  const rawLimits = subscription.limits || {};
+  const isManuallyEnabled =
+    Number(rawLimits.smsTotal ?? 0) > 0 || Number(rawLimits.minutesTotal ?? 0) > 0;
   const unlimited =
     Boolean(subscription.displayUnlimited) ||
     isUnlimitedSubscription(subscription) ||
@@ -284,8 +277,9 @@ export async function loadUserSubscription(userId) {
     usageWindowDateKey: subscription.usageWindowDateKey || getServerDayKey(),
     periodStart: subscription.periodStart || null,
     periodEnd: subscription.periodEnd || null,
-    isCallEnabled: subscription.voiceCallsEnabled !== false,
-    isSmsEnabled: true,
+    isCallEnabled: unlimited || minutesLimit > 0,
+    isSmsEnabled: unlimited || smsLimit > 0,
+    isManuallyEnabled,
     source: "subscription",
     numbers: numbers.map((n) => ({
       phoneNumber: n.phoneNumber,
@@ -332,7 +326,11 @@ export async function loadUserSubscription(userId) {
     finalUsage: buildEffectiveUsage({
       subscription: resolvedSubscription,
       customPackage,
-      activityUsage,
+      activityUsage: {
+        smsUsed,
+        minutesUsed,
+        secondsUsed,
+      },
     }),
   });
 
@@ -341,56 +339,40 @@ export async function loadUserSubscription(userId) {
 
 export async function getCachedUserSubscription(userId) {
   if (!userId) return null;
-  // Debug phase: always trust MongoDB over cache reads to avoid stale null/old rows.
-  const subscription = await loadUserSubscription(userId);
-  const key = cacheKeys.subscription(userId);
-  if (subscription) {
-    await setCachedJson(key, subscription, SUBSCRIPTION_CACHE_TTL_SECONDS);
-  } else {
-    await deleteCachedKey(key);
-  }
-  return subscription;
+  return loadUserSubscription(userId);
 }
 
-export async function invalidateUserSubscriptionCache(userId) {
-  if (!userId) return;
-  await deleteCachedKey(cacheKeys.subscription(userId));
+export async function invalidateUserSubscriptionCache(_userId) {
+  /* no-op: subscription usage is not cached (avoid stale limits vs activity) */
 }
 
 export async function getComputedUsageSnapshot(userId) {
-  const [subscription, activity] = await Promise.all([
-    getLatestSubscription(userId),
-    computeUsage(userId),
-  ]);
-
-  const smsUsed = activity.smsUsed;
-  const minutesUsed = activity.minutesUsed;
+  const subscription = await getLatestSubscription(userId);
+  const activity = await computeUsage(userId);
 
   if (!subscription) {
     return {
       subscription: null,
       customPackage: null,
-      smsUsed,
-      minutesUsed,
+      smsUsed: activity.smsUsed,
+      minutesUsed: activity.minutesUsed,
       smsLimit: 0,
       minutesLimit: 0,
-      smsRemaining: -smsUsed,
-      minutesRemaining: -minutesUsed,
+      smsRemaining: -activity.smsUsed,
+      minutesRemaining: -activity.minutesUsed,
     };
   }
 
-  const smsLimit = Number(subscription.limits?.smsTotal);
-  const minutesLimit = Number(subscription.limits?.minutesTotal);
-
+  const canonical = await getCanonicalUsage(userId, subscription);
   return {
     subscription,
     customPackage: null,
-    smsUsed,
-    minutesUsed,
-    smsLimit,
-    minutesLimit,
-    smsRemaining: smsLimit - smsUsed,
-    minutesRemaining: minutesLimit - minutesUsed,
+    smsUsed: canonical.smsUsed,
+    minutesUsed: canonical.minutesUsed,
+    smsLimit: canonical.smsLimit,
+    minutesLimit: canonical.minutesLimit,
+    smsRemaining: canonical.smsRemaining,
+    minutesRemaining: canonical.minutesRemaining,
   };
 }
 
@@ -403,6 +385,7 @@ export function buildPublicSubscriptionState(subscription) {
       limits: null,
       hasSubscription: false,
       isActive: false,
+      isManuallyEnabled: false,
       showUsage: false,
     };
   }
@@ -411,6 +394,11 @@ export function buildPublicSubscriptionState(subscription) {
     subscription.isActive !== undefined && subscription.isActive !== null
       ? subscription.isActive
       : subscription.active
+  );
+  const isManuallyEnabled = Boolean(
+    subscription.isManuallyEnabled ??
+      (Number(subscription.limits?.smsTotal ?? 0) > 0 ||
+        Number(subscription.limits?.minutesTotal ?? 0) > 0)
   );
   return {
     id: subscription.id ?? subscription._id ?? null,
@@ -423,6 +411,7 @@ export function buildPublicSubscriptionState(subscription) {
         !!(subscription.id || subscription._id)
     ),
     isActive,
+    isManuallyEnabled,
     showUsage: subscription.showUsage !== false,
   };
 }

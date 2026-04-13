@@ -1,14 +1,17 @@
+function hasSubscriptionRecord(sub) {
+  return Boolean(sub && (sub.id != null || sub._id != null));
+}
+
+/** Usage is allowed whenever a subscription document exists (any status). */
 export default function requireActiveSubscription(req, res, next) {
-  if (!req.subscription || !req.subscription.active) {
-    console.warn("[CALL FLOW] requireActiveSubscription BLOCK", {
+  if (!hasSubscriptionRecord(req.subscription)) {
+    console.warn("[CALL FLOW] requireActiveSubscription BLOCK (no subscription row)", {
       path: req.originalUrl || req.path,
       userId: req.userId ? String(req.userId) : null,
-      hasSubscription: Boolean(req.subscription),
-      active: req.subscription?.active,
     });
     return res.status(403).json({
       success: false,
-      error: "Active subscription required"
+      error: "No subscription found",
     });
   }
 

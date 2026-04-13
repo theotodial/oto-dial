@@ -6,7 +6,6 @@ import { cacheKeys, deleteCachedKey } from "../services/cache.service.js";
 import {
   buildPublicSubscriptionState,
   buildEffectiveUsage,
-  computeUserActivityUsage,
   loadUserSubscription,
 } from "../services/subscriptionService.js";
 const router = express.Router();
@@ -61,11 +60,18 @@ router.get("/profile", async (req, res) => {
 router.get("/me", async (req, res) => {
   try {
     const userId = req.user._id;
-    const [user, resolvedSubscription, activityUsage] = await Promise.all([
+    const [user, resolvedSubscription] = await Promise.all([
       User.findById(userId).select("_id name email isEmailVerified"),
       loadUserSubscription(userId),
-      computeUserActivityUsage(userId),
     ]);
+
+    const activityUsage = resolvedSubscription
+      ? {
+          smsUsed: resolvedSubscription.smsUsed ?? 0,
+          minutesUsed: resolvedSubscription.minutesUsed ?? 0,
+          secondsUsed: resolvedSubscription.usage?.minutesUsed ?? 0,
+        }
+      : null;
 
     const effective = buildEffectiveUsage({
       subscription: resolvedSubscription,

@@ -42,8 +42,6 @@ export function applyCustomPackageToSubscription(subscription, customPackage) {
 
   const minutesAllowed = Math.max(0, Number(customPackage.minutesAllowed ?? 0));
   const smsAllowed = Math.max(0, Number(customPackage.smsAllowed ?? 0));
-  const callEnabled = customPackage.isCallEnabled !== false;
-  const smsEnabled = customPackage.isSmsEnabled !== false;
   const smsUsed = Math.max(0, Number(subscription?.usage?.smsUsed ?? 0));
   const minutesUsedSeconds = Math.max(
     0,
@@ -75,8 +73,8 @@ export function applyCustomPackageToSubscription(subscription, customPackage) {
       minutesUsed: minutesUsedSeconds,
       smsUsed,
     },
-    isCallEnabled: callEnabled,
-    isSmsEnabled: smsEnabled,
+    isCallEnabled: minutesAllowed > 0,
+    isSmsEnabled: smsAllowed > 0,
     source: "customPackage",
     allowedCountries: normalizedAllowedCountries,
     blockedCountries: normalizedBlockedCountries,

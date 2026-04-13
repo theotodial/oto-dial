@@ -99,26 +99,15 @@ router.post("/send", async (req, res) => {
       });
     }
 
-    // Check subscription exists
-    if (!req.subscription) {
-      return res.status(403).json({ error: "No active subscription" });
+    if (!req.subscription || !(req.subscription.id || req.subscription._id)) {
+      return res.status(403).json({ error: "No subscription found" });
     }
 
-    // Debug subscription data
     console.log("📱 SMS Send - Subscription check:", {
       userId: req.userId,
-      active: req.subscription.active,
-      subscriptionId: req.subscription.id
+      subscriptionId: req.subscription.id,
+      status: req.subscription.status,
     });
-
-    // 🔒 SINGLE SOURCE OF TRUTH
-    if (!req.subscription.active) {
-      return res.status(403).json({ error: "Subscription is not active" });
-    }
-
-    if (req.subscription.isSmsEnabled === false) {
-      return res.status(403).json({ error: "SMS disabled by admin" });
-    }
 
     const unlimitedGate = await checkUnlimitedUsageBeforeAction({
       subscriptionId: req.subscription.id,
@@ -134,6 +123,12 @@ router.post("/send", async (req, res) => {
     const unlimitedPlan = isUnlimitedSubscription(
       unlimitedGate.subscription || req.subscription
     );
+
+    if (!unlimitedPlan && !(Number(req.subscription.smsLimit) > 0)) {
+      return res.status(403).json({
+        error: "SMS is not included in your current plan.",
+      });
+    }
 
     // Legacy plans keep existing remaining-SMS guard behavior.
     if (!unlimitedPlan && req.subscription.smsRemaining <= 0) {

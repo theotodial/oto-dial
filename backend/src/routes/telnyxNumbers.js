@@ -1076,9 +1076,8 @@ router.get(
   loadSubscription,
   async (req, res) => {
     try {
-      // HARD STOP — NO SUBSCRIPTION
-      if (!req.subscription || !req.subscription.active) {
-        return res.status(403).json({ error: "Active subscription required" });
+      if (!req.subscription || !(req.subscription.id || req.subscription._id)) {
+        return res.status(403).json({ error: "No subscription found" });
       }
 
       // HARD STOP — LIMIT CHECK
@@ -1351,9 +1350,8 @@ router.post(
   loadSubscription,
   async (req, res) => {
     try {
-      // HARD STOP — NO SUBSCRIPTION
-      if (!req.subscription || !req.subscription.active) {
-        return res.status(403).json({ error: "Active subscription required" });
+      if (!req.subscription || !(req.subscription.id || req.subscription._id)) {
+        return res.status(403).json({ error: "No subscription found" });
       }
 
       // HARD STOP — LIMIT CHECK
@@ -1922,9 +1920,8 @@ router.post(
   loadSubscription,
   async (req, res) => {
     try {
-      // HARD STOP — NO SUBSCRIPTION
-      if (!req.subscription || !req.subscription.active) {
-        return res.status(403).json({ error: "Active subscription required" });
+      if (!req.subscription || !(req.subscription.id || req.subscription._id)) {
+        return res.status(403).json({ error: "No subscription found" });
       }
 
       // HARD STOP — LIMIT CHECK

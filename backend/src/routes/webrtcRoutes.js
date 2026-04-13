@@ -333,14 +333,8 @@ async function retrieveTelnyxConnection({ connectionId, headers }) {
  */
 router.get("/token", async (req, res) => {
   try {
-    if (!req.subscription || !req.subscription.active) {
-      return res.status(403).json({ error: "Active subscription required" });
-    }
-
-    if (req.subscription.isCallEnabled === false) {
-      return res.status(403).json({
-        error: "Calling is not included in your current plan.",
-      });
+    if (!req.subscription || !(req.subscription.id || req.subscription._id)) {
+      return res.status(403).json({ error: "No subscription found" });
     }
 
     const unlimitedGate = await checkUnlimitedUsageBeforeAction({
@@ -356,6 +350,12 @@ router.get("/token", async (req, res) => {
     const unlimitedPlan = isUnlimitedSubscription(
       unlimitedGate.subscription || req.subscription
     );
+
+    if (!unlimitedPlan && !(Number(req.subscription.minutesLimit) > 0)) {
+      return res.status(403).json({
+        error: "Calling is not included in your current plan.",
+      });
+    }
 
     if (!unlimitedPlan && (req.subscription.minutesRemaining || 0) <= 0) {
       return res.status(403).json({
@@ -481,15 +481,8 @@ router.get("/status", async (req, res) => {
  */
 router.post("/repair-outbound", async (req, res) => {
   try {
-    if (!req.subscription || !req.subscription.active) {
-      return res.status(403).json({ success: false, error: "Active subscription required" });
-    }
-
-    if (req.subscription.isCallEnabled === false) {
-      return res.status(403).json({
-        success: false,
-        error: "Calling is not included in your current plan.",
-      });
+    if (!req.subscription || !(req.subscription.id || req.subscription._id)) {
+      return res.status(403).json({ success: false, error: "No subscription found" });
     }
 
     const unlimitedGate = await checkUnlimitedUsageBeforeAction({
@@ -500,6 +493,16 @@ router.post("/repair-outbound", async (req, res) => {
 
     if (!unlimitedGate.allowed) {
       return res.status(403).json(createSuspiciousActivityErrorPayload());
+    }
+
+    const unlimitedPlanRepair = isUnlimitedSubscription(
+      unlimitedGate.subscription || req.subscription
+    );
+    if (!unlimitedPlanRepair && !(Number(req.subscription.minutesLimit) > 0)) {
+      return res.status(403).json({
+        success: false,
+        error: "Calling is not included in your current plan.",
+      });
     }
 
     const headers = getTelnyxAuthHeaders();
@@ -909,11 +912,12 @@ router.post("/repair-outbound", async (req, res) => {
  */
 router.get("/outbound-diagnostics", async (req, res) => {
   try {
-    if (!req.subscription || !req.subscription.active) {
-      return res.status(403).json({ success: false, error: "Active subscription required" });
+    if (!req.subscription || !(req.subscription.id || req.subscription._id)) {
+      return res.status(403).json({ success: false, error: "No subscription found" });
     }
 
-    if (req.subscription.isCallEnabled === false) {
+    const unlimitedDiag = isUnlimitedSubscription(req.subscription);
+    if (!unlimitedDiag && !(Number(req.subscription.minutesLimit) > 0)) {
       return res.status(403).json({
         success: false,
         error: "Calling is not included in your current plan.",

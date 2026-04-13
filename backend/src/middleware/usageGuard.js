@@ -1,9 +1,5 @@
 /**
- * CANONICAL USAGE GUARD
- * --------------------
- * Subscription collection is the single source of truth.
- * If subscription is ACTIVE, usage is allowed.
- * No legacy usage counters or usageLog checks are permitted.
+ * Subscription document must exist; billing status does not gate access.
  */
 
 module.exports = function usageGuard(feature) {
@@ -11,32 +7,19 @@ module.exports = function usageGuard(feature) {
     try {
       const subscription = req.subscription;
 
-      if (!subscription) {
+      if (!subscription || !(subscription.id != null || subscription._id != null)) {
         return res.status(403).json({
           success: false,
-          message: "No active subscription found"
+          message: "No subscription found",
         });
       }
 
-      if (subscription.status !== "active") {
-        return res.status(403).json({
-          success: false,
-          message: "Subscription is not active"
-        });
-      }
-
-      /**
-       * IMPORTANT:
-       * We DO NOT block based on usage numbers here.
-       * Usage tracking is informational only.
-       */
       return next();
-
     } catch (error) {
       console.error("UsageGuard Error:", error);
       return res.status(500).json({
         success: false,
-        message: "Usage validation failed"
+        message: "Usage validation failed",
       });
     }
   };

@@ -63,6 +63,14 @@ const CallIcon = () => (
 function Chat() {
   const { makeCall } = useCall();
   const { subscription, usage, refreshSubscription } = useSubscription();
+  const canUseService = Boolean(subscription?.id ?? subscription?._id);
+  const billingUiActive = Boolean(subscription?.isActive ?? subscription?.active);
+  const isManuallyEnabled = Boolean(
+    subscription?.isManuallyEnabled ??
+      (Number(subscription?.limits?.smsTotal ?? 0) > 0 ||
+        Number(subscription?.limits?.minutesTotal ?? 0) > 0)
+  );
+  const subscriptionUsable = billingUiActive || isManuallyEnabled;
   const suspiciousActivityText =
     'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
   const isSuspiciousActivityError = (message) =>
@@ -87,7 +95,6 @@ function Chat() {
   const subscriptionData = {
     remainingSMS: usage?.smsRemaining ?? subscription?.smsRemaining ?? 0,
     planName: subscription?.planName || 'No Plan',
-    active: Boolean(subscription?.isActive ?? subscription?.active),
   };
 
   const scrollToBottom = () => {
@@ -329,8 +336,11 @@ function Chat() {
 
     if (!inputMessage.trim() || sending) return;
 
-    // Note: SMS limits are tracked but not enforced
-    // Usage is informational only
+    if (!canUseService) {
+      setSendError('No subscription found.');
+      setTimeout(() => setSendError(''), 5000);
+      return;
+    }
 
     if (!selectedChat?.phoneNumber) {
       setSendError('Please select a chat or enter a phone number');
@@ -778,15 +788,36 @@ function Chat() {
                 )}
               {/* SMS Limit Display */}
               <div className="px-4 py-2 border-t border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700/50">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-600 dark:text-gray-400">
-                    Remaining SMS: <span className={`font-semibold ${subscriptionData.remainingSMS <= 0 ? 'text-red-600 dark:text-red-400' : subscriptionData.remainingSMS < 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-green-600 dark:text-green-400'}`}>
-                      {subscriptionData.remainingSMS}
+                <div className="flex flex-col gap-1 text-xs">
+                  {!canUseService && (
+                    <span className="text-amber-700 dark:text-amber-300 font-medium">
+                      No subscription found — SMS is disabled.
                     </span>
-                  </span>
-                  {subscriptionData.remainingSMS <= 0 && (
-                    <span className="text-red-600 dark:text-red-400 font-medium">Limit Reached</span>
                   )}
+                  {canUseService && !subscriptionUsable && (
+                    <span className="text-amber-700 dark:text-amber-300">
+                      Subscription inactive — remaining balance available
+                    </span>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Remaining SMS:{' '}
+                      <span
+                        className={`font-semibold ${
+                          subscriptionData.remainingSMS <= 0
+                            ? 'text-red-600 dark:text-red-400'
+                            : subscriptionData.remainingSMS < 50
+                              ? 'text-yellow-600 dark:text-yellow-400'
+                              : 'text-green-600 dark:text-green-400'
+                        }`}
+                      >
+                        {subscriptionData.remainingSMS}
+                      </span>
+                    </span>
+                    {subscriptionData.remainingSMS <= 0 && (
+                      <span className="text-red-600 dark:text-red-400 font-medium">Limit Reached</span>
+                    )}
+                  </div>
                 </div>
               </div>
               <form onSubmit={handleSend} className="p-4 flex items-center space-x-3">
@@ -796,7 +827,7 @@ function Chat() {
                       value={inputMessage}
                       onChange={(e) => setInputMessage(e.target.value)}
                       placeholder={`Message ${selectedChat?.phoneNumber || ''}...`}
-                      disabled={sending || subscriptionData.remainingSMS <= 0}
+                      disabled={sending || !canUseService || subscriptionData.remainingSMS <= 0}
                       className="w-full px-4 py-3 bg-gray-100 dark:bg-slate-600 border-0 rounded-xl text-sm
                                  focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-500
                                  transition-all disabled:opacity-50 text-gray-900 dark:text-white placeholder-gray-400"
@@ -804,7 +835,12 @@ function Chat() {
                   </div>
                   <button
                     type="submit"
-                    disabled={sending || !inputMessage.trim() || subscriptionData.remainingSMS <= 0}
+                    disabled={
+                      sending ||
+                      !inputMessage.trim() ||
+                      !canUseService ||
+                      subscriptionData.remainingSMS <= 0
+                    }
                     className={`
                     w-12 h-12 rounded-xl flex items-center justify-center
                     transition-all duration-200

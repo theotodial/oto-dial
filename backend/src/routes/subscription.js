@@ -28,6 +28,8 @@ const getSubscriptionHandler = async (req, res) => {
         minutesRemaining: 0,
         smsRemaining: 0,
         status: "inactive",
+        isActive: false,
+        isManuallyEnabled: false,
       });
     }
 
@@ -45,7 +47,8 @@ const getSubscriptionHandler = async (req, res) => {
           displayUnlimited: true,
           status: subscription.status || "active",
           periodEnd: subscription.periodEnd,
-          periodStart: subscription.periodStart
+          periodStart: subscription.periodStart,
+          isManuallyEnabled: Boolean(subscription.isManuallyEnabled),
         }
       : subscription;
 
@@ -56,6 +59,8 @@ const getSubscriptionHandler = async (req, res) => {
       minutesRemaining: unlimited ? "∞" : subscription.minutesRemaining,
       smsRemaining: unlimited ? "∞" : subscription.smsRemaining,
       status: subscription.status || "active",
+      isActive: subscription.status === "active",
+      isManuallyEnabled: Boolean(subscription.isManuallyEnabled),
       periodEnd: subscription.periodEnd,
       periodStart: subscription.periodStart,
       limits: unlimited
