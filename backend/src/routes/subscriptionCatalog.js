@@ -20,6 +20,9 @@ router.get("/plans", async (req, res) => {
       plans: plans.map((plan) => ({
         _id: plan._id,
         name: plan.name,
+        planName: plan.planName || null,
+        type: plan.type || null,
+        displayUnlimited: Boolean(plan.displayUnlimited),
         price: plan.price,
         currency: plan.currency,
         limits: plan.limits,

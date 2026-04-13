@@ -4,6 +4,12 @@ import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import API from '../api';
 import { trackSubscription } from '../utils/analytics';
+import {
+  getPlanFeatureBullets,
+  isCatalogUnlimitedPlan,
+  isTrialPlan,
+  planMarketingDescription,
+} from '../utils/planDisplay';
 
 const CheckIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -121,33 +127,22 @@ function Billing() {
 
       if (response.data?.success && response.data?.plans) {
         // Transform plans for display
-        let transformedPlans = response.data.plans.map(plan => {
-          const priceString = plan.price.toFixed(2);
-          const isUnlimited =
-            priceString === "39.99" ||
-            /unlimited/i.test(plan.name || "") ||
-            /unlimited/i.test(plan?.description || "");
+        let transformedPlans = response.data.plans
+          .filter((plan) => !isTrialPlan(plan))
+          .map((plan) => {
+            const priceString = Number(plan.price || 0).toFixed(2);
+            const isUnlimited = isCatalogUnlimitedPlan(plan);
 
-          return {
-            _id: plan._id,
-            name: plan.name,
-            price: priceString,
-            description: isUnlimited
-              ? "Unlimited outbound calling for power users"
-              : plan.name === "Basic Plan"
-                ? "Perfect for individuals and small teams"
-                : "For growing businesses and power users",
-            features: [
-              "Free Virtual Number",
-              `${plan.limits.minutesTotal.toLocaleString()} Voice Minutes`,
-              `${plan.limits.smsTotal} SMS`,
-              "Email Support"
-            ],
-            // Highlight the unlimited plan as the primary choice
-            popular: isUnlimited,
-            available: true
-          };
-        });
+            return {
+              _id: plan._id,
+              name: plan.name,
+              price: priceString,
+              description: planMarketingDescription(plan),
+              features: getPlanFeatureBullets(plan),
+              popular: isUnlimited,
+              available: true,
+            };
+          });
 
         // Hide legacy high-priced plans (e.g. $119.99) from the selector
         transformedPlans = transformedPlans.filter((p) => p.price !== "119.99");
@@ -166,49 +161,43 @@ function Billing() {
       // Fallback to default plans if API fails or user is not authenticated
       setPlans([
         {
-          _id: 'unlimited',
-          name: "Unlimited Call Plan",
-          price: "39.99",
-          description: "Unlimited outbound calling for heavy callers and sales teams",
-          features: [
-            "Free Virtual Number",
-            "Unlimited Voice Minutes*",
-            "Fair-use policy for real callers",
-            "Priority Support"
-          ],
+          _id: 'fallback-unlimited',
+          name: 'Unlimited Call',
+          price: '39.99',
+          description: 'Unlimited outbound calling for power users',
+          features: getPlanFeatureBullets({
+            name: 'Unlimited Call',
+            type: 'unlimited',
+            displayUnlimited: true,
+            limits: {},
+          }),
           popular: true,
-          available: true
+          available: true,
         },
         {
-          _id: 'basic',
-          name: "Basic Plan",
-          price: "19.99",
-          description: "Perfect for individuals and small teams",
-          features: [
-            "Free Virtual Number",
-            "1,500 Voice Minutes",
-            "100 SMS",
-            "Email Support"
-          ],
+          _id: 'fallback-basic',
+          name: 'Basic Plan',
+          price: '19.99',
+          description: 'Perfect for individuals and small teams',
+          features: getPlanFeatureBullets({
+            name: 'Basic Plan',
+            limits: { minutesTotal: 1500, smsTotal: 100 },
+          }),
           popular: false,
-          available: true
+          available: true,
         },
         {
-          _id: 'unlimited',
-          name: "Unlimited",
-          price: "119.99",
-          description: "Built for high-volume teams",
-          features: [
-            "1 Dedicated Number",
-            "Unlimited SMS*",
-            "Unlimited Minutes*",
-            "Email Support"
-          ],
-          displayUnlimited: true,
-          fairUsageNote: "*Fair usage policy applies.",
+          _id: 'fallback-super',
+          name: 'Super Plan',
+          price: '29.99',
+          description: 'For growing businesses and power users',
+          features: getPlanFeatureBullets({
+            name: 'Super Plan',
+            limits: { minutesTotal: 2500, smsTotal: 200 },
+          }),
           popular: false,
-          available: true
-        }
+          available: true,
+        },
       ]);
     }
   };

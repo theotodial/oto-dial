@@ -1,6 +1,11 @@
 import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import API from '../../api';
+import {
+  getPlanFeatureBullets,
+  isTrialPlan,
+  planMarketingDescription,
+} from '../../utils/planDisplay';
 
 /** Homepage should only show the three public marketing plans. */
 const ALLOWED_PRICING_PLAN_NAMES = new Set([
@@ -41,11 +46,11 @@ const DEFAULT_MARKETING_PLANS = [
   {
     name: 'Unlimited Call',
     price: '39.99',
-    description: 'Maximum flexibility for teams that need more',
+    description: 'Unlimited outbound calling for power users',
     features: [
       'Free Virtual Number',
-      '3,600 Voice Minutes',
-      '400 SMS',
+      'Unlimited voice minutes (fair-use policy)',
+      'Unlimited SMS (fair-use policy)',
       'Email Support',
     ],
     cta: 'Get Started Instantly',
@@ -60,18 +65,8 @@ function NewPricingSection() {
   const toMarketingPlan = (plan) => ({
     name: plan.name,
     price: Number(plan.price || 0).toFixed(2),
-    description:
-      plan.name === 'Basic Plan'
-        ? 'Perfect for individuals and small teams'
-        : plan.name === 'Super Plan'
-          ? 'For growing businesses and power users'
-          : 'Maximum flexibility for teams that need more',
-    features: [
-      'Free Virtual Number',
-      `${plan.limits.minutesTotal.toLocaleString()} Voice Minutes`,
-      `${plan.limits.smsTotal} SMS`,
-      'Email Support',
-    ],
+    description: planMarketingDescription(plan),
+    features: getPlanFeatureBullets(plan),
     cta: 'Get Started Instantly',
     popular: plan.name === 'Basic Plan',
     available: true,
@@ -84,7 +79,10 @@ function NewPricingSection() {
         const response = await API.get('/api/subscription/plans');
         if (response.data?.success && response.data?.plans) {
           const transformedPlans = response.data.plans
-            .filter((plan) => ALLOWED_PRICING_PLAN_NAMES.has(plan.name))
+            .filter(
+              (plan) =>
+                ALLOWED_PRICING_PLAN_NAMES.has(plan.name) && !isTrialPlan(plan)
+            )
             .map(toMarketingPlan);
           if (transformedPlans.length === ALLOWED_PRICING_PLAN_NAMES.size) {
             setPlans(transformedPlans);
