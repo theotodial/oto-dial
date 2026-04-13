@@ -94,6 +94,47 @@ export async function getCampaignRecipients(id, { limit } = {}) {
   return res.data.recipients || [];
 }
 
+export async function patchUserCampaignMode(campaignMode) {
+  const res = await API.patch('/api/users/preferences', { campaignMode });
+  if (res.error) throw new Error(res.error);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Failed to save preference');
+  return res.data.preferences;
+}
+
+export async function searchCampaignWorkspace(q) {
+  const res = await API.get('/api/campaign/search', { params: { q } });
+  if (res.error) throw new Error(res.error);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Search failed');
+  return {
+    campaigns: res.data.campaigns || [],
+    contacts: res.data.contacts || [],
+  };
+}
+
+export async function getThreadActivity(phone) {
+  const res = await API.get('/api/campaign/activity', { params: { phone } });
+  if (res.error) throw new Error(res.error);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Failed to load activity');
+  return {
+    messages: res.data.messages || [],
+    campaigns: res.data.campaigns || [],
+  };
+}
+
+export async function duplicateCampaign(id) {
+  const res = await API.post(`/api/campaign/${id}/duplicate`);
+  if (res.error) throw new Error(res.error);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Duplicate failed');
+  return res.data.campaign;
+}
+
+export async function patchCampaignDraft(id, { name, messageBody } = {}) {
+  const res = await API.patch(`/api/campaign/${id}`, { name, messageBody });
+  if (res.error) throw new Error(res.error);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Save failed');
+  return res.data.campaign;
+}
+
 export async function downloadOptOutCsv() {
   const base = String(import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
   const token = localStorage.getItem('token');

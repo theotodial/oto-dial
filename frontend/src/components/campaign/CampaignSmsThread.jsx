@@ -72,7 +72,13 @@ function deliveryLabel(status, direction) {
  * Same thread loading pattern as Recents: /api/messages?thread= + /api/calls?thread=,
  * read-state on open, send via /api/sms/send.
  */
-export default function CampaignSmsThread({ threadPhone, pollKey = 0, className = '' }) {
+export default function CampaignSmsThread({
+  threadPhone,
+  pollKey = 0,
+  className = '',
+  getThreadCache,
+  setThreadCache,
+}) {
   const messagesEndRef = useRef(null);
   const isMountedRef = useRef(true);
   const [userNumbers, setUserNumbers] = useState([]);
@@ -156,20 +162,25 @@ export default function CampaignSmsThread({ threadPhone, pollKey = 0, className 
         const dateB = new Date(b.timestamp || 0);
         return dateA - dateB;
       });
-      if (isMountedRef.current) setChatItems(allItems);
+      if (isMountedRef.current) {
+        setChatItems(allItems);
+        setThreadCache?.(phoneNumber, allItems);
+      }
     } catch (err) {
       console.error('Failed to fetch chat messages:', err);
     }
-  }, []);
+  }, [setThreadCache]);
 
   useEffect(() => {
     if (threadPhone) {
+      const cached = getThreadCache?.(threadPhone);
+      if (cached?.length) setChatItems(cached);
       fetchChatMessages(threadPhone);
       API.post('/api/messages/read-state', { phoneNumber: threadPhone }).catch(() => {});
     } else {
       setChatItems([]);
     }
-  }, [threadPhone, fetchChatMessages, pollKey]);
+  }, [threadPhone, fetchChatMessages, pollKey, getThreadCache]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -317,6 +328,12 @@ export default function CampaignSmsThread({ threadPhone, pollKey = 0, className 
             type="text"
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                handleSendMessage(e);
+              }
+            }}
             placeholder="Reply (1:1 SMS)…"
             className="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-full text-slate-900 dark:text-white placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             disabled={sending}

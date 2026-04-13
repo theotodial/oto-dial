@@ -708,7 +708,7 @@ router.post("/login", async (req, res) => {
       user.isEmailVerified === true ||
       user.isEmailVerified === undefined;
 
-    const featDoc = await User.findById(user._id).select("features").lean();
+    const featDoc = await User.findById(user._id).select("features preferences").lean();
     const authUserPayload = {
       id: user._id,
       _id: user._id,
@@ -718,6 +718,9 @@ router.post("/login", async (req, res) => {
       status: user.status,
       isEmailVerified,
       features: normalizeFeatures(featDoc || user),
+      preferences: {
+        campaignMode: featDoc?.preferences?.campaignMode === "pro" ? "pro" : "lite",
+      },
     };
 
     await deleteCachedKey(cacheKeys.userProfile(user._id));

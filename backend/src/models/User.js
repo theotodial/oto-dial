@@ -239,6 +239,15 @@ const userSchema = new mongoose.Schema(
       },
     },
 
+    /** UI preferences (non-billing) */
+    preferences: {
+      campaignMode: {
+        type: String,
+        enum: ["lite", "pro"],
+        default: "lite",
+      },
+    },
+
     // Identity verification
     identityVerification: {
       status: {

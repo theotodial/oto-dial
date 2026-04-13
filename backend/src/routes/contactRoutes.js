@@ -45,7 +45,7 @@ router.get("/", async (req, res) => {
  */
 router.post("/", async (req, res) => {
   try {
-    const { name, phoneNumber, email, notes } = req.body;
+    const { name, phoneNumber, email, notes, labels } = req.body;
 
     if (!name || !phoneNumber) {
       return res.status(400).json({ error: "Name and phone number are required" });
@@ -61,12 +61,17 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Contact with this phone number already exists" });
     }
 
+    const labelArr = Array.isArray(labels)
+      ? [...new Set(labels.map((x) => String(x || "").trim()).filter(Boolean))].slice(0, 20)
+      : [];
+
     const contact = new Contact({
       userId: req.user._id,
       name,
       phoneNumber: phoneNumber.replace(/\D/g, ''),
       email: email || "",
-      notes: notes || ""
+      notes: notes || "",
+      labels: labelArr,
     });
 
     await contact.save();
@@ -90,7 +95,7 @@ router.post("/", async (req, res) => {
  */
 router.put("/:id", async (req, res) => {
   try {
-    const { name, email, notes } = req.body;
+    const { name, email, notes, labels } = req.body;
 
     const contact = await Contact.findOne({
       _id: req.params.id,
@@ -104,6 +109,11 @@ router.put("/:id", async (req, res) => {
     if (name !== undefined) contact.name = name;
     if (email !== undefined) contact.email = email;
     if (notes !== undefined) contact.notes = notes;
+    if (labels !== undefined) {
+      contact.labels = Array.isArray(labels)
+        ? [...new Set(labels.map((x) => String(x || "").trim()).filter(Boolean))].slice(0, 20)
+        : [];
+    }
 
     await contact.save();
 

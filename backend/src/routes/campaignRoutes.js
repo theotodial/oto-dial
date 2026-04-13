@@ -7,6 +7,8 @@ import axios from "axios";
 import Campaign from "../models/Campaign.js";
 import CampaignRecipient from "../models/CampaignRecipient.js";
 import SMSTemplate from "../models/SMSTemplate.js";
+import SMS from "../models/SMS.js";
+import Contact from "../models/Contact.js";
 import { normalizeSmsDestination } from "../utils/phoneNormalize.js";
 import { scheduleCampaignSend } from "../services/campaignSendWorker.js";
 import { getCampaignAnalytics } from "../services/campaignAnalyticsService.js";
@@ -451,6 +453,104 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get("/search", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    if (q.length < 2) {
+      return res.json({ success: true, campaigns: [], contacts: [] });
+    }
+    const esc = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(esc, "i");
+    const userId = req.userId;
+    const [campaigns, contacts] = await Promise.all([
+      Campaign.find({ userId, name: re })
+        .sort({ createdAt: -1 })
+        .limit(15)
+        .select("name status createdAt sentCount totalRecipients")
+        .lean(),
+      Contact.find({ userId, $or: [{ name: re }, { phoneNumber: re }] })
+        .sort({ name: 1 })
+        .limit(15)
+        .select("name phoneNumber labels")
+        .lean(),
+    ]);
+    return res.json({ success: true, campaigns, contacts });
+  } catch (err) {
+    console.error("GET /campaign/search:", err);
+    return res.status(500).json({ success: false, error: "Search failed" });
+  }
+});
+
+router.get("/activity", async (req, res) => {
+  try {
+    const raw = String(req.query.phone || "").trim();
+    if (!raw) {
+      return res.status(400).json({ success: false, error: "phone query required" });
+    }
+    const phoneNorm = normalizeSmsDestination(raw);
+    if (!phoneNorm) {
+      return res.status(400).json({ success: false, error: "Invalid phone" });
+    }
+    const userId = req.userId;
+    const digits = phoneNorm.replace(/\D/g, "");
+    const candidates = Array.from(new Set([phoneNorm, digits, digits ? `+${digits}` : null].filter(Boolean)));
+
+    const [messages, campaignTouches] = await Promise.all([
+      SMS.find({
+        user: userId,
+        $or: [{ to: { $in: candidates } }, { from: { $in: candidates } }],
+      })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .select("to from body direction status createdAt campaign")
+        .lean(),
+      CampaignRecipient.aggregate([
+        { $match: { phone: phoneNorm } },
+        {
+          $lookup: {
+            from: "campaigns",
+            localField: "campaignId",
+            foreignField: "_id",
+            as: "c",
+          },
+        },
+        { $unwind: "$c" },
+        { $match: { "c.userId": new mongoose.Types.ObjectId(String(userId)) } },
+        { $sort: { updatedAt: -1 } },
+        { $limit: 25 },
+        {
+          $project: {
+            recipientStatus: "$status",
+            updatedAt: 1,
+            campaignId: "$c._id",
+            campaignName: "$c.name",
+            campaignStatus: "$c.status",
+          },
+        },
+      ]),
+    ]);
+
+    return res.json({
+      success: true,
+      messages: messages.map((msg) => ({
+        id: msg._id,
+        phone_number: msg.direction === "inbound" ? msg.from : msg.to,
+        message: msg.body,
+        text: msg.body,
+        created_at: msg.createdAt,
+        timestamp: msg.createdAt,
+        direction: msg.direction || "outbound",
+        status: msg.status,
+        campaignId: msg.campaign ? String(msg.campaign) : null,
+      })),
+      campaigns: campaignTouches,
+    });
+  } catch (err) {
+    console.error("GET /campaign/activity:", err);
+    return res.status(500).json({ success: false, error: "Failed to load activity" });
+  }
+});
+
 router.get("/:campaignId/analytics", async (req, res) => {
   try {
     const { campaignId } = req.params;
@@ -490,6 +590,81 @@ router.get("/:campaignId/recipients", async (req, res) => {
   } catch (err) {
     console.error("GET /campaign/:id/recipients:", err);
     return res.status(500).json({ success: false, error: "Failed to load recipients" });
+  }
+});
+
+router.post("/:campaignId/duplicate", async (req, res) => {
+  try {
+    const { campaignId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(campaignId)) {
+      return res.status(400).json({ success: false, error: "Invalid campaign id" });
+    }
+    const src = await Campaign.findOne({ _id: campaignId, userId: req.userId }).lean();
+    if (!src) {
+      return res.status(404).json({ success: false, error: "Campaign not found" });
+    }
+    const copy = await Campaign.create({
+      userId: req.userId,
+      name: `${String(src.name || "Campaign").slice(0, 180)} (copy)`,
+      status: "draft",
+      messageBody: src.messageBody || "",
+      schedule: { type: "immediate", scheduledAt: null },
+      totalRecipients: 0,
+      sentCount: 0,
+      failedCount: 0,
+      optedOutCount: 0,
+    });
+    const recs = await CampaignRecipient.find({ campaignId: src._id }).limit(MAX_RECIPIENTS).lean();
+    if (recs.length) {
+      const docs = recs.map((r) => ({
+        campaignId: copy._id,
+        phone: r.phone,
+        variables: r.variables && typeof r.variables === "object" && !Array.isArray(r.variables) ? r.variables : {},
+        status: "pending",
+      }));
+      try {
+        await CampaignRecipient.insertMany(docs, { ordered: false });
+      } catch (e) {
+        if (!e?.writeErrors?.length) throw e;
+      }
+    }
+    const inserted = await CampaignRecipient.countDocuments({ campaignId: copy._id });
+    await Campaign.findByIdAndUpdate(copy._id, { totalRecipients: inserted });
+    const campaign = await Campaign.findById(copy._id).lean();
+    return res.status(201).json({ success: true, campaign });
+  } catch (err) {
+    console.error("POST /campaign/:id/duplicate:", err);
+    return res.status(500).json({ success: false, error: "Duplicate failed" });
+  }
+});
+
+router.patch("/:campaignId", async (req, res) => {
+  try {
+    const { campaignId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(campaignId)) {
+      return res.status(400).json({ success: false, error: "Invalid campaign id" });
+    }
+    const campaign = await Campaign.findOne({ _id: campaignId, userId: req.userId });
+    if (!campaign) {
+      return res.status(404).json({ success: false, error: "Campaign not found" });
+    }
+    if (campaign.status === "running") {
+      return res.status(409).json({ success: false, error: "Cannot edit a running campaign" });
+    }
+    const name = req.body?.name;
+    const messageBody = req.body?.messageBody;
+    if (name !== undefined) {
+      const n = String(name || "").trim();
+      if (n) campaign.name = n;
+    }
+    if (messageBody !== undefined) {
+      campaign.messageBody = String(messageBody ?? "");
+    }
+    await campaign.save();
+    return res.json({ success: true, campaign: campaign.toObject() });
+  } catch (err) {
+    console.error("PATCH /campaign/:id:", err);
+    return res.status(500).json({ success: false, error: "Failed to save campaign" });
   }
 });
 

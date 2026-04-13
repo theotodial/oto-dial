@@ -62,7 +62,7 @@ router.get("/me", async (req, res) => {
   try {
     const userId = req.user._id;
     const [user, resolvedSubscription] = await Promise.all([
-      User.findById(userId).select("_id name email isEmailVerified features"),
+      User.findById(userId).select("_id name email isEmailVerified features preferences"),
       loadUserSubscription(userId),
     ]);
 
@@ -108,6 +108,10 @@ router.get("/me", async (req, res) => {
         email: user?.email || req.user.email,
         isEmailVerified: user?.isEmailVerified !== false,
         features: normalizeFeatures(user || req.user),
+        preferences: {
+          campaignMode:
+            (user || req.user)?.preferences?.campaignMode === "pro" ? "pro" : "lite",
+        },
       },
       subscription: buildPublicSubscriptionState(resolvedSubscription),
       customPackage: resolvedSubscription?.customPackage || null,
@@ -116,6 +120,40 @@ router.get("/me", async (req, res) => {
   } catch (err) {
     console.error("GET /me error:", err);
     res.status(500).json({ success: false, error: "Server error" });
+  }
+});
+
+/**
+ * PATCH /api/users/preferences
+ * Lightweight UI prefs (e.g. Campaign lite vs pro mode).
+ */
+router.patch("/preferences", async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+    const mode = req.body?.campaignMode;
+    if (mode !== undefined) {
+      const m = String(mode).toLowerCase() === "pro" ? "pro" : "lite";
+      if (!user.preferences || typeof user.preferences !== "object") {
+        user.preferences = {};
+      }
+      user.preferences.campaignMode = m;
+      user.markModified("preferences");
+    }
+    await user.save();
+    await deleteCachedKey(cacheKeys.userProfile(req.user._id));
+    const prefs = user.preferences || {};
+    return res.json({
+      success: true,
+      preferences: {
+        campaignMode: prefs.campaignMode === "pro" ? "pro" : "lite",
+      },
+    });
+  } catch (err) {
+    console.error("PATCH /users/preferences error:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
   }
 });
 

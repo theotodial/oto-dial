@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import API from '../api';
 import { useSubscription } from '../context/SubscriptionContext';
+import { useCampaign } from '../context/CampaignContext';
 import CampaignSmsThread from '../components/campaign/CampaignSmsThread';
+import CampaignProResizableGrid from '../components/campaign/CampaignProResizableGrid';
+import CampaignCommandPalette from '../components/campaign/CampaignCommandPalette';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import {
   listCampaigns,
   getCampaign,
@@ -16,6 +20,10 @@ import {
   getCampaignRecipients,
   aiGenerateCampaign,
   downloadOptOutCsv,
+  duplicateCampaign,
+  patchCampaignDraft,
+  getThreadActivity,
+  searchCampaignWorkspace,
 } from '../services/campaignService';
 import {
   renderMessage,
@@ -36,7 +44,12 @@ import {
 } from 'recharts';
 
 const LS_ACTIVE = 'otodial_campaign_active_windows_v2';
-const CANONICAL = ['campaigns', 'chat', 'settings', 'tools'];
+const CANONICAL = ['campaigns', 'chat', 'settings', 'tools', 'activity'];
+const MAX_PRO_PANES = 4;
+
+function normalizeThreadKey(phone) {
+  return String(phone || '').replace(/\D/g, '');
+}
 
 const PHONE_KEYS = ['phone', 'mobile', 'phonenumber', 'phone_number', 'msisdn', 'tel'];
 
@@ -136,22 +149,37 @@ function VarnHighlight({ text }) {
   );
 }
 
-function GridShell({ title, onClose, disabledClose, children }) {
+function GridShell({ title, onClose, disabledClose, onExpand, children }) {
   return (
     <div className="flex flex-col min-h-0 min-w-0 h-full rounded-xl border border-slate-200/90 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm shadow-slate-200/50 dark:shadow-none overflow-hidden">
       <header className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur-sm shrink-0 z-10">
         <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{title}</h3>
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={disabledClose}
-          className="shrink-0 p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 dark:text-slate-400 dark:hover:text-white disabled:opacity-30 disabled:pointer-events-none"
-          aria-label="Close panel"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-0.5 shrink-0">
+          {onExpand && (
+            <button
+              type="button"
+              onClick={onExpand}
+              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 dark:text-slate-400 dark:hover:text-white"
+              aria-label="Expand panel"
+              title="Expand"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={disabledClose}
+            className="shrink-0 p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 dark:text-slate-400 dark:hover:text-white disabled:opacity-30 disabled:pointer-events-none"
+            aria-label="Close panel"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </header>
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">{children}</div>
     </div>
@@ -160,6 +188,7 @@ function GridShell({ title, onClose, disabledClose, children }) {
 
 export default function Campaign() {
   const { usage, subscription, refreshSubscription } = useSubscription();
+  const { campaignMode, setCampaignMode, getThreadCache, setThreadCache } = useCampaign();
   const smsRemaining = usage?.smsRemaining ?? 0;
 
   const [mobileTab, setMobileTab] = useState('campaigns');
@@ -198,6 +227,16 @@ export default function Campaign() {
   const [showAddTab, setShowAddTab] = useState(false);
 
   const [csvStaging, setCsvStaging] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [threadSearch, setThreadSearch] = useState('');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQ, setPaletteQ] = useState('');
+  const [smartResults, setSmartResults] = useState({ campaigns: [], contacts: [] });
+  const [activityBundle, setActivityBundle] = useState(null);
+  const [contactsForLabels, setContactsForLabels] = useState([]);
+  const [labelFilter, setLabelFilter] = useState('');
+  const [expandedPane, setExpandedPane] = useState(null);
+  const draftTimerRef = useRef(null);
 
   const segInfo = smsSegmentCount(composer);
 
@@ -215,6 +254,15 @@ export default function Campaign() {
   const loadTemplates = useCallback(async () => {
     const list = await listTemplates();
     setTemplates(list);
+  }, []);
+
+  const loadMessages = useCallback(async () => {
+    const res = await API.get('/api/messages?limit=100');
+    if (res.error || !res.data?.success) {
+      setMessages([]);
+      return;
+    }
+    setMessages(res.data.messages || []);
   }, []);
 
   const refreshDetail = useCallback(async (id) => {
@@ -242,7 +290,7 @@ export default function Campaign() {
       setLoading(true);
       setError('');
       try {
-        await Promise.all([loadCampaigns(), loadTemplates()]);
+        await Promise.all([loadCampaigns(), loadTemplates(), loadMessages()]);
       } catch (e) {
         if (!cancelled) setError(e.message || 'Failed to load');
       } finally {
@@ -311,6 +359,89 @@ export default function Campaign() {
     activeChatPhone,
   ]);
 
+  useEffect(() => {
+    if (campaignMode !== 'pro') return undefined;
+    let cancelled = false;
+    API.get('/api/contacts?limit=100')
+      .then((r) => {
+        if (cancelled || r.error || !r.data?.contacts) return;
+        setContactsForLabels(r.data.contacts);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignMode]);
+
+  useEffect(() => {
+    if (!activeWindows.includes('activity') || !activeChatPhone) {
+      setActivityBundle(null);
+      return undefined;
+    }
+    let cancelled = false;
+    getThreadActivity(activeChatPhone)
+      .then((d) => {
+        if (!cancelled) setActivityBundle(d);
+      })
+      .catch(() => {
+        if (!cancelled) setActivityBundle(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWindows, activeChatPhone, pollTick]);
+
+  useEffect(() => {
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    if (!selectedId || detail?.campaign?.status !== 'draft') return undefined;
+    draftTimerRef.current = setTimeout(() => {
+      patchCampaignDraft(selectedId, { messageBody: composer }).catch(() => {});
+    }, 1600);
+    return () => clearTimeout(draftTimerRef.current);
+  }, [composer, selectedId, detail?.campaign?.status]);
+
+  useEffect(() => {
+    const t = setInterval(() => loadMessages(), 40000);
+    return () => clearInterval(t);
+  }, [loadMessages]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+      if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'n') {
+        e.preventDefault();
+        setShowAddTab(true);
+        setMobileTab('chat');
+      }
+      if ((e.ctrlKey || e.metaKey) && /^[1-4]$/.test(e.key) && campaignMode === 'pro') {
+        e.preventDefault();
+        const idx = Number(e.key) - 1;
+        const pane = activeWindows[idx];
+        if (pane) setExpandedPane(pane);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeWindows, campaignMode]);
+
+  useEffect(() => {
+    if (!paletteOpen) return undefined;
+    const q = paletteQ.trim();
+    if (q.length < 2) {
+      setSmartResults({ campaigns: [], contacts: [] });
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      searchCampaignWorkspace(q)
+        .then(setSmartResults)
+        .catch(() => setSmartResults({ campaigns: [], contacts: [] }));
+    }, 220);
+    return () => clearTimeout(t);
+  }, [paletteOpen, paletteQ]);
+
   const sampleVars = useMemo(() => {
     try {
       const o = JSON.parse(sampleVarsJson);
@@ -338,6 +469,49 @@ export default function Campaign() {
     return list;
   }, [campaigns, search, statusFilter]);
 
+  const threads = useMemo(() => {
+    const map = new Map();
+    for (const m of messages) {
+      const key = normalizeThreadKey(m.phone_number);
+      if (!key) continue;
+      if (!map.has(key)) {
+        map.set(key, {
+          phone: m.phone_number,
+          lastAt: m.timestamp || m.created_at,
+          preview: m.text || m.message,
+        });
+      }
+    }
+    return [...map.values()].sort(
+      (a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime()
+    );
+  }, [messages]);
+
+  const filteredThreads = useMemo(() => {
+    let list = threads;
+    const q = threadSearch.trim().toLowerCase();
+    if (q) list = list.filter((t) => String(t.phone).toLowerCase().includes(q));
+    if (labelFilter && contactsForLabels.length) {
+      const want = new Set(
+        labelFilter
+          .split(',')
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+      );
+      if (want.size) {
+        const allowed = new Set();
+        for (const c of contactsForLabels) {
+          const labs = (c.labels || []).map((x) => String(x).toLowerCase());
+          if (labs.some((l) => want.has(l))) {
+            allowed.add(normalizeThreadKey(c.phoneNumber));
+          }
+        }
+        list = list.filter((t) => allowed.has(normalizeThreadKey(t.phone)));
+      }
+    }
+    return list;
+  }, [threads, threadSearch, labelFilter, contactsForLabels]);
+
   const recipientPreviewCount = useMemo(() => {
     const parts = recipientsInput
       .split(/[\n,;]+/)
@@ -346,20 +520,17 @@ export default function Campaign() {
     return new Set(parts).size;
   }, [recipientsInput]);
 
-  const gridLayout = useMemo(() => {
-    const n = activeWindows.length;
-    if (n <= 1) return { className: 'grid-cols-1 grid-rows-1', style: { gridTemplateColumns: '1fr', gridTemplateRows: '1fr' } };
-    if (n === 2) return { className: 'grid-cols-2', style: { gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr' } };
-    if (n === 3) return { className: 'grid-cols-3', style: { gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: '1fr' } };
-    return { className: 'grid-cols-2 grid-rows-2', style: { gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr' } };
-  }, [activeWindows.length]);
-
   const toggleWindow = (id) => {
     if (!CANONICAL.includes(id)) return;
     setActiveWindows((prev) => {
       if (prev.includes(id)) {
         if (prev.length <= 1) return prev;
         return prev.filter((x) => x !== id);
+      }
+      if (prev.length >= MAX_PRO_PANES) {
+        const trimmed = prev.slice(0, MAX_PRO_PANES - 1);
+        const next = new Set([...trimmed, id]);
+        return CANONICAL.filter((x) => next.has(x));
       }
       const next = new Set([...prev, id]);
       return CANONICAL.filter((x) => next.has(x));
@@ -373,24 +544,22 @@ export default function Campaign() {
     });
   };
 
-  const openChatTab = (phone) => {
+  const openChatTab = useCallback((phone) => {
     const p = String(phone || '').trim();
     if (!p) return;
     setChatTabs((tabs) => (tabs.includes(p) ? tabs : [...tabs, p]));
     setActiveChatPhone(p);
     setShowAddTab(false);
     setAddTabDraft('');
-  };
+  }, []);
 
-  const closeChatTab = (phone) => {
+  const closeChatTab = useCallback((phone) => {
     setChatTabs((tabs) => {
       const next = tabs.filter((t) => t !== phone);
-      if (activeChatPhone === phone) {
-        setActiveChatPhone(next[next.length - 1] || null);
-      }
+      setActiveChatPhone((cur) => (cur === phone ? next[next.length - 1] || null : cur));
       return next;
     });
-  };
+  }, []);
 
   const handleAddTabSubmit = (e) => {
     e?.preventDefault();
@@ -552,6 +721,7 @@ export default function Campaign() {
   const pieData = analytics
     ? [
         { name: 'Sent', value: analytics.sent, color: '#4f46e5' },
+        { name: 'Delivered', value: analytics.delivered || 0, color: '#22c55e' },
         { name: 'Failed', value: analytics.failed, color: '#dc2626' },
         { name: 'Pending', value: analytics.pending, color: '#94a3b8' },
         { name: 'Opt-out', value: analytics.optedOut || 0, color: '#f59e0b' },
@@ -592,6 +762,62 @@ export default function Campaign() {
     </button>
   );
 
+  const renderActivityBody = () => {
+    const rows = [];
+    if (activityBundle?.messages) {
+      for (const m of activityBundle.messages) {
+        rows.push({
+          kind: 'msg',
+          at: new Date(m.timestamp || m.created_at || 0).getTime(),
+          label: m.direction === 'inbound' ? 'Inbound SMS' : 'Outbound SMS',
+          detail: (m.text || m.message || '').slice(0, 120),
+        });
+      }
+    }
+    if (activityBundle?.campaigns) {
+      for (const c of activityBundle.campaigns) {
+        rows.push({
+          kind: 'camp',
+          at: new Date(c.updatedAt || 0).getTime(),
+          label: 'Campaign',
+          detail: `${c.campaignName || 'Campaign'} · ${c.recipientStatus || ''}`,
+        });
+      }
+    }
+    rows.sort((a, b) => b.at - a.at);
+    return (
+      <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0 text-sm">
+        {!activeChatPhone && (
+          <p className="text-slate-500 dark:text-slate-400 text-center py-8">Select a thread to load activity.</p>
+        )}
+        {activeChatPhone && !activityBundle && (
+          <div className="space-y-2 animate-pulse py-4">
+            <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-3/4" />
+            <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-1/2" />
+            <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-5/6" />
+          </div>
+        )}
+        {activeChatPhone &&
+          activityBundle &&
+          rows.map((r, i) => (
+            <div
+              key={`${r.kind}-${i}`}
+              className="rounded-lg border border-slate-100 dark:border-slate-700 px-3 py-2 bg-slate-50/80 dark:bg-slate-900/40"
+            >
+              <div className="text-[10px] font-semibold uppercase text-slate-500">{r.label}</div>
+              <div className="text-xs text-slate-800 dark:text-slate-100 mt-0.5">{r.detail}</div>
+              <div className="text-[10px] text-slate-400 mt-1">
+                {r.at ? new Date(r.at).toLocaleString() : ''}
+              </div>
+            </div>
+          ))}
+        {activeChatPhone && activityBundle && rows.length === 0 && (
+          <p className="text-slate-500 text-center py-6">No activity yet.</p>
+        )}
+      </div>
+    );
+  };
+
   const renderCampaignListBody = () => (
     <div className="flex flex-col flex-1 min-h-0">
       <div className="p-3 space-y-2 border-b border-slate-100 dark:border-slate-700 shrink-0">
@@ -611,35 +837,70 @@ export default function Campaign() {
           <option value="running">Running</option>
           <option value="completed">Completed</option>
         </select>
+        {campaignMode === 'pro' && (
+          <input
+            value={labelFilter}
+            onChange={(e) => setLabelFilter(e.target.value)}
+            placeholder="Filter by contact label (vip, lead…)"
+            className="w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+          />
+        )}
       </div>
       <div className="flex-1 overflow-y-auto p-2 min-h-0">
         {filteredCampaigns.length === 0 ? (
           <p className="text-sm text-slate-500 px-2 py-6 text-center">No campaigns match.</p>
         ) : (
           filteredCampaigns.map((c) => (
-            <button
+            <div
               key={c._id}
-              type="button"
-              onClick={() => setSelectedId(c._id)}
-              className={`w-full text-left px-3 py-2.5 rounded-xl mb-1 transition-colors ${
+              className={`rounded-xl mb-1 flex gap-1 items-stretch transition-colors ${
                 selectedId === c._id
                   ? 'bg-indigo-50 dark:bg-indigo-950/50 ring-1 ring-indigo-200 dark:ring-indigo-800'
                   : 'hover:bg-slate-50 dark:hover:bg-slate-700/40'
               }`}
             >
-              <div className="font-medium text-sm text-slate-900 dark:text-slate-100 truncate">{c.name}</div>
-              <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                <span className="capitalize">{c.status}</span>
-                <span>·</span>
-                <span>Sent {c.sentCount ?? 0}</span>
-                {c.createdAt && (
-                  <>
-                    <span>·</span>
-                    <span>{new Date(c.createdAt).toLocaleDateString()}</span>
-                  </>
-                )}
-              </div>
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedId(c._id);
+                  if (typeof c.messageBody === 'string') setComposer(c.messageBody);
+                }}
+                className="flex-1 min-w-0 text-left px-3 py-2.5"
+              >
+                <div className="font-medium text-sm text-slate-900 dark:text-slate-100 truncate">{c.name}</div>
+                <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  <span className="capitalize">{c.status}</span>
+                  <span>·</span>
+                  <span>Sent {c.sentCount ?? 0}</span>
+                  {c.createdAt && (
+                    <>
+                      <span>·</span>
+                      <span>{new Date(c.createdAt).toLocaleDateString()}</span>
+                    </>
+                  )}
+                </div>
+              </button>
+              {campaignMode === 'pro' && (
+                <button
+                  type="button"
+                  title="Duplicate campaign"
+                  className="shrink-0 px-2 my-2 rounded-lg text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100/80 dark:hover:bg-indigo-900/30"
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    try {
+                      const copy = await duplicateCampaign(c._id);
+                      await loadCampaigns();
+                      setSelectedId(copy._id);
+                      setComposer(String(copy.messageBody || ''));
+                    } catch (err) {
+                      setError(err.message || 'Duplicate failed');
+                    }
+                  }}
+                >
+                  ⧉
+                </button>
+              )}
+            </div>
           ))
         )}
       </div>
@@ -730,7 +991,13 @@ export default function Campaign() {
           </button>
         </form>
       )}
-      <CampaignSmsThread threadPhone={activeChatPhone} pollKey={pollTick} className="flex-1 min-h-0" />
+      <CampaignSmsThread
+        threadPhone={activeChatPhone}
+        pollKey={pollTick}
+        getThreadCache={getThreadCache}
+        setThreadCache={setThreadCache}
+        className="flex-1 min-h-0"
+      />
     </div>
   );
 
@@ -1052,6 +1319,9 @@ export default function Campaign() {
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2">Delivery {analytics.deliveryRate}%</div>
                   <div className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2">Failure {analytics.failureRate}%</div>
+                  <div className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2">Delivered {analytics.delivered ?? 0}</div>
+                  <div className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2">Replies {analytics.replies ?? 0}</div>
+                  <div className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2">Response {analytics.responseRate ?? 0}%</div>
                   <div className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2">Total {analytics.total}</div>
                   <div className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2">Opt-outs {analytics.optedOut ?? 0}</div>
                 </div>
@@ -1093,6 +1363,101 @@ export default function Campaign() {
     </div>
   );
 
+  const paneTitle = (id) => {
+    if (id === 'campaigns') return 'Campaigns';
+    if (id === 'chat') return 'Conversations';
+    if (id === 'settings') return 'Campaign composer';
+    if (id === 'tools') return 'Templates · CSV · Analytics';
+    if (id === 'activity') return 'Activity timeline';
+    return '';
+  };
+
+  const renderPaneBody = (id) => {
+    if (id === 'campaigns') return renderCampaignListBody();
+    if (id === 'chat') return renderChatBody();
+    if (id === 'settings') return renderComposerBody();
+    if (id === 'tools') return renderToolsBody();
+    if (id === 'activity') return renderActivityBody();
+    return null;
+  };
+
+  const renderProPaneShell = (id) => (
+    <GridShell
+      title={paneTitle(id)}
+      onClose={() => closeWindow(id)}
+      disabledClose={activeWindows.length <= 1}
+      onExpand={() => setExpandedPane(id)}
+    >
+      {renderPaneBody(id)}
+    </GridShell>
+  );
+
+  const paletteCommands = useMemo(() => {
+    const cmds = [
+      {
+        id: 'mode-lite',
+        label: 'Switch to Lite mode (simple SMS)',
+        keywords: 'whatsapp simple',
+        run: () => setCampaignMode('lite').catch((err) => setError(err.message)),
+      },
+      {
+        id: 'mode-pro',
+        label: 'Switch to Pro mode (campaigns & tools)',
+        keywords: 'marketing csv analytics',
+        run: () => setCampaignMode('pro').catch((err) => setError(err.message)),
+      },
+      {
+        id: 'new-chat',
+        label: 'New chat tab',
+        keywords: 'conversation thread',
+        hint: 'Ctrl+N',
+        run: () => {
+          setShowAddTab(true);
+          setMobileTab('chat');
+        },
+      },
+      {
+        id: 'show-activity',
+        label: 'Open Activity timeline pane',
+        keywords: 'history log',
+        run: () => {
+          setCampaignMode('pro').catch(() => {});
+          setActiveWindows((prev) => {
+            if (prev.includes('activity')) return prev;
+            if (prev.length >= MAX_PRO_PANES) {
+              const trimmed = prev.slice(0, MAX_PRO_PANES - 1);
+              const next = new Set([...trimmed, 'activity']);
+              return CANONICAL.filter((x) => next.has(x));
+            }
+            return CANONICAL.filter((x) => new Set([...prev, 'activity']).has(x));
+          });
+        },
+      },
+    ];
+    for (const camp of smartResults.campaigns || []) {
+      cmds.push({
+        id: `c-${camp._id}`,
+        label: `Open campaign: ${camp.name}`,
+        run: () => {
+          setCampaignMode('pro').catch(() => {});
+          setSelectedId(camp._id);
+        },
+      });
+    }
+    for (const co of smartResults.contacts || []) {
+      cmds.push({
+        id: `co-${co._id}`,
+        label: `Chat ${co.name || co.phoneNumber}`,
+        hint: co.phoneNumber,
+        run: () => openChatTab(co.phoneNumber),
+      });
+    }
+    return cmds;
+  }, [smartResults, setCampaignMode, openChatTab]);
+
+  const liteResizeHandle =
+    'w-1.5 bg-slate-200/90 dark:bg-slate-600 hover:bg-indigo-300 dark:hover:bg-indigo-600 data-[panel-resize-handle-enabled=true]:data-[panel-group-direction=horizontal]:cursor-col-resize shrink-0 transition-colors';
+
   const toolbarBtn = (id, label) => {
     const on = activeWindows.includes(id);
     return (
@@ -1113,8 +1478,159 @@ export default function Campaign() {
 
   if (loading) {
     return (
-      <div className="flex flex-1 items-center justify-center p-8 text-slate-500 dark:text-slate-400">
-        Loading campaign workspace…
+      <div className="flex flex-1 flex-col gap-3 p-6 max-w-md mx-auto w-full justify-center">
+        <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded-lg animate-pulse w-2/3" />
+        <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-xl animate-pulse" />
+        <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded-lg animate-pulse w-1/2" />
+      </div>
+    );
+  }
+
+  if (campaignMode === 'lite') {
+    return (
+      <div className="flex flex-1 flex-col h-full min-h-0 bg-slate-100/80 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+        <div className="lg:hidden flex gap-1 p-2 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shrink-0 shadow-sm">
+          <TabBtn id="campaigns" label="Chats" />
+          <TabBtn id="chat" label="Thread" />
+        </div>
+
+        <div className="hidden lg:flex items-center gap-2 px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md shrink-0 flex-wrap shadow-sm">
+          <span className="text-xs font-bold text-slate-500 uppercase tracking-wide mr-1">Lite</span>
+          <button
+            type="button"
+            onClick={() => setCampaignMode('lite').catch((e) => setError(e.message))}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white"
+          >
+            SMS
+          </button>
+          <button
+            type="button"
+            onClick={() => setCampaignMode('pro').catch((e) => setError(e.message))}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-200/80 dark:bg-slate-700"
+          >
+            Pro
+          </button>
+          <select
+            className="text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5"
+            value=""
+            onChange={(e) => {
+              const t = templates.find((x) => x._id === e.target.value);
+              if (t) insertTemplate(t.content);
+              e.target.value = '';
+            }}
+          >
+            <option value="">Template…</option>
+            {templates.map((t) => (
+              <option key={t._id} value={t._id}>
+                {t.title}
+              </option>
+            ))}
+          </select>
+          <div className="flex-1 min-w-[8px]" />
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            Commands <kbd className="ml-1 opacity-70">⌘K</kbd>
+          </button>
+        </div>
+
+        {error && (
+          <div className="mx-3 mt-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-200 px-3 py-2 text-sm border border-red-100 dark:border-red-900/50">
+            {error}
+          </div>
+        )}
+
+        <div className="hidden lg:flex flex-1 min-h-0 p-2 gap-0">
+          <PanelGroup direction="horizontal" autoSaveId="otodial-campaign-lite" className="flex-1 min-h-0">
+            <Panel defaultSize={30} minSize={18} className="min-h-0 min-w-0">
+              <div className="h-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm flex flex-col overflow-hidden">
+                <header className="px-3 py-2.5 border-b border-slate-200 dark:border-slate-700 font-semibold text-sm bg-slate-50/90 dark:bg-slate-800/90">
+                  Conversations
+                </header>
+                <div className="p-2 border-b border-slate-100 dark:border-slate-700 shrink-0">
+                  <input
+                    value={threadSearch}
+                    onChange={(e) => setThreadSearch(e.target.value)}
+                    placeholder="Search numbers…"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-600 px-2 py-1.5 text-sm"
+                  />
+                </div>
+                <div className="flex-1 overflow-y-auto min-h-0 p-1">
+                  {filteredThreads.map((t) => (
+                    <button
+                      key={t.phone}
+                      type="button"
+                      onClick={() => openChatTab(t.phone)}
+                      className={`w-full text-left px-2 py-2 rounded-lg mb-0.5 text-sm ${
+                        activeChatPhone === t.phone
+                          ? 'bg-indigo-50 dark:bg-indigo-950/40 ring-1 ring-indigo-200 dark:ring-indigo-800'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-700/40'
+                      }`}
+                    >
+                      <div className="font-mono text-xs truncate">{t.phone}</div>
+                      <div className="text-[11px] text-slate-500 truncate">{t.preview}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </Panel>
+            <PanelResizeHandle className={liteResizeHandle} />
+            <Panel defaultSize={70} minSize={40} className="min-h-0 min-w-0">
+              <div className="h-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden flex flex-col">
+                {renderChatBody()}
+              </div>
+            </Panel>
+          </PanelGroup>
+        </div>
+
+        <div className="lg:hidden flex-1 min-h-0 overflow-hidden flex flex-col bg-slate-100/80 dark:bg-slate-950">
+          {mobileTab === 'campaigns' && (
+            <div className="flex-1 min-h-0 m-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden flex flex-col">
+              <header className="px-3 py-2.5 border-b font-semibold text-sm">Chats</header>
+              <div className="p-2 border-b">
+                <input
+                  value={threadSearch}
+                  onChange={(e) => setThreadSearch(e.target.value)}
+                  placeholder="Search…"
+                  className="w-full rounded-lg border px-2 py-2 text-sm"
+                />
+              </div>
+              <div className="flex-1 overflow-y-auto p-1">
+                {filteredThreads.map((t) => (
+                  <button
+                    key={t.phone}
+                    type="button"
+                    onClick={() => {
+                      openChatTab(t.phone);
+                      setMobileTab('chat');
+                    }}
+                    className="w-full text-left px-3 py-2 border-b border-slate-100 dark:border-slate-700 font-mono text-sm"
+                  >
+                    {t.phone}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {mobileTab === 'chat' && (
+            <div className="flex-1 min-h-0 m-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden flex flex-col">
+              {renderChatBody()}
+            </div>
+          )}
+        </div>
+
+        <CampaignCommandPalette
+          open={paletteOpen}
+          onClose={() => {
+            setPaletteOpen(false);
+            setPaletteQ('');
+          }}
+          query={paletteQ}
+          onQueryChange={setPaletteQ}
+          commands={paletteCommands}
+        />
       </div>
     );
   }
@@ -1129,11 +1645,34 @@ export default function Campaign() {
       </div>
 
       <div className="hidden lg:flex items-center gap-2 px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md shrink-0 flex-wrap shadow-sm">
+        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide mr-1">Pro</span>
+        <button
+          type="button"
+          onClick={() => setCampaignMode('lite').catch((e) => setError(e.message))}
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-200/80 dark:bg-slate-700"
+        >
+          Lite
+        </button>
+        <button
+          type="button"
+          onClick={() => setCampaignMode('pro').catch((e) => setError(e.message))}
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white"
+        >
+          Full
+        </button>
         {toolbarBtn('campaigns', 'Campaigns')}
         {toolbarBtn('chat', 'Chat')}
         {toolbarBtn('settings', 'Composer')}
-        {toolbarBtn('tools', 'Templates / CSV / Analytics')}
+        {toolbarBtn('tools', 'Tools / CSV / Analytics')}
+        {toolbarBtn('activity', 'Activity')}
         <div className="flex-1 min-w-[8px]" />
+        <button
+          type="button"
+          onClick={() => setPaletteOpen(true)}
+          className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800"
+        >
+          Commands <kbd className="ml-1 opacity-70">⌘K</kbd>
+        </button>
         <button
           type="button"
           className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
@@ -1149,48 +1688,34 @@ export default function Campaign() {
         </div>
       )}
 
-      {/* Desktop grid */}
-      <div
-        className={`hidden lg:grid flex-1 min-h-0 gap-2 p-2 ${gridLayout.className}`}
-        style={gridLayout.style}
-      >
-        {activeWindows.includes('campaigns') && (
-          <GridShell
-            title="Campaigns"
-            onClose={() => closeWindow('campaigns')}
-            disabledClose={activeWindows.length <= 1}
-          >
-            {renderCampaignListBody()}
-          </GridShell>
-        )}
-        {activeWindows.includes('chat') && (
-          <GridShell
-            title="Conversations"
-            onClose={() => closeWindow('chat')}
-            disabledClose={activeWindows.length <= 1}
-          >
-            {renderChatBody()}
-          </GridShell>
-        )}
-        {activeWindows.includes('settings') && (
-          <GridShell
-            title="Campaign composer"
-            onClose={() => closeWindow('settings')}
-            disabledClose={activeWindows.length <= 1}
-          >
-            {renderComposerBody()}
-          </GridShell>
-        )}
-        {activeWindows.includes('tools') && (
-          <GridShell
-            title="Templates · CSV · Analytics"
-            onClose={() => closeWindow('tools')}
-            disabledClose={activeWindows.length <= 1}
-          >
-            {renderToolsBody()}
-          </GridShell>
-        )}
+      <div className="hidden lg:flex flex-1 min-h-0 min-w-0 p-2">
+        <CampaignProResizableGrid
+          paneIds={activeWindows}
+          renderPane={(id) => renderProPaneShell(id)}
+          autoSaveId="otodial-campaign-pro"
+        />
       </div>
+
+      {expandedPane && (
+        <div
+          className="hidden lg:flex fixed inset-0 z-[160] items-stretch justify-center bg-black/50 p-4"
+          role="presentation"
+          onMouseDown={() => setExpandedPane(null)}
+        >
+          <div
+            className="w-full max-w-6xl h-full min-h-0"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <GridShell
+              title={paneTitle(expandedPane)}
+              onClose={() => setExpandedPane(null)}
+              disabledClose={false}
+            >
+              {renderPaneBody(expandedPane)}
+            </GridShell>
+          </div>
+        </div>
+      )}
 
       {/* Mobile single panel */}
       <div className="lg:hidden flex-1 min-h-0 overflow-hidden flex flex-col bg-slate-100/80 dark:bg-slate-950">
@@ -1227,6 +1752,17 @@ export default function Campaign() {
           </div>
         )}
       </div>
+
+      <CampaignCommandPalette
+        open={paletteOpen}
+        onClose={() => {
+          setPaletteOpen(false);
+          setPaletteQ('');
+        }}
+        query={paletteQ}
+        onQueryChange={setPaletteQ}
+        commands={paletteCommands}
+      />
     </div>
   );
 }

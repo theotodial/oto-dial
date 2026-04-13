@@ -29,7 +29,7 @@ router.get("/bootstrap", async (req, res) => {
     });
 
     const [userDoc, latestSub] = await Promise.all([
-      User.findById(userId).select("_id name email isEmailVerified features").lean(),
+      User.findById(userId).select("_id name email isEmailVerified features preferences").lean(),
       getLatestSubscription(userId),
     ]);
 
@@ -41,6 +41,9 @@ router.get("/bootstrap", async (req, res) => {
           email: userDoc.email,
           isEmailVerified: userDoc.isEmailVerified !== false,
           features: normalizeFeatures(userDoc),
+          preferences: {
+            campaignMode: userDoc.preferences?.campaignMode === "pro" ? "pro" : "lite",
+          },
         }
       : null;
 

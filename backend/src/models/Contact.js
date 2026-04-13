@@ -23,7 +23,11 @@ const contactSchema = new mongoose.Schema(
     notes: {
       type: String,
       default: ""
-    }
+    },
+    labels: {
+      type: [String],
+      default: [],
+    },
   },
   { timestamps: true }
 );

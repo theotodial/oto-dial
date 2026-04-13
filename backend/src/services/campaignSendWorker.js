@@ -6,7 +6,8 @@ import { enqueueCampaignJob } from "./campaignQueueService.js";
 
 const BATCH_SIZE = Number(process.env.CAMPAIGN_SMS_BATCH_SIZE || 50);
 const BATCH_DELAY_MS = Number(process.env.CAMPAIGN_SMS_BATCH_DELAY_MS || 200);
-const RETRY_DELAYS_MS = [30_000, 120_000, 300_000];
+/** Retry cadence: 1 min → 5 min → 15 min (per product spec) */
+const RETRY_DELAYS_MS = [60_000, 300_000, 900_000];
 
 const activeJobs = new Set();
 

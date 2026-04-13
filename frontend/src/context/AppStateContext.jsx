@@ -49,6 +49,13 @@ function normalizeClientFeatures(u) {
   };
 }
 
+function normalizeClientPreferences(u) {
+  const p = u?.preferences;
+  return {
+    campaignMode: p?.campaignMode === "pro" ? "pro" : "lite",
+  };
+}
+
 function normalizeUserFromLoginOrMe(u) {
   if (!u) return null;
   const id = u._id ?? u.id;
@@ -60,6 +67,7 @@ function normalizeUserFromLoginOrMe(u) {
     email: u.email,
     isEmailVerified: u.isEmailVerified !== false,
     features: normalizeClientFeatures(u),
+    preferences: normalizeClientPreferences(u),
   };
 }
 
@@ -100,7 +108,11 @@ export function AppStateProvider({ children }) {
   const applyBootstrapData = useCallback((data, activeToken) => {
     const rawUser = data?.user || null;
     const nextUser = rawUser
-      ? { ...rawUser, features: normalizeClientFeatures(rawUser) }
+      ? {
+          ...rawUser,
+          features: normalizeClientFeatures(rawUser),
+          preferences: normalizeClientPreferences(rawUser),
+        }
       : null;
     const nextSubscription = data?.subscription || null;
     const nextUsage = data?.usage ?? emptyUsageBootstrap();
@@ -217,6 +229,25 @@ export function AppStateProvider({ children }) {
     };
   }, [fetchBootstrap, token, user]);
 
+  const mergeUser = useCallback((partial) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...partial };
+      if (partial?.preferences) {
+        next.preferences = {
+          ...normalizeClientPreferences(prev),
+          ...normalizeClientPreferences({ preferences: partial.preferences }),
+        };
+      } else {
+        next.preferences = normalizeClientPreferences(prev);
+      }
+      if (partial?.features) {
+        next.features = normalizeClientFeatures({ features: partial.features });
+      }
+      return next;
+    });
+  }, []);
+
   const setAuthToken = useCallback((newToken, bootstrapData = null) => {
     localStorage.removeItem("adminToken");
     localStorage.removeItem("adminProfile");
@@ -253,9 +284,10 @@ export function AppStateProvider({ children }) {
     isReady,
     isRefreshing,
     setAuthToken,
+    mergeUser,
     clearAppState,
     refetchBootstrap: () => fetchBootstrap({ force: true }),
-  }), [token, user, subscription, usage, isReady, isRefreshing, setAuthToken, clearAppState, fetchBootstrap]);
+  }), [token, user, subscription, usage, isReady, isRefreshing, setAuthToken, mergeUser, clearAppState, fetchBootstrap]);
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }

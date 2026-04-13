@@ -17,6 +17,7 @@ import OAuthConsent from '../pages/OAuthConsent';
 import OAuthSuccess from '../pages/OAuthSuccess';
 import Recents from '../pages/Recents';
 import Campaign from '../pages/Campaign';
+import { CampaignProvider } from '../context/CampaignContext';
 import Dashboard from '../pages/Dashboard';
 import Contacts from '../pages/Contacts';
 import Billing from '../pages/Billing';
@@ -166,7 +167,9 @@ export default function AppShell() {
             <ProtectedRoute>
               <DashboardLayout>
                 <FeatureProtectedRoute feature="campaign">
-                  <Campaign />
+                  <CampaignProvider>
+                    <Campaign />
+                  </CampaignProvider>
                 </FeatureProtectedRoute>
               </DashboardLayout>
             </ProtectedRoute>
