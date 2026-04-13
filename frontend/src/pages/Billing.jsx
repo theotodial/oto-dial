@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import API from '../api';
 import { trackSubscription } from '../utils/analytics';
+import PlanFeatureBullet from '../components/PlanFeatureBullet';
 import {
   getPlanFeatureBullets,
   isCatalogUnlimitedPlan,
@@ -560,12 +561,7 @@ function Billing() {
                   </div>
                   <ul className="mt-3 space-y-1.5 text-xs text-gray-700 dark:text-gray-300">
                     {(activePlan.features || []).map((feature, idx) => (
-                      <li key={idx} className="flex items-start gap-2">
-                        <span className="mt-[3px] h-3 w-3 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-[9px]">
-                          ✓
-                        </span>
-                        <span>{feature}</span>
-                      </li>
+                      <PlanFeatureBullet key={idx} feature={feature} variant="billing" />
                     ))}
                   </ul>
                 </div>

@@ -21,25 +21,43 @@ export function isTrialPlan(plan) {
   return n === "trial" || n.startsWith("trial ");
 }
 
+/** @typedef {{ text: string, included?: boolean }} PlanFeatureItem */
+
+/**
+ * Coerce API/string entries to `{ text, included }` for list rendering.
+ * @param {PlanFeatureItem | string} feature
+ * @returns {{ text: string, included: boolean }}
+ */
+export function normalizePlanFeature(feature) {
+  if (feature && typeof feature === "object" && "text" in feature) {
+    return {
+      text: String(feature.text ?? ""),
+      included: feature.included !== false,
+    };
+  }
+  return { text: String(feature ?? ""), included: true };
+}
+
 /**
  * Feature bullets for pricing / billing UI (aligned with Mongo plan when not unlimited).
+ * @returns {PlanFeatureItem[]}
  */
 export function getPlanFeatureBullets(plan) {
   if (isCatalogUnlimitedPlan(plan)) {
     return [
-      "Free Virtual Number",
-      "Unlimited voice minutes (fair-use policy)",
-      "SMS not included — add SMS packs from Billing if needed",
-      "Email support",
+      { text: "Free Virtual Number", included: true },
+      { text: "Unlimited voice minutes", included: true },
+      { text: "SMS not included", included: false },
+      { text: "Email support", included: true },
     ];
   }
   const m = Math.max(0, Number(plan?.limits?.minutesTotal ?? 0));
   const s = Math.max(0, Number(plan?.limits?.smsTotal ?? 0));
   return [
-    "Free Virtual Number",
-    `${m.toLocaleString()} Voice Minutes`,
-    `${s.toLocaleString()} SMS`,
-    "Email Support",
+    { text: "Free Virtual Number", included: true },
+    { text: `${m.toLocaleString()} Voice Minutes`, included: true },
+    { text: `${s.toLocaleString()} SMS`, included: true },
+    { text: "Email Support", included: true },
   ];
 }
 

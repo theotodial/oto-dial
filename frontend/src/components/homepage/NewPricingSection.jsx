@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import API from '../../api';
+import PlanFeatureBullet from '../PlanFeatureBullet';
 import {
   getPlanFeatureBullets,
   isTrialPlan,
@@ -48,10 +49,10 @@ const DEFAULT_MARKETING_PLANS = [
     price: '39.99',
     description: 'Unlimited outbound calling for power users',
     features: [
-      'Free Virtual Number',
-      'Unlimited voice minutes (fair-use policy)',
-      'SMS not included — add SMS packs from Billing if needed',
-      'Email Support',
+      { text: 'Free Virtual Number', included: true },
+      { text: 'Unlimited voice minutes', included: true },
+      { text: 'SMS not included', included: false },
+      { text: 'Email Support', included: true },
     ],
     cta: 'Get Started Instantly',
     popular: false,
@@ -150,22 +151,7 @@ function NewPricingSection() {
               {/* Features */}
               <ul className="space-y-4 mb-8">
                 {plan.features.map((feature, featureIndex) => (
-                  <li key={featureIndex} className="flex items-start">
-                    <svg
-                      className="w-5 h-5 text-indigo-600 dark:text-indigo-400 mt-0.5 mr-3 flex-shrink-0"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    <span className="text-gray-700 dark:text-gray-300">{feature}</span>
-                  </li>
+                  <PlanFeatureBullet key={featureIndex} feature={feature} variant="homepage" />
                 ))}
               </ul>
 
