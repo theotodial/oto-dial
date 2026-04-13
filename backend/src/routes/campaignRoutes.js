@@ -171,6 +171,47 @@ router.delete("/templates/:templateId", async (req, res) => {
   }
 });
 
+router.patch("/templates/:templateId", async (req, res) => {
+  try {
+    const { templateId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(templateId)) {
+      return res.status(400).json({ success: false, error: "Invalid template id" });
+    }
+    const titleRaw = req.body?.title;
+    const contentRaw = req.body?.content;
+    const updates = {};
+    if (titleRaw !== undefined) {
+      const title = String(titleRaw || "").trim();
+      if (!title) {
+        return res.status(400).json({ success: false, error: "title cannot be empty" });
+      }
+      updates.title = title;
+    }
+    if (contentRaw !== undefined) {
+      const content = String(contentRaw || "").trim();
+      if (!content) {
+        return res.status(400).json({ success: false, error: "content cannot be empty" });
+      }
+      updates.content = content;
+    }
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ success: false, error: "Provide title and/or content" });
+    }
+    const doc = await SMSTemplate.findOneAndUpdate(
+      { _id: templateId, userId: req.userId },
+      { $set: updates },
+      { new: true }
+    ).lean();
+    if (!doc) {
+      return res.status(404).json({ success: false, error: "Template not found" });
+    }
+    return res.json({ success: true, template: doc });
+  } catch (err) {
+    console.error("PATCH /campaign/templates:", err);
+    return res.status(500).json({ success: false, error: "Failed to update template" });
+  }
+});
+
 router.post("/ai-generate", async (req, res) => {
   try {
     const goal = String(req.body?.goal || "").trim();
@@ -425,6 +466,30 @@ router.get("/:campaignId/analytics", async (req, res) => {
   } catch (err) {
     console.error("GET /campaign/:id/analytics:", err);
     return res.status(500).json({ success: false, error: "Failed to load analytics" });
+  }
+});
+
+router.get("/:campaignId/recipients", async (req, res) => {
+  try {
+    const { campaignId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(campaignId)) {
+      return res.status(400).json({ success: false, error: "Invalid campaign id" });
+    }
+    const own = await Campaign.findOne({ _id: campaignId, userId: req.userId }).select("_id").lean();
+    if (!own) {
+      return res.status(404).json({ success: false, error: "Campaign not found" });
+    }
+    const limitRaw = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 500;
+    const recipients = await CampaignRecipient.find({ campaignId })
+      .select("phone status variables")
+      .sort({ createdAt: 1 })
+      .limit(limit)
+      .lean();
+    return res.json({ success: true, recipients });
+  } catch (err) {
+    console.error("GET /campaign/:id/recipients:", err);
+    return res.status(500).json({ success: false, error: "Failed to load recipients" });
   }
 });
 

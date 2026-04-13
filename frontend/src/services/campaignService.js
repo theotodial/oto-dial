@@ -78,6 +78,22 @@ export async function deleteTemplate(id) {
   if (!res.data?.success) throw new Error(res.data?.error || 'Failed to delete');
 }
 
+export async function updateTemplate(id, { title, content }) {
+  const res = await API.patch(`/api/campaign/templates/${id}`, { title, content });
+  if (res.error) throw new Error(res.error);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Failed to update template');
+  return res.data.template;
+}
+
+export async function getCampaignRecipients(id, { limit } = {}) {
+  const res = await API.get(`/api/campaign/${id}/recipients`, {
+    params: limit ? { limit } : undefined,
+  });
+  if (res.error) throw new Error(res.error);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Failed to load recipients');
+  return res.data.recipients || [];
+}
+
 export async function downloadOptOutCsv() {
   const base = String(import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
   const token = localStorage.getItem('token');
