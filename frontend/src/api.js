@@ -109,6 +109,21 @@ const safeRequest = async (requestFn) => {
     }
 
     const url = error.config?.url || "";
+    const path = getRequestPath(url);
+    // Dev + frontend-only: backend not running — avoid noisy logs and Vite proxy spam for analytics beacons
+    if (
+      import.meta.env.DEV &&
+      !error.response &&
+      path.startsWith("/api/analytics/track")
+    ) {
+      return {
+        data: null,
+        error: error.message || "API request failed",
+        status: 500,
+        response: undefined,
+      };
+    }
+
     const tag = url.includes("/api/calls") ? "[CALL ERROR FRONTEND] API" : "API Error";
     if (error.code === "ERR_CANCELED" || error.message === "canceled") {
       console.error(

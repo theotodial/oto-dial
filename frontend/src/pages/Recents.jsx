@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -8,6 +9,7 @@ import ActiveCallChrome from '../components/ActiveCallChrome';
 import { fetchAllContacts } from '../utils/fetchAllContacts';
 import { notifySubscriptionChanged } from '../utils/subscriptionSync';
 import { threadMatchesPeerPhone } from '../utils/phoneThreadMatch';
+import { loadSmsFavorites, addSmsFavorite, removeSmsFavorite } from '../utils/smsFavoritesStorage';
 
 const ClockIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -93,6 +95,17 @@ const TrashIcon = ({ className = 'w-5 h-5', strokeWidth = 2 }) => (
   </svg>
 );
 
+const StarIcon = ({ className = 'w-5 h-5', strokeWidth = 2, filled }) => (
+  <svg className={className} fill={filled ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={strokeWidth}
+      d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"
+    />
+  </svg>
+);
+
 // Helper function to generate avatar initials
 const getInitials = (name) => {
   if (!name) return '?';
@@ -119,6 +132,10 @@ const getAvatarColor = (name) => {
   const index = name.charCodeAt(0) % colors.length;
   return colors[index];
 };
+
+function recentsNormPhone(n) {
+  return String(n || '').replace(/\D/g, '');
+}
 
 /** Plan + usage strip — hidden everywhere on Voice (use Billing / subscription for details). */
 function VoiceSubscriptionStrip() {
@@ -243,7 +260,14 @@ function Recents() {
   const [importingContacts, setImportingContacts] = useState(false);
   // Long press state for mobile
   const [longPressedItem, setLongPressedItem] = useState(null); // phoneNumber that's being long-pressed
+  const [messageActionMenu, setMessageActionMenu] = useState(null); // { clientX, clientY, text }
+  const [forwardText, setForwardText] = useState(null);
+  const [favoritesModalOpen, setFavoritesModalOpen] = useState(false);
+  const [favoriteEntries, setFavoriteEntries] = useState([]);
+  const [actionToast, setActionToast] = useState('');
+  const longPressBubbleTimerRef = useRef(null);
   const longPressTimerRef = useRef(null);
+  const messageActionMenuRef = useRef(null);
   // Read/unread state and notifications
   const [readState, setReadState] = useState({}); // phoneNumber -> lastReadAt
   const [unreadCounts, setUnreadCounts] = useState({}); // phoneNumber -> count
@@ -310,9 +334,12 @@ function Recents() {
     return num.replace(/\D/g, '');
   };
 
-  // Thread fetch: small SMS limit keeps DB + JSON fast; messages load first, calls merge after (no blocking spinner).
+  // Thread fetch: messages load first, calls merge after (no blocking spinner).
   const THREAD_CHAT_MESSAGES_LIMIT = 150;
   const THREAD_CHAT_CALLS_LIMIT = 40;
+  /** Enough rows to rebuild many chat threads for the sidebar (backend caps ~2000). */
+  const RECENTS_MESSAGES_AGG_LIMIT = 800;
+  const RECENTS_CALLS_AGG_LIMIT = 120;
 
   const mergeThreadItemsWithPending = useCallback((allItems, prev) => {
     const pending = prev.filter((x) => x._localPending);
@@ -449,7 +476,10 @@ function Recents() {
         await API.post('/api/messages/read-state', { phoneNumber: selectedChat });
         setUnreadCounts((prev) => {
           const next = { ...(prev || {}) };
-          delete next[selectedChat];
+          const n = normPhone(selectedChat);
+          for (const k of Object.keys(next)) {
+            if (normPhone(k) === n) delete next[k];
+          }
           return next;
         });
       } catch (e) {
@@ -535,8 +565,11 @@ function Recents() {
     }
     try {
       const [callsResponse, messagesResponse] = await Promise.all([
-        API.get('/api/calls', { params: { limit: 20 } }),
-        API.get('/api/messages', { params: { limit: 20 } }).catch(() => ({ error: true, data: null }))
+        API.get('/api/calls', { params: { limit: RECENTS_CALLS_AGG_LIMIT } }),
+        API.get('/api/messages', { params: { limit: RECENTS_MESSAGES_AGG_LIMIT } }).catch(() => ({
+          error: true,
+          data: null,
+        })),
       ]);
 
       if (!isMountedRef.current) return;
@@ -547,26 +580,43 @@ function Recents() {
       }
 
       const chatMap = new Map();
+      const threadKey = (raw) => {
+        const p = String(raw || '').trim();
+        const digits = p.replace(/\D/g, '');
+        if (!digits) return p || 'unknown';
+        return digits;
+      };
+      const displayPhone = (raw) => {
+        const p = String(raw || '').trim();
+        if (!p) return '';
+        if (p.startsWith('+')) return p;
+        const digits = p.replace(/\D/g, '');
+        return digits ? `+${digits}` : p;
+      };
       if (!messagesResponse.error && messagesResponse.data) {
         const messages = messagesResponse.data?.messages || messagesResponse.data || [];
-        messages.forEach(msg => {
-          const phoneNumber = msg.phone_number || msg.to || msg.from || 'Unknown';
-          if (!chatMap.has(phoneNumber)) {
-            chatMap.set(phoneNumber, {
-              id: phoneNumber,
+        messages.forEach((msg) => {
+          const rawPeer = msg.phone_number || msg.to || msg.from || '';
+          const key = threadKey(rawPeer);
+          if (!key || key === 'unknown') return;
+          const phoneNumber = displayPhone(rawPeer);
+          if (!chatMap.has(key)) {
+            chatMap.set(key, {
+              id: key,
               phoneNumber,
               lastMessage: msg.message || msg.text || '',
               date: msg.created_at || msg.createdAt || msg.timestamp || new Date(),
               message: msg.message || msg.text || '',
-              type: 'sms'
+              type: 'sms',
             });
           } else {
-            const existing = chatMap.get(phoneNumber);
+            const existing = chatMap.get(key);
             const msgDate = new Date(msg.created_at || msg.createdAt || msg.timestamp || 0);
             const existingDate = new Date(existing.date || 0);
             if (msgDate > existingDate) {
               existing.lastMessage = msg.message || msg.text || '';
               existing.date = msg.created_at || msg.createdAt || msg.timestamp;
+              if (phoneNumber) existing.phoneNumber = phoneNumber;
             }
           }
         });
@@ -606,6 +656,37 @@ function Recents() {
     fetchContacts();
     fetchReadStateAndUnread();
   }, [fetchRecents, fetchContacts, fetchReadStateAndUnread]);
+
+  // Inbound SMS is stored by webhooks; refresh the open thread periodically so replies appear without a tab reload.
+  useEffect(() => {
+    if (!selectedChat) return undefined;
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return;
+      fetchChatMessages(selectedChat);
+    };
+    const id = setInterval(tick, 5000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        fetchChatMessages(selectedChat);
+        fetchReadStateAndUnread();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [selectedChat, fetchChatMessages, fetchReadStateAndUnread]);
+
+  // Keep chat list / combined recents in sync while this page is open (new threads, previews, unread).
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!isMountedRef.current || document.visibilityState !== 'visible') return;
+      fetchRecents(false);
+      fetchReadStateAndUnread();
+    }, 10000);
+    return () => clearInterval(id);
+  }, [fetchRecents, fetchReadStateAndUnread]);
 
   const formatDate = (date) => {
     if (!date) return '';
@@ -741,6 +822,48 @@ function Recents() {
       wasInCallRef.current = false;
     }
   }, [calling, fetchRecents, isInCall]);
+
+  useEffect(() => {
+    if (selectedChat && mobileTab === 'chats') {
+      document.body.setAttribute('data-chat-open', 'true');
+    } else {
+      document.body.removeAttribute('data-chat-open');
+    }
+    return () => {
+      document.body.removeAttribute('data-chat-open');
+    };
+  }, [selectedChat, mobileTab]);
+
+  useEffect(() => {
+    const handleCloseChat = () => {
+      if (selectedChat && mobileTab === 'chats') {
+        setSelectedChat(null);
+      }
+    };
+    window.addEventListener('closeChat', handleCloseChat);
+    return () => window.removeEventListener('closeChat', handleCloseChat);
+  }, [selectedChat, mobileTab]);
+
+  useEffect(() => {
+    if (!messageActionMenu) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setMessageActionMenu(null);
+    };
+    const onDoc = (e) => {
+      if (messageActionMenuRef.current && !messageActionMenuRef.current.contains(e.target)) {
+        setMessageActionMenu(null);
+      }
+    };
+    const t = window.setTimeout(() => {
+      document.addEventListener('keydown', onKey);
+      document.addEventListener('mousedown', onDoc, true);
+    }, 0);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onDoc, true);
+    };
+  }, [messageActionMenu]);
 
   if (loading) {
     return (
@@ -947,6 +1070,15 @@ function Recents() {
     }
   };
 
+  /** lg+: Enter sends, Shift+Enter newline. Below lg: Enter is newline; send via button only. */
+  const handleMessageComposerKeyDown = (e) => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    if (!isLgDesktopVoice) return;
+    e.preventDefault();
+    if (!inputMessage.trim() || smsSendLockRef.current) return;
+    void handleSendMessage(e);
+  };
+
   const normPhone = (n) => (n || '').replace(/\D/g, '');
   const getUnreadCount = (phoneNumber) => {
     const n = normPhone(phoneNumber);
@@ -967,6 +1099,134 @@ function Recents() {
     return null;
   };
   getContactNameRef.current = getContactName;
+
+  const favoriteUserKey = user?.id ?? user?._id ?? 'anon';
+
+  const getBubblePlainText = (item) => String(item?.message || item?.body || item?.text || '').trim();
+
+  const showActionToast = (msg) => {
+    setActionToast(msg);
+    window.setTimeout(() => setActionToast(''), 2500);
+  };
+
+  const clearBubbleLongPress = () => {
+    if (longPressBubbleTimerRef.current) {
+      clearTimeout(longPressBubbleTimerRef.current);
+      longPressBubbleTimerRef.current = null;
+    }
+  };
+
+  const openMessageActionMenuAt = (clientX, clientY, text) => {
+    const body = String(text || '').trim();
+    if (!body) return;
+    setMessageActionMenu({ clientX, clientY, text: body });
+  };
+
+  const startBubbleLongPressFromEvent = (e, text) => {
+    clearBubbleLongPress();
+    const body = String(text || '').trim();
+    if (!body) return;
+    const cx = e.clientX ?? e.touches?.[0]?.clientX ?? 0;
+    const cy = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
+    longPressBubbleTimerRef.current = setTimeout(() => {
+      longPressBubbleTimerRef.current = null;
+      openMessageActionMenuAt(cx, cy, body);
+    }, 520);
+  };
+
+  const bubbleLongPressHandlers = (text) => ({
+    onMouseDown: (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      startBubbleLongPressFromEvent(e, text);
+    },
+    onMouseUp: clearBubbleLongPress,
+    onMouseLeave: clearBubbleLongPress,
+    onTouchStart: (e) => startBubbleLongPressFromEvent(e, text),
+    onTouchEnd: clearBubbleLongPress,
+    onTouchCancel: clearBubbleLongPress,
+    onContextMenu: (e) => {
+      e.preventDefault();
+      const body = String(text || '').trim();
+      if (!body) return;
+      openMessageActionMenuAt(e.clientX, e.clientY, body);
+    },
+  });
+
+  const handleMessageMenuCopy = async () => {
+    const t = messageActionMenu?.text;
+    if (!t) return;
+    try {
+      await navigator.clipboard.writeText(t);
+      showActionToast('Copied');
+    } catch {
+      showActionToast('Could not copy');
+    }
+    setMessageActionMenu(null);
+  };
+
+  const handleMessageMenuFavorite = () => {
+    const t = messageActionMenu?.text;
+    if (!t || !selectedChat) return;
+    const next = addSmsFavorite(favoriteUserKey, { text: t, peerPhone: selectedChat });
+    setFavoriteEntries(next);
+    showActionToast('Saved to favorites');
+    setMessageActionMenu(null);
+  };
+
+  const handleMessageMenuForward = () => {
+    const t = messageActionMenu?.text;
+    if (!t) return;
+    setForwardText(t);
+    setMessageActionMenu(null);
+  };
+
+  const openFavoritesForThread = () => {
+    const all = loadSmsFavorites(favoriteUserKey);
+    const forThread = selectedChat
+      ? all.filter((x) => normPhone(x.peerPhone) === normPhone(selectedChat))
+      : all;
+    setFavoriteEntries(forThread);
+    setFavoritesModalOpen(true);
+  };
+
+  const removeFavoriteEntry = (id) => {
+    removeSmsFavorite(favoriteUserKey, id);
+    const all = loadSmsFavorites(favoriteUserKey);
+    setFavoriteEntries(
+      selectedChat ? all.filter((x) => normPhone(x.peerPhone) === normPhone(selectedChat)) : all
+    );
+  };
+
+  const executeForwardToPeer = async (peerPhone) => {
+    const text = (forwardText || '').trim();
+    if (!text || !peerPhone) return;
+    if (userNumbers.length === 0) {
+      showActionToast('Add a number to send SMS');
+      setForwardText(null);
+      return;
+    }
+    if (!canUseService) {
+      showActionToast('Subscription required');
+      setForwardText(null);
+      return;
+    }
+    setForwardText(null);
+    try {
+      const res = await API.post('/api/sms/send', { to: peerPhone, text });
+      if (res.error) {
+        showActionToast(res.error || 'Forward failed');
+        return;
+      }
+      notifySubscriptionChanged();
+      showActionToast('Sent');
+      await Promise.all([fetchRecents(false), refreshSubscription()]);
+      if (selectedChat && normPhone(selectedChat) === normPhone(peerPhone)) {
+        await fetchChatMessages(peerPhone);
+      }
+    } catch {
+      showActionToast('Forward failed');
+    }
+  };
 
   // Delete chat (messages for one thread) - wired to backend
   const handleDeleteChat = async (phoneNumber) => {
@@ -1208,29 +1468,6 @@ function Recents() {
     </div>
   );
 
-  // Update document attribute when chat is selected for DashboardLayout to detect
-  useEffect(() => {
-    if (selectedChat && mobileTab === 'chats') {
-      document.body.setAttribute('data-chat-open', 'true');
-    } else {
-      document.body.removeAttribute('data-chat-open');
-    }
-    return () => {
-      document.body.removeAttribute('data-chat-open');
-    };
-  }, [selectedChat, mobileTab]);
-
-  // Listen for close chat event from DashboardLayout back button
-  useEffect(() => {
-    const handleCloseChat = () => {
-      if (selectedChat && mobileTab === 'chats') {
-        setSelectedChat(null);
-      }
-    };
-    window.addEventListener('closeChat', handleCloseChat);
-    return () => window.removeEventListener('closeChat', handleCloseChat);
-  }, [selectedChat, mobileTab]);
-
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-white dark:bg-slate-900">
       {/* Desktop View - 3 panels: Chats list | Inline Chat / Empty | Dialer (same theme as mobile) */}
@@ -1427,7 +1664,7 @@ function Recents() {
         {/* Center Panel - Inline Chat or empty (desktop lg+) */}
         <div className="flex flex-1 flex-col bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 min-w-0 min-h-0">
           {selectedChat ? (
-            <>
+            <div className="flex flex-1 flex-col min-h-0">
               <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between flex-shrink-0 gap-2">
                 <h2 className="text-lg font-bold text-gray-900 dark:text-white truncate min-w-0">{getContactName(selectedChat) || selectedChat}</h2>
                 <div className="flex items-center gap-1 flex-shrink-0">
@@ -1436,6 +1673,14 @@ function Recents() {
                   </button>
                   <button onClick={() => openSaveContactModal(selectedChat)} className="p-2 rounded-xl text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20" title="Save to contacts">
                     <PlusIcon className="w-5 h-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openFavoritesForThread()}
+                    className="p-2 rounded-xl text-gray-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                    title="Saved messages for this chat"
+                  >
+                    <StarIcon className="w-5 h-5" filled />
                   </button>
                   <button onClick={() => setDeleteChatTarget(selectedChat)} disabled={deleting} className="p-2 rounded-xl text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20" title="Delete conversation">
                     <TrashIcon className="w-5 h-5" />
@@ -1484,9 +1729,10 @@ function Recents() {
                     return (
                       <div key={`msg-${item.id || idx}`} className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}>
                         <div
-                          className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                          className={`max-w-[75%] rounded-2xl px-4 py-2 select-none ${
                             isOutbound ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white border border-gray-200 dark:border-slate-600'
                           } ${isPending ? 'ring-1 ring-indigo-300/50 dark:ring-indigo-500/30' : ''}`}
+                          {...bubbleLongPressHandlers(getBubblePlainText(item))}
                         >
                           <p className="text-sm whitespace-pre-wrap break-words">{item.message || item.body || item.text}</p>
                           <p className={`text-xs mt-1 flex flex-wrap items-center gap-x-2 ${isOutbound ? 'text-indigo-100' : 'text-gray-500 dark:text-gray-400'}`}>
@@ -1521,13 +1767,19 @@ function Recents() {
                 </div>
               )}
               <div className="p-3 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex-shrink-0">
-                <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-                  <input
-                    type="text"
+                <form onSubmit={handleSendMessage} className="flex items-end gap-2">
+                  <textarea
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
-                    placeholder="Type a message..."
-                    className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-full text-gray-900 dark:text-white placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    onKeyDown={handleMessageComposerKeyDown}
+                    placeholder="Type a message…"
+                    title={
+                      isLgDesktopVoice
+                        ? 'Shift+Enter new line · Enter to send'
+                        : 'New line: Enter · Send: tap the send button'
+                    }
+                    rows={1}
+                    className="flex-1 min-h-[2.75rem] max-h-36 resize-none px-4 py-2.5 bg-gray-100 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-2xl text-gray-900 dark:text-white placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 leading-snug"
                   />
                   <button
                     type="submit"
@@ -1541,7 +1793,7 @@ function Recents() {
                   </button>
                 </form>
               </div>
-            </>
+            </div>
           ) : (
             <div className="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400 min-h-0">
               <div className="text-center px-6">
@@ -1740,6 +1992,14 @@ function Recents() {
                   <button onClick={() => openSaveContactModal(selectedChat)} className="p-2 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-600 dark:text-gray-300 hover:text-indigo-600" title="Save to contacts">
                     <PlusIcon className="w-5 h-5" />
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => openFavoritesForThread()}
+                    className="p-2 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/20 text-gray-600 dark:text-gray-300 hover:text-amber-600"
+                    title="Saved messages for this chat"
+                  >
+                    <StarIcon className="w-5 h-5" filled />
+                  </button>
                   <button onClick={() => setDeleteChatTarget(selectedChat)} disabled={deleting} className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-600 dark:text-gray-300 hover:text-red-600" title="Delete conversation">
                     <TrashIcon className="w-5 h-5" />
                   </button>
@@ -1785,13 +2045,17 @@ function Recents() {
         </div>
         )}
 
-        {/* Mobile Tab Content */}
-        <div className={`flex-1 ${mobileTab === 'dialer' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+        {/* Mobile Tab Content — min-h-0 + nested overflow so thread list and chat both scroll correctly */}
+        <div
+          className={`flex-1 min-h-0 flex flex-col ${
+            mobileTab === 'dialer' ? 'overflow-hidden' : 'overflow-hidden'
+          }`}
+        >
           {mobileTab === 'chats' && selectedChat ? (
             // Inline Chat View - WhatsApp style
-            <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900">
+            <div className="flex flex-1 min-h-0 flex-col bg-gray-50 dark:bg-slate-900">
               {/* Messages Area */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
                   {chatLoading && chatMessages.length === 0 ? (
                     <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
                       <p>Loading messages…</p>
@@ -1847,11 +2111,12 @@ function Recents() {
                           className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
                         >
                           <div
-                            className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                            className={`max-w-[75%] rounded-2xl px-4 py-2 select-none ${
                               isOutbound
                                 ? 'bg-indigo-600 text-white'
                                 : 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white'
                             } ${isPending ? 'ring-1 ring-indigo-300/50 dark:ring-indigo-500/30' : ''}`}
+                            {...bubbleLongPressHandlers(getBubblePlainText(item))}
                           >
                             <p className="text-sm whitespace-pre-wrap break-words">{item.message || item.body || item.text}</p>
                             <p
@@ -1891,14 +2156,20 @@ function Recents() {
                   )}
                 </div>
               )}
-              <div className="border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
-                <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-                  <input
-                    type="text"
+              <div className="flex-shrink-0 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
+                <form onSubmit={handleSendMessage} className="flex items-end gap-2">
+                  <textarea
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
-                    placeholder="Type a message..."
-                    className="flex-1 px-4 py-2 bg-gray-100 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-full text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    onKeyDown={handleMessageComposerKeyDown}
+                    placeholder="Type a message…"
+                    title={
+                      isLgDesktopVoice
+                        ? 'Shift+Enter new line · Enter to send'
+                        : 'New line: Enter · Send: tap the send button'
+                    }
+                    rows={1}
+                    className="flex-1 min-h-[2.75rem] max-h-36 resize-none px-4 py-2 bg-gray-100 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-2xl text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent leading-snug"
                   />
                   <button
                     type="submit"
@@ -1914,7 +2185,7 @@ function Recents() {
               </div>
             </div>
           ) : mobileTab === 'chats' && (
-            <div className="divide-y divide-gray-100 dark:divide-slate-700">
+            <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-gray-100 dark:divide-slate-700">
               {filteredChats.length === 0 ? (
                 <div className="p-8 text-center text-gray-500 dark:text-gray-300">
                   <MessageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
@@ -2477,6 +2748,168 @@ function Recents() {
           </div>
         </div>
       )}
+
+      {messageActionMenu &&
+        createPortal(
+          <div
+            ref={messageActionMenuRef}
+            role="menu"
+            className="fixed z-[200] min-w-[11rem] rounded-xl border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 py-1 shadow-xl"
+            style={{
+              left: Math.max(
+                8,
+                Math.min(messageActionMenu.clientX, (typeof window !== 'undefined' ? window.innerWidth : 400) - 180)
+              ),
+              top: Math.max(
+                8,
+                Math.min(messageActionMenu.clientY, (typeof window !== 'undefined' ? window.innerHeight : 400) - 120)
+              ),
+            }}
+          >
+            <button
+              type="button"
+              className="w-full px-4 py-2.5 text-left text-sm text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-slate-700"
+              onClick={() => handleMessageMenuCopy()}
+            >
+              Copy
+            </button>
+            <button
+              type="button"
+              className="w-full px-4 py-2.5 text-left text-sm text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-slate-700"
+              onClick={() => handleMessageMenuForward()}
+            >
+              Forward
+            </button>
+            <button
+              type="button"
+              disabled={!selectedChat}
+              className="w-full px-4 py-2.5 text-left text-sm text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={() => handleMessageMenuFavorite()}
+            >
+              Favorite
+            </button>
+          </div>,
+          document.body
+        )}
+
+      {forwardText != null && forwardText !== '' && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[190] flex items-center justify-center p-4"
+          onClick={() => setForwardText(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-md w-full max-h-[min(28rem,85vh)] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-gray-200 dark:border-slate-700 flex-shrink-0">
+              <h2 className="text-lg font-bold text-gray-900 dark:text-white">Forward to</h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-3">{forwardText}</p>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto p-2">
+              {filteredChats.filter((c) => {
+                const p = c.phoneNumber || c.phone_number;
+                if (!p) return false;
+                if (!selectedChat) return true;
+                return normPhone(p) !== normPhone(selectedChat);
+              }).length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400 p-4 text-center">No other chats to forward to.</p>
+              ) : (
+                filteredChats
+                  .filter((c) => {
+                    const p = c.phoneNumber || c.phone_number;
+                    if (!p) return false;
+                    if (!selectedChat) return true;
+                    return normPhone(p) !== normPhone(selectedChat);
+                  })
+                  .map((c) => {
+                    const p = c.phoneNumber || c.phone_number;
+                    const label = getContactName(p) || p;
+                    return (
+                      <button
+                        key={c.id || c._id || p}
+                        type="button"
+                        onClick={() => executeForwardToPeer(p)}
+                        className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left hover:bg-gray-50 dark:hover:bg-slate-700/80"
+                      >
+                        <Avatar name={label} phoneNumber={p} size="w-10 h-10" />
+                        <span className="font-medium text-gray-900 dark:text-white truncate">{label}</span>
+                      </button>
+                    );
+                  })
+              )}
+            </div>
+            <div className="p-3 border-t border-gray-200 dark:border-slate-700 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setForwardText(null)}
+                className="w-full py-2.5 rounded-xl bg-gray-100 dark:bg-slate-700 text-gray-800 dark:text-gray-200 font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {favoritesModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[190] flex items-center justify-center p-4"
+          onClick={() => setFavoritesModalOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl max-w-md w-full max-h-[min(28rem,85vh)] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-gray-200 dark:border-slate-700 flex-shrink-0 flex items-center justify-between gap-2">
+              <h2 className="text-lg font-bold text-gray-900 dark:text-white truncate">
+                {selectedChat ? `Saved — ${getContactName(selectedChat) || selectedChat}` : 'Saved messages'}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setFavoritesModalOpen(false)}
+                className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-700"
+                aria-label="Close"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
+              {favoriteEntries.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">
+                  Long-press a message and tap Favorite, or use the star in the chat header.
+                </p>
+              ) : (
+                favoriteEntries.map((fav) => (
+                  <div
+                    key={fav.id}
+                    className="rounded-xl border border-gray-200 dark:border-slate-600 p-3 bg-gray-50 dark:bg-slate-900/40"
+                  >
+                    <p className="text-sm text-gray-900 dark:text-white whitespace-pre-wrap break-words">{fav.text}</p>
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2">
+                      {fav.savedAt ? new Date(fav.savedAt).toLocaleString() : ''}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => removeFavoriteEntry(fav.id)}
+                      className="mt-2 text-xs font-medium text-red-600 dark:text-red-400 hover:underline"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {actionToast ? (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[210] px-4 py-2 rounded-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-sm font-medium shadow-lg max-w-[90vw] truncate">
+          {actionToast}
+        </div>
+      ) : null}
     </div>
   );
 }

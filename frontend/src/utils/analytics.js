@@ -1,6 +1,19 @@
 // Analytics tracking utility — never block navigation (fire-and-forget to API)
 import API from '../api';
 
+/** In dev with same-origin /api (Vite proxy), stop beaconing after first unreachable backend to avoid proxy spam */
+let serverAnalyticsReachable = true;
+
+function queueServerAnalyticsPost(path, body) {
+  if (import.meta.env.DEV && !serverAnalyticsReachable) return;
+  void (async () => {
+    const res = await API.post(path, body);
+    if (import.meta.env.DEV && !res?.response && res?.error) {
+      serverAnalyticsReachable = false;
+    }
+  })();
+}
+
 // Generate or get session ID
 const getSessionId = () => {
   let sessionId = sessionStorage.getItem('analytics_session_id');
@@ -59,7 +72,7 @@ async function trackPageViewWork(page, pageTitle, userId = null) {
       });
     }
 
-    void API.post('/api/analytics/track', {
+    queueServerAnalyticsPost('/api/analytics/track', {
       sessionId,
       page,
       pageTitle,
@@ -105,7 +118,7 @@ async function trackEventWork(name, category, action, label, value) {
       });
     }
 
-    void API.post('/api/analytics/track/event', {
+    queueServerAnalyticsPost('/api/analytics/track/event', {
       sessionId,
       name,
       category,
@@ -139,7 +152,7 @@ export const startTimeTracking = () => {
     if (timeSpent > 0) {
       try {
         const sessionId = getSessionId();
-        void API.post('/api/analytics/track', {
+        queueServerAnalyticsPost('/api/analytics/track', {
           sessionId,
           timeSpent
         });
@@ -161,7 +174,7 @@ export const trackSignUp = (userId) => {
   trackEvent('signup', 'conversion', 'signup', 'user_signed_up', 1);
   try {
     const sessionId = getSessionId();
-    void API.post('/api/analytics/track', {
+    queueServerAnalyticsPost('/api/analytics/track', {
       sessionId,
       userId,
       signedUp: true
@@ -175,7 +188,7 @@ export const trackSubscription = (userId, subscriptionId) => {
   trackEvent('subscription', 'conversion', 'subscription', 'user_subscribed', 1);
   try {
     const sessionId = getSessionId();
-    void API.post('/api/analytics/track', {
+    queueServerAnalyticsPost('/api/analytics/track', {
       sessionId,
       userId,
       hasSubscription: true,

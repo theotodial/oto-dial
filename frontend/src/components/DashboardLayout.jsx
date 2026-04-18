@@ -101,10 +101,16 @@ function DashboardLayout({ children }) {
     }
   };
 
+  // Recents already shows an in-header back control when a thread is open; hide this
+  // overlay so it does not stack on top of that button (same z-index / hit area).
+  const hideFloatingOnRecentsInlineChat =
+    location.pathname === '/recents' && isChatOpen;
+
   const showFloatingMobileBtn =
     !shouldHideMobileButton &&
     !isDialerActive &&
-    !mergedMobileHeader;
+    !mergedMobileHeader &&
+    !hideFloatingOnRecentsInlineChat;
 
   const sidebarContextValue = {
     toggleSidebar: () => setMobileMenuOpen((o) => !o),

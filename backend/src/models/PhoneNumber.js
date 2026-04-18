@@ -54,7 +54,7 @@ const phoneNumberSchema = new mongoose.Schema(
 
     lockedCountry: {
       type: Boolean,
-      default: true
+      default: false
     },
 
     state: {

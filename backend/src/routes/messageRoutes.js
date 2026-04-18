@@ -27,6 +27,29 @@ function buildPhoneCandidates(phone) {
   return Array.from(set);
 }
 
+/** Short codes 3–8 digits; else +digits for one row per logical peer in MessageReadState. */
+function canonicalPeerPhone(raw) {
+  const digits = normalizePhone(raw);
+  if (!digits) return String(raw || "").trim();
+  if (digits.length >= 3 && digits.length <= 8) return digits;
+  return `+${digits}`;
+}
+
+function lastReadAtForPeer(peerRaw, readStates) {
+  const peerCanon = canonicalPeerPhone(peerRaw);
+  const peerDigits = normalizePhone(peerRaw);
+  let best = new Date(0);
+  for (const s of readStates) {
+    const sCanon = canonicalPeerPhone(s.phoneNumber);
+    const sDigits = normalizePhone(s.phoneNumber);
+    if (sCanon === peerCanon || (peerDigits && sDigits && peerDigits === sDigits)) {
+      const t = s.lastReadAt ? new Date(s.lastReadAt) : new Date(0);
+      if (t > best) best = t;
+    }
+  }
+  return best;
+}
+
 /**
  * GET /api/messages
  * Get all messages (SMS) for the current user
@@ -110,7 +133,7 @@ router.get("/read-state", async (req, res) => {
     const states = await MessageReadState.find({ user: userId }).lean();
     const byPhone = {};
     states.forEach((s) => {
-      byPhone[s.phoneNumber] = s.lastReadAt;
+      byPhone[canonicalPeerPhone(s.phoneNumber)] = s.lastReadAt;
     });
     res.json({ success: true, readState: byPhone });
   } catch (err) {
@@ -126,7 +149,11 @@ router.get("/read-state", async (req, res) => {
 router.post("/read-state", async (req, res) => {
   try {
     const userId = req.userId;
-    const phoneNumber = (req.body.phoneNumber || req.body.phone || "").trim();
+    const raw = String(req.body.phoneNumber || req.body.phone || "").trim();
+    if (!raw) {
+      return res.status(400).json({ success: false, error: "phoneNumber required" });
+    }
+    const phoneNumber = canonicalPeerPhone(raw);
     if (!phoneNumber) {
       return res.status(400).json({ success: false, error: "phoneNumber required" });
     }
@@ -153,44 +180,29 @@ router.get("/unread-counts", async (req, res) => {
       .select("phoneNumber lastReadAt")
       .lean();
 
+    // Distinct inbound peers (cap for cost); unread = inbound after lastReadAt for that peer.
+    const inboundPeers = await SMS.aggregate([
+      { $match: { user: req.user._id, direction: "inbound" } },
+      { $sort: { createdAt: -1 } },
+      { $group: { _id: "$from" } },
+      { $limit: 300 },
+    ]);
+
     const unreadByPhone = {};
     await Promise.all(
-      readStates.map(async (state) => {
-        const candidates = buildPhoneCandidates(state.phoneNumber);
+      inboundPeers.map(async (row) => {
+        const peer = row._id;
+        if (!peer) return;
+        const candidates = buildPhoneCandidates(peer);
+        const lastReadAt = lastReadAtForPeer(peer, readStates);
         const count = await SMS.countDocuments({
           user: userId,
           direction: "inbound",
           from: { $in: candidates },
-          createdAt: { $gt: state.lastReadAt || new Date(0) },
+          createdAt: { $gt: lastReadAt },
         });
         if (count > 0) {
-          unreadByPhone[state.phoneNumber] = count;
-        }
-      })
-    );
-
-    const latestInboundThreads = await SMS.aggregate([
-      { $match: { user: req.user._id, direction: "inbound" } },
-      { $sort: { createdAt: -1 } },
-      {
-        $group: {
-          _id: "$from",
-          latestAt: { $first: "$createdAt" },
-        },
-      },
-      { $limit: 20 },
-    ]);
-
-    await Promise.all(
-      latestInboundThreads.map(async (thread) => {
-        if (unreadByPhone[thread._id] !== undefined) return;
-        const count = await SMS.countDocuments({
-          user: userId,
-          direction: "inbound",
-          from: thread._id,
-        });
-        if (count > 0) {
-          unreadByPhone[thread._id] = count;
+          unreadByPhone[canonicalPeerPhone(peer)] = count;
         }
       })
     );

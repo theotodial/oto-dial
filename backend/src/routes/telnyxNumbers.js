@@ -10,6 +10,8 @@ import {
   getSupportedCountries,
   isNumberProvisioningEnabledCountry
 } from "../utils/countryUtils.js";
+import { isSameCountryOutboundOnlyEnabled } from "../utils/telecomCountryLock.js";
+import { extractTelnyxErrorMessage } from "../utils/telnyxErrorMessage.js";
 
 const router = express.Router();
 const MAX_MONTHLY_NUMBER_COST = Number(process.env.TELNYX_MAX_MONTHLY_NUMBER_COST || 3.0);
@@ -345,18 +347,6 @@ function extractMessagingRate(numberData = {}) {
       0
   );
   return Number.isFinite(val) ? val : 0;
-}
-
-function extractTelnyxErrorMessage(err) {
-  if (!err) return "Unknown Telnyx error";
-  return (
-    err?.raw?.errors?.[0]?.detail ||
-    err?.raw?.errors?.[0]?.title ||
-    err?.response?.data?.errors?.[0]?.detail ||
-    err?.response?.data?.error ||
-    err?.message ||
-    "Unknown Telnyx error"
-  );
 }
 
 function buildPhoneNumberIdentifierCandidates({ phoneNumberId, phoneNumber }) {
@@ -943,16 +933,46 @@ function buildWhitelistedDestinations(countryInfo) {
   return Array.from(new Set([countryInfo?.telnyxCode, "US", "CA"].filter(Boolean)));
 }
 
+/** Outbound SMS destinations when international mode is on (override narrow US/CA profiles). */
+function buildInternationalMessagingWhitelist(countryInfo) {
+  const fromEnv = String(process.env.TELNYX_MESSAGING_WHITELIST_DESTINATIONS || "").trim();
+  if (fromEnv) {
+    return Array.from(
+      new Set(
+        fromEnv
+          .split(/[,;\s]+/)
+          .map((c) => c.trim().toUpperCase())
+          .filter(Boolean)
+      )
+    );
+  }
+  const codes = new Set(
+    getSupportedCountries()
+      .map((c) => c.iso2 || c.code)
+      .filter(Boolean)
+  );
+  if (countryInfo?.telnyxCode) codes.add(String(countryInfo.telnyxCode).toUpperCase());
+  codes.add("US");
+  codes.add("CA");
+  return Array.from(codes);
+}
+
 async function ensureUserMessagingProfile({ telnyx, user, countryInfo, webhookUrl }) {
-  const destinations = buildWhitelistedDestinations(countryInfo);
+  const restrictDestinations = isSameCountryOutboundOnlyEnabled();
+  const destinations = restrictDestinations ? buildWhitelistedDestinations(countryInfo) : [];
+  const internationalDestinations = restrictDestinations
+    ? []
+    : buildInternationalMessagingWhitelist(countryInfo);
   const updatePayload = {};
   if (webhookUrl) {
     updatePayload.webhook_url = webhookUrl;
     updatePayload.webhook_failover_url = webhookUrl;
     updatePayload.webhook_api_version = "2";
   }
-  if (destinations.length) {
+  if (restrictDestinations && destinations.length) {
     updatePayload.whitelisted_destinations = destinations;
+  } else if (!restrictDestinations && internationalDestinations.length) {
+    updatePayload.whitelisted_destinations = internationalDestinations;
   }
 
   if (user.messagingProfileId) {
@@ -982,17 +1002,33 @@ async function ensureUserMessagingProfile({ telnyx, user, countryInfo, webhookUr
     baseCreatePayload.webhook_api_version = "2";
   }
 
-  const createAttempts = [
-    {
-      ...baseCreatePayload,
-      whitelisted_destinations: destinations
-    },
-    {
-      ...baseCreatePayload,
-      whitelisted_destinations: ["US", "CA"]
-    },
-    baseCreatePayload
-  ];
+  const createAttempts = restrictDestinations
+    ? [
+        {
+          ...baseCreatePayload,
+          whitelisted_destinations: destinations,
+        },
+        {
+          ...baseCreatePayload,
+          whitelisted_destinations: ["US", "CA"],
+        },
+        baseCreatePayload,
+      ]
+    : [
+        {
+          ...baseCreatePayload,
+          whitelisted_destinations: internationalDestinations,
+        },
+        baseCreatePayload,
+        {
+          ...baseCreatePayload,
+          whitelisted_destinations: buildWhitelistedDestinations(countryInfo),
+        },
+        {
+          ...baseCreatePayload,
+          whitelisted_destinations: ["US", "CA"],
+        },
+      ];
 
   let lastError = null;
   for (const payload of createAttempts) {
@@ -1796,7 +1832,7 @@ router.post(
             countryCode: resolvedCountryInfo.code,
             countryName: resolvedCountryInfo.name,
             iso2: resolvedCountryInfo.iso2,
-            lockedCountry: true,
+            lockedCountry: isSameCountryOutboundOnlyEnabled(),
             state: state,
             city: city,
             regionInformation: regionInfo,
@@ -1948,8 +1984,15 @@ router.post(
       if (!user.messagingProfileId) {
         const profileData = {
           name: `user-${user._id}`,
-          whitelisted_destinations: ["US", "CA"]
         };
+        if (isSameCountryOutboundOnlyEnabled()) {
+          profileData.whitelisted_destinations = ["US", "CA"];
+        } else {
+          profileData.whitelisted_destinations = buildInternationalMessagingWhitelist({
+            telnyxCode: "US",
+            code: "US",
+          });
+        }
 
         // Add webhook URL if backend URL is configured
         if (webhookUrl) {

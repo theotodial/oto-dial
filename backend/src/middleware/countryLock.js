@@ -6,6 +6,7 @@
 import PhoneNumber from "../models/PhoneNumber.js";
 import Call from "../models/Call.js";
 import { validateCountryLock } from "../utils/countryUtils.js";
+import { isSameCountryOutboundOnlyEnabled } from "../utils/telecomCountryLock.js";
 
 const SMS_SHORT_CODE_KEYWORDS = new Set([
   "STOP",
@@ -44,8 +45,12 @@ export async function validateCallCountryLock(req, res, next) {
       });
     }
 
-    // Check if country lock is enabled
-    if (userPhoneNumber.lockedCountry !== false && userPhoneNumber.countryCode) {
+    // Check if country lock is enabled (opt-in via TELECOM_SAME_COUNTRY_OUTBOUND_ONLY)
+    if (
+      isSameCountryOutboundOnlyEnabled() &&
+      userPhoneNumber.lockedCountry !== false &&
+      userPhoneNumber.countryCode
+    ) {
       // Body (dialer/SMS) or Call row when `req.params.id` is a call id
       let destinationNumber =
         req.body.to || req.body.phoneNumber || req.body.toNumber;
@@ -139,8 +144,12 @@ export async function validateSMSCountryLock(req, res, next) {
       });
     }
 
-    // Check if country lock is enabled
-    if (userPhoneNumber.lockedCountry !== false && userPhoneNumber.countryCode) {
+    // Check if country lock is enabled (opt-in via TELECOM_SAME_COUNTRY_OUTBOUND_ONLY)
+    if (
+      isSameCountryOutboundOnlyEnabled() &&
+      userPhoneNumber.lockedCountry !== false &&
+      userPhoneNumber.countryCode
+    ) {
       // Get destination number from request
       const destinationNumber = req.body.to;
       const normalizedText = String(req.body?.text || "").trim().toUpperCase();

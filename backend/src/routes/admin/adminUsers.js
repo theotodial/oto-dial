@@ -51,11 +51,19 @@ function buildAdminUserFilterMatch(filter = "all") {
   const normalized = String(filter || "all").trim().toLowerCase();
 
   if (normalized === "active") {
+    // Match billing-active states (Stripe + manual). Prefer explicit statuses over "not cancelled"
+    // so incomplete/suspended rows do not appear as "Active" in admin.
+    const billingActiveStatuses = [
+      "active",
+      "trialing",
+      "pending_activation",
+      "past_due",
+    ];
     return {
       $or: [
         {
           subscription: { $ne: null },
-          "subscription.status": { $ne: "cancelled" },
+          "subscription.status": { $in: billingActiveStatuses },
         },
         { customPackage: { $ne: null } },
       ],
@@ -233,14 +241,33 @@ router.get(
         {
           $lookup: {
             from: "subscriptions",
-            let: { userId: "$_id" },
+            let: {
+              userId: "$_id",
+              activeSubscriptionId: "$activeSubscriptionId",
+            },
             pipeline: [
               {
                 $match: {
-                  $expr: { $eq: ["$userId", "$$userId"] }
-                }
+                  $expr: { $eq: ["$userId", "$$userId"] },
+                },
               },
-              { $sort: { createdAt: -1 } },
+              {
+                $addFields: {
+                  __adminListSortPriority: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $ne: ["$$activeSubscriptionId", null] },
+                          { $eq: ["$_id", "$$activeSubscriptionId"] },
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+              },
+              { $sort: { __adminListSortPriority: -1, createdAt: -1 } },
               { $limit: 1 },
               {
                 $project: {
@@ -254,12 +281,12 @@ router.get(
                   limits: 1,
                   usage: 1,
                   periodStart: 1,
-                  periodEnd: 1
-                }
-              }
+                  periodEnd: 1,
+                },
+              },
             ],
-            as: "subscription"
-          }
+            as: "subscription",
+          },
         },
         {
           $lookup: {
