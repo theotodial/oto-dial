@@ -91,14 +91,14 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
       {/* Mobile Overlay */}
       {mobileMenuOpen && (
         <div
-          className="lg:hidden fixed inset-0 bg-black/50 z-40"
+          className="lg:hidden fixed inset-0 bg-black/50 z-[45]"
           onClick={() => setMobileMenuOpen(false)}
         ></div>
       )}
 
       {/* Sidebar */}
       <div className={`
-        fixed lg:static inset-y-0 left-0 z-40
+        fixed lg:static inset-y-0 left-0 z-50 lg:z-auto
         w-24 bg-gradient-to-b from-indigo-600 to-purple-700 dark:from-slate-800 dark:to-slate-900 
         flex flex-col items-center py-6 h-full shadow-xl
         transform transition-transform duration-300 ease-in-out

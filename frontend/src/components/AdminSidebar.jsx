@@ -83,14 +83,14 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
       {/* Mobile Overlay */}
       {mobileMenuOpen && (
         <div
-          className="lg:hidden fixed inset-0 bg-black/50 z-40"
+          className="lg:hidden fixed inset-0 bg-black/50 z-[45]"
           onClick={() => setMobileMenuOpen(false)}
         ></div>
       )}
 
       {/* Sidebar */}
       <div className={`
-        fixed lg:static inset-y-0 left-0 z-40
+        fixed lg:static inset-y-0 left-0 z-50 lg:z-auto
         w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700
         flex flex-col h-full shadow-sm
         transform transition-transform duration-300 ease-in-out
