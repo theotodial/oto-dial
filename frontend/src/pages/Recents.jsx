@@ -210,6 +210,8 @@ function Recents() {
   const [chatLoading, setChatLoading] = useState(false);
   const [sendError, setSendError] = useState('');
   const messagesEndRef = useRef(null);
+  /** When true, do not jump to bottom on chatMessages updates (user is reading older messages). */
+  const suppressChatAutoScrollRef = useRef(false);
   const smsSendLockRef = useRef(false);
   const suspiciousActivityText =
     'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
@@ -327,8 +329,20 @@ function Recents() {
     { code: '+263', name: 'Zimbabwe', flag: '🇿🇼' }
   ];
 
-  // Auto-scroll to bottom when messages change
+  const onThreadMessagesScroll = useCallback((e) => {
+    const el = e.currentTarget;
+    const thresholdPx = 100;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    suppressChatAutoScrollRef.current = distFromBottom > thresholdPx;
+  }, []);
+
   useEffect(() => {
+    if (selectedChat) suppressChatAutoScrollRef.current = false;
+  }, [selectedChat]);
+
+  // Auto-scroll only when the user is already near the bottom (avoids fighting scroll while reading history).
+  useEffect(() => {
+    if (suppressChatAutoScrollRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
   
@@ -1113,6 +1127,8 @@ function Recents() {
     e?.preventDefault();
     if (!inputMessage.trim() || !selectedChat || smsSendLockRef.current) return;
 
+    suppressChatAutoScrollRef.current = false;
+
     if (userNumbers.length === 0) {
       setSendError('You need to purchase a number first.');
       return;
@@ -1865,7 +1881,10 @@ function Recents() {
                   </button>
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-h-0">
+              <div
+                className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-h-0"
+                onScroll={onThreadMessagesScroll}
+              >
                 {chatLoading && chatMessages.length === 0 ? (
                   <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-12">
                     <p>Loading messages…</p>
@@ -2267,7 +2286,10 @@ function Recents() {
           {mobileTab === 'chats' && selectedChat ? (
             <div className={`flex flex-1 min-h-0 flex-col font-[system-ui,-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif] ${IOS_CHAT_SURFACE}`}>
               {/* Messages Area */}
-                <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2">
+                <div
+                  className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2"
+                  onScroll={onThreadMessagesScroll}
+                >
                   {chatLoading && chatMessages.length === 0 ? (
                     <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
                       <p>Loading messages…</p>
