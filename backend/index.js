@@ -15,6 +15,12 @@ import { getTelnyx } from "./config/telnyx.js";
 import { validateEnv } from "./src/utils/envValidator.js";
 import { sendEmailSafe, logResendConfigAtStartup } from "./src/services/email.service.js";
 import { configureAdminLiveEvents } from "./src/services/adminLiveEventsService.js";
+import { registerUserSmsNamespace } from "./src/events/smsEvents.js";
+import {
+  registerSmsOutboundProcessor,
+  startSmsOutboundQueueWorker,
+} from "./src/services/smsQueueService.js";
+import { processOutboundQueueJob } from "./src/services/smsOutboundService.js";
 import {
   ensureAdminAssignableInternalPlans,
   ensureStripeCatalogConsistency
@@ -102,6 +108,9 @@ const io = new SocketIOServer(server, {
   cors: { origin: true, credentials: true },
 });
 configureAdminLiveEvents(io);
+registerUserSmsNamespace(io);
+registerSmsOutboundProcessor(processOutboundQueueJob);
+startSmsOutboundQueueWorker();
 const PORT = process.env.PORT || 5000;
 const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || "25mb";
 const __filename = fileURLToPath(import.meta.url);

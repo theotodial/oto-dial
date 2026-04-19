@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { io } from "socket.io-client";
 import API from "../api";
+import { OTODIAL_SMS_OUTBOUND_EVENT } from "../constants/smsOutboundEvents";
 import { clearCachedFetch, removeStorageKey } from "../utils/appCache";
 import {
   BOOTSTRAP_REFRESH_EVENT,
@@ -237,6 +239,59 @@ export function AppStateProvider({ children }) {
       window.removeEventListener("storage", handleStorageRefresh);
     };
   }, [fetchBootstrap, token, user]);
+
+  useEffect(() => {
+    const activeToken = localStorage.getItem("token");
+    const uid = user?._id ?? user?.id;
+    if (!activeToken || !uid) {
+      return undefined;
+    }
+
+    const base = (import.meta.env.VITE_API_URL || window.location.origin || "").replace(/\/$/, "");
+    const socket = io(`${base}/user`, {
+      path: "/socket.io",
+      auth: { token: activeToken },
+      transports: ["websocket", "polling"],
+    });
+
+    const onUsage = (payload) => {
+      if (!payload?.userId) return;
+      if (String(payload.userId) !== String(uid)) return;
+      setUsage((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        if (payload.newSmsUsed != null) next.smsUsed = Number(payload.newSmsUsed);
+        if (payload.newRemainingSms != null) next.smsRemaining = Number(payload.newRemainingSms);
+        return next;
+      });
+    };
+
+    socket.on("sms:usage-updated", onUsage);
+
+    const dispatchOutboundLifecycle = (phase, payload) => {
+      window.dispatchEvent(
+        new CustomEvent(OTODIAL_SMS_OUTBOUND_EVENT, {
+          detail: { phase, ...(payload && typeof payload === "object" ? payload : {}) },
+        })
+      );
+    };
+
+    const onQueued = (p) => dispatchOutboundLifecycle("queued", p);
+    const onSent = (p) => dispatchOutboundLifecycle("sent", p);
+    const onFailed = (p) => dispatchOutboundLifecycle("failed", p);
+
+    socket.on("sms:queued", onQueued);
+    socket.on("sms:sent", onSent);
+    socket.on("sms:failed", onFailed);
+
+    return () => {
+      socket.off("sms:usage-updated", onUsage);
+      socket.off("sms:queued", onQueued);
+      socket.off("sms:sent", onSent);
+      socket.off("sms:failed", onFailed);
+      socket.disconnect();
+    };
+  }, [user?._id, user?.id]);
 
   const mergeUser = useCallback((partial) => {
     setUser((prev) => {

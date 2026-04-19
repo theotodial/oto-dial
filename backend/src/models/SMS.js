@@ -79,11 +79,26 @@ const smsSchema = new mongoose.Schema(
     costSyncedAt: {
       type: Date,
       default: null
-    }
+    },
+
+    /** Populated after successful send; drives SMS credit usage (sum of costDeducted). */
+    smsCostInfo: {
+      smsParts: { type: Number, default: null },
+      encoding: { type: String, default: null },
+      characters: { type: Number, default: null },
+      costDeducted: { type: Number, default: null },
+    },
+
+    /** Client-supplied key for outbound /api/sms/send idempotency (optional). */
+    sendIdempotencyKey: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true }
 );
 
+smsSchema.index({ user: 1, sendIdempotencyKey: 1 }, { unique: true, sparse: true });
 smsSchema.index({ user: 1, createdAt: -1 });
 smsSchema.index({ user: 1, direction: 1, createdAt: -1 });
 // Thread list: $or on to/from with sort/limit

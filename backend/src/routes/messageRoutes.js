@@ -73,7 +73,7 @@ router.get("/", async (req, res) => {
     
     // Fetch SMS messages for this user
     const messages = await SMS.find(query)
-      .select("to from body createdAt direction status campaign")
+      .select("to from body createdAt direction status campaign smsCostInfo")
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
@@ -93,6 +93,7 @@ router.get("/", async (req, res) => {
         status: msg.status,
         sender: msg.direction === 'inbound' ? 'other' : 'user',
         campaignId: msg.campaign ? String(msg.campaign) : null,
+        smsCostInfo: msg.smsCostInfo || null,
       }))
     });
   } catch (err) {

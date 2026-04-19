@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import API from '../../api';
 import { notifySubscriptionChanged } from '../../utils/subscriptionSync';
 import { threadMatchesPeerPhone } from '../../utils/phoneThreadMatch';
+import { OTODIAL_SMS_OUTBOUND_EVENT } from '../../constants/smsOutboundEvents';
 
 function normalizePhone(num) {
   return String(num || '').replace(/\D/g, '');
@@ -93,6 +94,7 @@ export default function CampaignSmsThread({
   const [sendError, setSendError] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const sendInFlightRef = useRef(false);
+  const smsSendIdempotencyKeyRef = useRef(null);
 
   useEffect(() => {
     return () => {
@@ -252,6 +254,19 @@ export default function CampaignSmsThread({
   }, [pollKey, threadPhone, fetchChatMessages]);
 
   useEffect(() => {
+    const onLifecycle = (e) => {
+      const d = e.detail;
+      if (!d?.to || !isMountedRef.current) return;
+      const tp = threadPhoneRef.current;
+      if (!tp || !threadMatchesPeerPhone(tp, d.to)) return;
+      void fetchChatMessages(tp, { silent: true });
+      if (d.phase === 'sent' || d.phase === 'failed') notifySubscriptionChanged();
+    };
+    window.addEventListener(OTODIAL_SMS_OUTBOUND_EVENT, onLifecycle);
+    return () => window.removeEventListener(OTODIAL_SMS_OUTBOUND_EVENT, onLifecycle);
+  }, [fetchChatMessages]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatItems]);
 
@@ -297,17 +312,33 @@ export default function CampaignSmsThread({
     setSendError('');
     sendInFlightRef.current = true;
 
+    const genIdem = () =>
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `sms-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    const idempotencyKey = smsSendIdempotencyKeyRef.current ?? genIdem();
+    smsSendIdempotencyKeyRef.current = idempotencyKey;
+
     try {
-      const response = await API.post('/api/sms/send', {
-        to: threadPhone,
-        text: messageText,
-      });
+      const response = await API.post(
+        '/api/sms/send',
+        {
+          to: threadPhone,
+          text: messageText,
+          idempotencyKey,
+        },
+        { timeout: 90000 }
+      );
 
       if (response.error) {
         setChatItems((prev) => prev.filter((x) => x.id !== optimisticId));
         setSendError(response.error);
         setInputMessage(messageText);
+        if (response.status !== 409) {
+          smsSendIdempotencyKeyRef.current = null;
+        }
       } else {
+        smsSendIdempotencyKeyRef.current = null;
         notifySubscriptionChanged();
         await fetchChatMessages(threadPhone, { silent: true });
       }

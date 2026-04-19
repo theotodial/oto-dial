@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import API from '../api';
 import { notifySubscriptionChanged } from '../utils/subscriptionSync';
+import { threadMatchesPeerPhone } from '../utils/phoneThreadMatch';
+import { OTODIAL_SMS_OUTBOUND_EVENT } from '../constants/smsOutboundEvents';
 
 const SendIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -26,6 +28,7 @@ function ChatPanel({ selectedChat }) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef(null);
+  const smsSendIdempotencyKeyRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -43,6 +46,10 @@ function ChatPanel({ selectedChat }) {
       fetchMessages();
     }
   }, [selectedChat]);
+
+  const fetchMessagesRef = useRef(null);
+  const selectedPhoneRef = useRef(null);
+  selectedPhoneRef.current = selectedChat?.phoneNumber ?? null;
 
   const fetchMessages = async () => {
     try {
@@ -75,6 +82,21 @@ function ChatPanel({ selectedChat }) {
     }
   };
 
+  fetchMessagesRef.current = fetchMessages;
+
+  useEffect(() => {
+    const onLifecycle = (e) => {
+      const d = e.detail;
+      if (!d?.to) return;
+      const phone = selectedPhoneRef.current;
+      if (!phone || !threadMatchesPeerPhone(phone, d.to)) return;
+      void fetchMessagesRef.current?.();
+      if (d.phase === 'sent' || d.phase === 'failed') notifySubscriptionChanged();
+    };
+    window.addEventListener(OTODIAL_SMS_OUTBOUND_EVENT, onLifecycle);
+    return () => window.removeEventListener(OTODIAL_SMS_OUTBOUND_EVENT, onLifecycle);
+  }, []);
+
   const handleSend = async (e) => {
     e.preventDefault();
 
@@ -94,15 +116,30 @@ function ChatPanel({ selectedChat }) {
     };
     setMessages(prev => [...prev, tempUserMessage]);
 
+    const genIdem = () =>
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `sms-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    const idempotencyKey = smsSendIdempotencyKeyRef.current ?? genIdem();
+    smsSendIdempotencyKeyRef.current = idempotencyKey;
+
     try {
-      const response = await API.post('/api/sms/send', {
-        to: selectedChat.phoneNumber,
-        text: userMessageText
-      });
+      const response = await API.post(
+        '/api/sms/send',
+        {
+          to: selectedChat.phoneNumber,
+          text: userMessageText,
+          idempotencyKey,
+        },
+        { timeout: 90000 }
+      );
 
       if (!response.error) {
+        smsSendIdempotencyKeyRef.current = null;
         notifySubscriptionChanged();
         await fetchMessages();
+      } else if (response.status !== 409) {
+        smsSendIdempotencyKeyRef.current = null;
       }
     } catch (err) {
       // Remove the optimistic message on error

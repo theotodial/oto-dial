@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { getTelnyx } from "../../config/telnyx.js";
 import SMS from "../models/SMS.js";
 import PhoneNumber from "../models/PhoneNumber.js";
@@ -16,6 +17,15 @@ import { normalizeSmsDestination, isLikelyShortCode } from "../utils/phoneNormal
 import { isOptedOut } from "./optOutService.js";
 import { isSameCountryOutboundOnlyEnabled } from "../utils/telecomCountryLock.js";
 import { extractTelnyxSdkError } from "../utils/telnyxErrorMessage.js";
+import { applySmsDeduction } from "./smsBillingService.js";
+import {
+  calculateSmsParts,
+  reserveSmsCredits,
+  checkUserVelocity,
+  releaseSmsReservation,
+  SmsGuardError,
+} from "./smsGuardService.js";
+import { enqueueOutboundSms } from "./smsQueueService.js";
 
 const SMS_OPT_OUT_KEYWORDS = new Set([
   "STOP",
@@ -38,9 +48,199 @@ function isE164NumericLongCode(value) {
 export { normalizeSmsDestination } from "../utils/phoneNormalize.js";
 
 /**
- * @returns {{ ok: true, messageId: string } | { ok: false, error: string, status?: number, retryable?: boolean, countryLocked?: boolean, sourceCountry?: string, retryAfterMs?: number }}
+ * Telnyx API invocation only — parameters and branches match historical send behavior.
+ * @returns {Promise<{ response: unknown }>}
  */
-export async function sendOutboundSms({ userId, to, text, campaignId = null }) {
+async function invokeTelnyxMessagesSend(telnyx, { from, toFormatted, text, messagingProfileId, preferLongCode, shortCodeDestination }) {
+  let response;
+  response =
+    !shortCodeDestination && preferLongCode && isE164NumericLongCode(from)
+      ? await telnyx.messages.sendLongCode({
+          from,
+          to: toFormatted,
+          text,
+          use_profile_webhooks: true,
+        })
+      : await telnyx.messages.send({
+          messaging_profile_id: messagingProfileId,
+          from,
+          to: toFormatted,
+          text,
+        });
+  return response;
+}
+
+/**
+ * @typedef {{ smsDocId: string, userId: string, reservationKey: string }} SmsOutboundQueueJob
+ */
+
+/**
+ * Worker: completes Telnyx send + billing for a queued SMS row.
+ * @param {SmsOutboundQueueJob} job
+ */
+export async function processOutboundQueueJob(job) {
+  const { smsDocId, userId, reservationKey } = job;
+  const telnyx = getTelnyx();
+  if (!telnyx) {
+    await releaseSmsReservation(userId, reservationKey);
+    return;
+  }
+
+  const smsDoc = await SMS.findOne({
+    _id: smsDocId,
+    user: userId,
+    direction: "outbound",
+  });
+  if (!smsDoc) {
+    await releaseSmsReservation(userId, reservationKey);
+    return;
+  }
+  if (smsDoc.status !== "queued") {
+    return;
+  }
+
+  const toFormatted = smsDoc.to;
+  const text = smsDoc.body;
+  const from = smsDoc.from;
+
+  const phone = await PhoneNumber.findOne({ userId, status: "active" });
+  const envProfileId = String(process.env.TELNYX_MESSAGING_PROFILE_ID || "").trim();
+  let messagingProfileId = String(phone?.messagingProfileId || "").trim();
+  if (!messagingProfileId) {
+    const userDoc = await User.findById(userId).select("messagingProfileId").lean();
+    messagingProfileId = String(userDoc?.messagingProfileId || "").trim();
+  }
+  if (!messagingProfileId && envProfileId) {
+    messagingProfileId = envProfileId;
+  }
+  if (!messagingProfileId) {
+    await SMS.updateOne({ _id: smsDoc._id }, { $set: { status: "failed" } }).catch(() => {});
+    await releaseSmsReservation(userId, reservationKey);
+    try {
+      const { emitSmsOutboundLifecycle } = await import("../events/smsEvents.js");
+      emitSmsOutboundLifecycle(userId, "failed", {
+        mongoId: String(smsDoc._id),
+        to: toFormatted,
+        error: "Messaging profile not configured",
+      });
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+
+  const preferLongCode =
+    String(process.env.SMS_USE_TELNYX_LONG_CODE_ENDPOINT || "true").trim().toLowerCase() !== "false";
+  const shortCodeDestination = isLikelyShortCode(toFormatted);
+
+  let response;
+  try {
+    response = await invokeTelnyxMessagesSend(telnyx, {
+      from,
+      toFormatted,
+      text,
+      messagingProfileId,
+      preferLongCode,
+      shortCodeDestination,
+    });
+  } catch (telnyxErr) {
+    await SMS.updateOne({ _id: smsDoc._id }, { $set: { status: "failed" } }).catch(() => {});
+    await releaseSmsReservation(userId, reservationKey);
+    const { userMessage } = extractTelnyxSdkError(telnyxErr);
+    try {
+      const { emitSmsOutboundLifecycle } = await import("../events/smsEvents.js");
+      emitSmsOutboundLifecycle(userId, "failed", {
+        mongoId: String(smsDoc._id),
+        to: toFormatted,
+        error: userMessage || "Failed to send SMS",
+      });
+    } catch {
+      /* ignore */
+    }
+    console.error("[SMS] queue Telnyx error:", userMessage || telnyxErr);
+    return;
+  }
+
+  const sent = response?.data ?? response;
+  const messageId = sent?.id;
+  if (!messageId) {
+    await SMS.updateOne({ _id: smsDoc._id }, { $set: { status: "failed" } }).catch(() => {});
+    await releaseSmsReservation(userId, reservationKey);
+    try {
+      const { emitSmsOutboundLifecycle } = await import("../events/smsEvents.js");
+      emitSmsOutboundLifecycle(userId, "failed", {
+        mongoId: String(smsDoc._id),
+        to: toFormatted,
+        error: "SMS provider returned no message id",
+      });
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+
+  await SMS.updateOne(
+    { _id: smsDoc._id },
+    {
+      $set: {
+        status: "sent",
+        telnyxMessageId: messageId,
+        carrier: sent?.carrier || null,
+      },
+    }
+  );
+
+  try {
+    const { emitSmsOutboundLifecycle } = await import("../events/smsEvents.js");
+    emitSmsOutboundLifecycle(userId, "sent", {
+      mongoId: String(smsDoc._id),
+      to: toFormatted,
+      messageId: String(messageId),
+    });
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    await applySmsDeduction(userId, smsDoc._id, text, {
+      direction: "outbound",
+      source: "outbound_send",
+      finalizeReservationKey: reservationKey,
+    });
+  } catch (deductErr) {
+    await releaseSmsReservation(userId, reservationKey);
+    console.error("[SMS] applySmsDeduction after send failed:", deductErr?.message || deductErr);
+    try {
+      const { emitSmsOutboundLifecycle } = await import("../events/smsEvents.js");
+      emitSmsOutboundLifecycle(userId, "failed", {
+        mongoId: String(smsDoc._id),
+        to: toFormatted,
+        error: deductErr?.message || "Billing failed after send",
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  emitAdminLiveSms({
+    eventType: "sent",
+    userId,
+    messageId,
+    destination: toFormatted,
+    from,
+    status: "sent",
+    bodyPreview: text,
+  }).catch((error) => {
+    console.warn("[ADMIN LIVE] failed to emit sms:", error?.message || error);
+  });
+}
+
+/**
+ * @returns {{ ok: true, messageId?: string, mongoId?: string, queued?: boolean, status?: string, idempotent?: boolean } | { ok: false, error: string, status?: number, retryable?: boolean, countryLocked?: boolean, sourceCountry?: string, retryAfterMs?: number }}
+ */
+export async function sendOutboundSms({ userId, to, text, campaignId = null, idempotencyKey = null }) {
+  let reservationKeyForRelease = null;
+
   try {
     const telnyx = getTelnyx();
     if (!telnyx) {
@@ -124,9 +324,7 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null }) {
       };
     }
 
-    const unlimitedPlan = isUnlimitedSubscription(
-      unlimitedGate.subscription || subscription
-    );
+    const unlimitedPlan = isUnlimitedSubscription(unlimitedGate.subscription || subscription);
 
     if (!unlimitedPlan && !(Number(subscription.smsLimit) > 0)) {
       return {
@@ -145,6 +343,103 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null }) {
         status: 403,
         retryable: false,
       };
+    }
+
+    const clientKey =
+      idempotencyKey != null && String(idempotencyKey).trim() !== ""
+        ? String(idempotencyKey).trim().slice(0, 128)
+        : null;
+
+    const reservationKey = clientKey || `gen:${randomUUID()}`;
+    reservationKeyForRelease = reservationKey;
+
+    if (clientKey) {
+      const existing = await SMS.findOne({
+        user: userId,
+        sendIdempotencyKey: clientKey,
+        direction: "outbound",
+      })
+        .sort({ createdAt: -1 })
+        .lean();
+
+      if (existing?.status === "sent" && existing.telnyxMessageId) {
+        reservationKeyForRelease = null;
+        return {
+          ok: true,
+          messageId: existing.telnyxMessageId,
+          mongoId: String(existing._id),
+          idempotent: true,
+        };
+      }
+
+      if (existing?.status === "queued") {
+        const t0 = existing.updatedAt ? new Date(existing.updatedAt) : new Date(existing.createdAt);
+        if (Date.now() - t0.getTime() < 120000) {
+          reservationKeyForRelease = null;
+          return {
+            ok: false,
+            error: "This message is still being sent. Please wait a moment.",
+            status: 409,
+            retryable: true,
+            mongoId: String(existing._id),
+          };
+        }
+        await SMS.deleteOne({ _id: existing._id });
+      } else if (existing?.status === "failed") {
+        await SMS.deleteOne({ _id: existing._id });
+      }
+    }
+
+    const smsParts = calculateSmsParts(text);
+
+    let reserveResult;
+    try {
+      reserveResult = await reserveSmsCredits(userId, smsParts, reservationKey);
+    } catch (guardErr) {
+      reservationKeyForRelease = null;
+      if (guardErr instanceof SmsGuardError && guardErr.code === "INSUFFICIENT_SMS_CREDITS") {
+        console.warn("[smsGuard] blocked send (credits)", { userId: String(userId), smsParts });
+        return { ok: false, error: guardErr.message, status: 403, retryable: false };
+      }
+      throw guardErr;
+    }
+
+    if (reserveResult?.alreadyFinalized) {
+      reservationKeyForRelease = null;
+      if (clientKey) {
+        const dupFinal = await SMS.findOne({
+          user: userId,
+          sendIdempotencyKey: clientKey,
+          direction: "outbound",
+        })
+          .sort({ createdAt: -1 })
+          .lean();
+        if (dupFinal?.status === "sent" && dupFinal.telnyxMessageId) {
+          return {
+            ok: true,
+            messageId: dupFinal.telnyxMessageId,
+            mongoId: String(dupFinal._id),
+            idempotent: true,
+          };
+        }
+      }
+      return {
+        ok: false,
+        error: "This message was already processed.",
+        status: 409,
+        retryable: false,
+      };
+    }
+
+    try {
+      await checkUserVelocity(userId);
+    } catch (guardErr) {
+      await releaseSmsReservation(userId, reservationKey);
+      reservationKeyForRelease = null;
+      if (guardErr instanceof SmsGuardError && guardErr.code === "RATE_LIMIT_EXCEEDED") {
+        return { ok: false, error: guardErr.message, status: 429, retryable: true };
+      }
+      throw guardErr;
     }
 
     const phone = await PhoneNumber.findOne({
@@ -166,6 +461,8 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null }) {
       const validation = validateCountryLock(phone.countryCode, toFormatted);
 
       if (!validation.valid) {
+        await releaseSmsReservation(userId, reservationKey);
+        reservationKeyForRelease = null;
         return {
           ok: false,
           error: validation.error,
@@ -178,6 +475,8 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null }) {
     }
 
     if (!phone) {
+      await releaseSmsReservation(userId, reservationKey);
+      reservationKeyForRelease = null;
       return { ok: false, error: "No phone number assigned", status: 400, retryable: false };
     }
 
@@ -191,6 +490,8 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null }) {
       messagingProfileId = envProfileId;
     }
     if (!messagingProfileId) {
+      await releaseSmsReservation(userId, reservationKey);
+      reservationKeyForRelease = null;
       return {
         ok: false,
         error: "Messaging profile not configured for this number",
@@ -202,79 +503,91 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null }) {
     const format = (n) => (n.startsWith("+") ? n : `+${n}`);
     const from = format(phone.phoneNumber);
 
-    // `messages.send` + messaging_profile_id can apply the profile's default alphanumeric sender
-    // (e.g. "OTODIAL") for some destinations; many countries (PK, etc.) require that sender to be
-    // pre-registered. Long-code endpoint sends from the owned number explicitly.
-    const preferLongCode =
-      String(process.env.SMS_USE_TELNYX_LONG_CODE_ENDPOINT || "true")
-        .trim()
-        .toLowerCase() !== "false";
-
-    // Long-code API expects E.164 peers; short-code destinations (STOP, HELP, etc.) need generic send.
-    const shortCodeDestination = isLikelyShortCode(toFormatted);
-    const response =
-      !shortCodeDestination && preferLongCode && isE164NumericLongCode(from)
-        ? await telnyx.messages.sendLongCode({
-            from,
-            to: toFormatted,
-            text,
-            use_profile_webhooks: true,
-          })
-        : await telnyx.messages.send({
-            messaging_profile_id: messagingProfileId,
-            from,
-            to: toFormatted,
-            text,
-          });
-
-    const sent = response?.data ?? response;
-    const messageId = sent?.id;
-    if (!messageId) {
-      console.error(
-        "[SMS] Telnyx send returned no message id. Response keys:",
-        response && typeof response === "object" ? Object.keys(response) : response
-      );
-      return {
-        ok: false,
-        error:
-          "SMS provider returned an unexpected response (no message id). Check server logs and Telnyx messaging profile.",
-        status: 502,
-        retryable: true,
-      };
-    }
-
     const smsCostRate = Number(process.env.SMS_COST_RATE || 0.0075);
     const smsCost = smsCostRate;
 
-    await SMS.create({
-      user: userId,
-      from,
-      to: toFormatted,
-      body: text,
-      status: "sent",
-      direction: "outbound",
-      telnyxMessageId: messageId,
-      cost: smsCost,
-      costPerSms: smsCostRate,
-      carrier: sent?.carrier || null,
-      carrierFees: 0,
-      ...(campaignId ? { campaign: campaignId } : {}),
+    let smsDoc = null;
+    try {
+      smsDoc = await SMS.create({
+        user: userId,
+        from,
+        to: toFormatted,
+        body: text,
+        status: "queued",
+        direction: "outbound",
+        cost: smsCost,
+        costPerSms: smsCostRate,
+        carrier: null,
+        carrierFees: 0,
+        ...(campaignId ? { campaign: campaignId } : {}),
+        ...(clientKey ? { sendIdempotencyKey: clientKey } : {}),
+      });
+    } catch (createErr) {
+      await releaseSmsReservation(userId, reservationKey);
+      reservationKeyForRelease = null;
+      if (createErr?.code === 11000 && clientKey) {
+        const dup = await SMS.findOne({
+          user: userId,
+          sendIdempotencyKey: clientKey,
+          direction: "outbound",
+        }).lean();
+        if (dup?.status === "sent" && dup.telnyxMessageId) {
+          return {
+            ok: true,
+            messageId: dup.telnyxMessageId,
+            mongoId: String(dup._id),
+            idempotent: true,
+          };
+        }
+      }
+      throw createErr;
+    }
+
+    reservationKeyForRelease = null;
+
+    try {
+      const { emitSmsCreated } = await import("../events/smsEvents.js");
+      emitSmsCreated(userId, smsDoc._id, "outbound");
+    } catch (emitErr) {
+      console.warn("[SMS] emitSmsCreated skipped:", emitErr?.message || emitErr);
+    }
+
+    try {
+      const { emitSmsOutboundLifecycle } = await import("../events/smsEvents.js");
+      emitSmsOutboundLifecycle(userId, "queued", {
+        mongoId: String(smsDoc._id),
+        to: toFormatted,
+      });
+    } catch (emitErr) {
+      console.warn("[SMS] emit queued skipped:", emitErr?.message || emitErr);
+    }
+
+    enqueueOutboundSms({
+      smsDocId: String(smsDoc._id),
+      userId: String(userId),
+      reservationKey,
     });
 
-    emitAdminLiveSms({
-      eventType: "sent",
-      userId,
-      messageId,
-      destination: toFormatted,
-      from,
-      status: "sent",
-      bodyPreview: text,
-    }).catch((error) => {
-      console.warn("[ADMIN LIVE] failed to emit sms:", error?.message || error);
-    });
-
-    return { ok: true, messageId };
+    return {
+      ok: true,
+      queued: true,
+      mongoId: String(smsDoc._id),
+      status: "queued",
+    };
   } catch (err) {
+    if (reservationKeyForRelease) {
+      await releaseSmsReservation(userId, reservationKeyForRelease).catch(() => {});
+    }
+
+    if (err instanceof SmsGuardError) {
+      if (err.code === "INSUFFICIENT_SMS_CREDITS") {
+        return { ok: false, error: err.message, status: 403, retryable: false };
+      }
+      if (err.code === "RATE_LIMIT_EXCEEDED") {
+        return { ok: false, error: err.message, status: 429, retryable: true };
+      }
+    }
+
     const { userMessage, httpStatus, telnyxCode } = extractTelnyxSdkError(err);
     console.error("SMS FAILED:", {
       status: err?.status ?? err?.response?.status,

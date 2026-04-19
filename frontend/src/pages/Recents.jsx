@@ -9,6 +9,7 @@ import ActiveCallChrome from '../components/ActiveCallChrome';
 import { fetchAllContacts } from '../utils/fetchAllContacts';
 import { notifySubscriptionChanged } from '../utils/subscriptionSync';
 import { threadMatchesPeerPhone } from '../utils/phoneThreadMatch';
+import { OTODIAL_SMS_OUTBOUND_EVENT } from '../constants/smsOutboundEvents';
 import { loadSmsFavorites, addSmsFavorite, removeSmsFavorite } from '../utils/smsFavoritesStorage';
 import { loadArchivedPhones, archiveSmsChat, unarchiveSmsChat } from '../utils/smsChatArchiveStorage';
 
@@ -213,6 +214,8 @@ function Recents() {
   /** When true, do not jump to bottom on chatMessages updates (user is reading older messages). */
   const suppressChatAutoScrollRef = useRef(false);
   const smsSendLockRef = useRef(false);
+  /** Reused on retry after slow network so /api/sms/send does not double-send. */
+  const smsSendIdempotencyKeyRef = useRef(null);
   const suspiciousActivityText =
     'SUSPICIOUS ACTIVITY DETECTED. You have reached your daily usage threshold. Please contact support.';
 
@@ -678,6 +681,23 @@ function Recents() {
       if (isMountedRef.current) setLoading(false);
     }
   }, [fetchReadStateAndUnread]);
+
+  useEffect(() => {
+    const onLifecycle = (e) => {
+      const d = e.detail;
+      if (!d?.to || !isMountedRef.current) return;
+      const thread = selectedChatRef.current;
+      if (!thread || !threadMatchesPeerPhone(thread, d.to)) return;
+      void fetchChatMessages(thread);
+      if (d.phase === 'sent' || d.phase === 'failed') {
+        void fetchRecents(false);
+        notifySubscriptionChanged();
+        void refreshSubscription();
+      }
+    };
+    window.addEventListener(OTODIAL_SMS_OUTBOUND_EVENT, onLifecycle);
+    return () => window.removeEventListener(OTODIAL_SMS_OUTBOUND_EVENT, onLifecycle);
+  }, [fetchChatMessages, fetchRecents, refreshSubscription]);
 
   const fetchContacts = useCallback(async () => {
     if (!isMountedRef.current) return;
@@ -1159,17 +1179,34 @@ function Recents() {
     setSendError('');
     smsSendLockRef.current = true;
 
+    const genIdempotencyKey = () =>
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `sms-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+
+    const idempotencyKey = smsSendIdempotencyKeyRef.current ?? genIdempotencyKey();
+    smsSendIdempotencyKeyRef.current = idempotencyKey;
+
     try {
-      const response = await API.post('/api/sms/send', {
-        to: selectedChat,
-        text: messageText
-      });
+      const response = await API.post(
+        '/api/sms/send',
+        {
+          to: selectedChat,
+          text: messageText,
+          idempotencyKey,
+        },
+        { timeout: 90000 }
+      );
 
       if (response.error) {
         setChatMessages((prev) => prev.filter((x) => x.id !== optimisticId));
         setSendError(response.error);
         setInputMessage(messageText);
+        if (response.status !== 409) {
+          smsSendIdempotencyKeyRef.current = null;
+        }
       } else {
+        smsSendIdempotencyKeyRef.current = null;
         notifySubscriptionChanged();
         await Promise.all([fetchChatMessages(selectedChat), fetchRecents(false), refreshSubscription()]);
       }
@@ -1323,8 +1360,16 @@ function Recents() {
       return;
     }
     setForwardText(null);
+    const forwardKey =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `fwd-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
     try {
-      const res = await API.post('/api/sms/send', { to: peerPhone, text });
+      const res = await API.post(
+        '/api/sms/send',
+        { to: peerPhone, text, idempotencyKey: forwardKey },
+        { timeout: 90000 }
+      );
       if (res.error) {
         showActionToast(res.error || 'Forward failed');
         return;
@@ -1928,7 +1973,9 @@ function Recents() {
                       );
                     }
                     const isOutbound = item.direction === 'outbound' || item.sender === 'user';
-                    const isPending = Boolean(item._localPending) || item.status === 'sending';
+                    const isQueued = item.status === 'queued';
+                    const isPending =
+                      Boolean(item._localPending) || item.status === 'sending' || isQueued;
                     return (
                       <div key={`msg-${item.id || idx}`} className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}>
                         <div
@@ -1947,9 +1994,20 @@ function Recents() {
                           >
                             <span>{formatDate(item.timestamp || item.created_at)}</span>
                             {isOutbound && isPending && (
-                              <span title="Sending or network slow">Sending…</span>
+                              <span title={isQueued ? 'Waiting in send queue' : 'Sending or network slow'}>
+                                {isQueued ? 'Queued…' : 'Sending…'}
+                              </span>
                             )}
                           </p>
+                          {typeof item.smsCostInfo?.costDeducted === 'number' && (
+                            <p
+                              className={`text-[11px] mt-0.5 ${
+                                isOutbound ? 'text-white/55' : 'text-[#636366] dark:text-slate-400'
+                              }`}
+                            >
+                              {isOutbound ? 'Cost' : 'Charged'}: {item.smsCostInfo.costDeducted} SMS credits
+                            </p>
+                          )}
                         </div>
                       </div>
                     );
@@ -2340,7 +2398,9 @@ function Recents() {
                       
                       // Handle messages
                       const isOutbound = item.direction === 'outbound' || item.sender === 'user';
-                      const isPending = Boolean(item._localPending) || item.status === 'sending';
+                      const isQueued = item.status === 'queued';
+                      const isPending =
+                        Boolean(item._localPending) || item.status === 'sending' || isQueued;
                       return (
                         <div
                           key={`msg-${item.id || item._id || idx}`}
@@ -2362,9 +2422,20 @@ function Recents() {
                             >
                               <span>{formatDate(item.timestamp || item.created_at || item.createdAt)}</span>
                               {isOutbound && isPending && (
-                                <span title="Sending or network slow">Sending…</span>
+                                <span title={isQueued ? 'Waiting in send queue' : 'Sending or network slow'}>
+                                  {isQueued ? 'Queued…' : 'Sending…'}
+                                </span>
                               )}
                             </p>
+                            {typeof item.smsCostInfo?.costDeducted === 'number' && (
+                              <p
+                                className={`text-[11px] mt-0.5 ${
+                                  isOutbound ? 'text-white/55' : 'text-[#636366] dark:text-slate-400'
+                                }`}
+                              >
+                                {isOutbound ? 'Cost' : 'Charged'}: {item.smsCostInfo.costDeducted} SMS credits
+                              </p>
+                            )}
                           </div>
                         </div>
                       );

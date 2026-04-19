@@ -2,6 +2,7 @@ import express from "express";
 import SMS from "../../models/SMS.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import { recordSmsCost } from "../../services/telnyxCostCalculator.js";
+import { processInboundSms } from "../../services/smsInboundProcessor.js";
 
 const INBOUND_OPT_OUT_KEYWORDS = new Set([
   "STOP",
@@ -103,22 +104,13 @@ router.post("/", async (req, res) => {
     // Format numbers consistently for storage
     const formatPhone = (n) => n.startsWith("+") ? n : `+${n}`;
 
-    // Calculate SMS cost for inbound (Telnyx may charge for inbound too)
-    const smsCostRate = Number(process.env.SMS_COST_RATE || 0.0075);
-    const smsCost = smsCostRate; // Per SMS
-
-    const sms = await SMS.create({
-      user: userId,
-      to: formatPhone(toNumber),
-      from: formatPhone(fromNumber),
-      body: messageText,
-      status: "received",
-      direction: "inbound",
-      telnyxMessageId: telnyxId,
-      cost: smsCost,
-      costPerSms: smsCostRate,
+    const { sms } = await processInboundSms({
+      userId,
+      toNumber: formatPhone(toNumber),
+      fromNumber: formatPhone(fromNumber),
+      messageText,
+      telnyxId,
       carrier: payload.carrier || null,
-      carrierFees: 0 // Can be enhanced with actual carrier fee data
     });
 
     console.log(`✅ Inbound SMS saved: ${fromNumber} -> ${toNumber} (userId: ${userId || 'unknown'}) [id: ${sms._id}]`);

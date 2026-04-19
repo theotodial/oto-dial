@@ -4,6 +4,8 @@ import API from '../api';
 import { useCall } from '../context/CallContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { notifySubscriptionChanged } from '../utils/subscriptionSync';
+import { threadMatchesPeerPhone } from '../utils/phoneThreadMatch';
+import { OTODIAL_SMS_OUTBOUND_EVENT } from '../constants/smsOutboundEvents';
 
 // Icons
 const SendIcon = () => (
@@ -92,6 +94,7 @@ function Chat() {
   const [error, setError] = useState('');
   const [sendError, setSendError] = useState('');
   const messagesEndRef = useRef(null);
+  const smsSendIdempotencyKeyRef = useRef(null);
   const subscriptionData = {
     remainingSMS: usage?.smsRemaining ?? subscription?.smsRemaining ?? 0,
     planName: subscription?.planName || 'No Plan',
@@ -223,6 +226,27 @@ function Chat() {
       setLoading(false);
     }
   };
+
+  const fetchChatDataRef = useRef(fetchChatData);
+  fetchChatDataRef.current = fetchChatData;
+  const selectedChatRef = useRef(selectedChat);
+  selectedChatRef.current = selectedChat;
+
+  useEffect(() => {
+    const onLifecycle = (e) => {
+      const d = e.detail;
+      if (!d?.to || !isMountedRef.current) return;
+      const phone = selectedChatRef.current?.phoneNumber;
+      if (!phone || !threadMatchesPeerPhone(phone, d.to)) return;
+      void fetchChatDataRef.current();
+      if (d.phase === 'sent' || d.phase === 'failed') {
+        notifySubscriptionChanged();
+        void refreshSubscription();
+      }
+    };
+    window.addEventListener(OTODIAL_SMS_OUTBOUND_EVENT, onLifecycle);
+    return () => window.removeEventListener(OTODIAL_SMS_OUTBOUND_EVENT, onLifecycle);
+  }, [refreshSubscription]);
 
   const groupMessagesIntoSessions = (messages) => {
     if (!messages || !Array.isArray(messages) || messages.length === 0) return [];
@@ -375,12 +399,22 @@ function Chat() {
     }
 
     setSendError('');
-    // Use correct API payload per backend contract
-    // POST /api/sms/send with { to, text } - no 'from' needed
-    const response = await API.post('/api/sms/send', {
-      to: selectedChat.phoneNumber,
-      text: userMessageText
-    });
+    const genIdem = () =>
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `sms-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    const idempotencyKey = smsSendIdempotencyKeyRef.current ?? genIdem();
+    smsSendIdempotencyKeyRef.current = idempotencyKey;
+
+    const response = await API.post(
+      '/api/sms/send',
+      {
+        to: selectedChat.phoneNumber,
+        text: userMessageText,
+        idempotencyKey,
+      },
+      { timeout: 90000 }
+    );
 
     if (response.error) {
       // Remove the optimistic message on error
@@ -393,12 +427,16 @@ function Chat() {
       setInputMessage(userMessageText);
       setSendError(response.error);
       setTimeout(() => setSendError(''), 5000);
-      } else {
-        // SMS sent successfully, refresh chat sessions and subscription
-        notifySubscriptionChanged();
-        await Promise.all([fetchChatData(), refreshSubscription()]);
+      if (response.status !== 409) {
+        smsSendIdempotencyKeyRef.current = null;
       }
-      setSending(false);
+    } else {
+      smsSendIdempotencyKeyRef.current = null;
+      // SMS sent successfully, refresh chat sessions and subscription
+      notifySubscriptionChanged();
+      await Promise.all([fetchChatData(), refreshSubscription()]);
+    }
+    setSending(false);
   };
 
   const formatTime = (timestamp) => {
