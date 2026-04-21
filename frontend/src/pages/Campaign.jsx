@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import API from '../api';
 import { useSubscription } from '../context/SubscriptionContext';
 import { useCampaign } from '../context/CampaignContext';
-import CampaignSmsThread from '../components/campaign/CampaignSmsThread';
+import UnifiedChat from '../components/chat/UnifiedChat';
 import CampaignLiteWorkspace from '../components/campaign/CampaignLiteWorkspace';
-import CampaignProResizableGrid from '../components/campaign/CampaignProResizableGrid';
+import CampaignProLayout from '../components/campaign/CampaignProLayout';
 import CampaignCommandPalette from '../components/campaign/CampaignCommandPalette';
+import CompactHeader from '../components/layout/CompactHeader';
 import {
   listCampaigns,
   getCampaign,
@@ -193,7 +194,7 @@ function GridShell({ title, onClose, disabledClose, onExpand, children }) {
 
 export default function Campaign() {
   const { usage, subscription, refreshSubscription } = useSubscription();
-  const { campaignMode, setCampaignMode, getThreadCache, setThreadCache } = useCampaign();
+  const { campaignMode, isSwitching, setCampaignMode, getThreadCache, setThreadCache } = useCampaign();
   const smsRemaining = usage?.smsRemaining ?? 0;
 
   const [mobileTab, setMobileTab] = useState('campaigns');
@@ -1098,7 +1099,8 @@ export default function Campaign() {
           </button>
         </form>
       )}
-      <CampaignSmsThread
+      <UnifiedChat
+        mode="campaign"
         threadPhone={activeChatPhone}
         pollKey={pollTick}
         getThreadCache={getThreadCache}
@@ -1838,32 +1840,21 @@ export default function Campaign() {
           <TabBtn id="chat" label="Thread" />
         </div>
 
-        <div className="hidden lg:flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 flex-wrap">
-          <div className="inline-flex rounded-xl p-1 bg-gray-100 dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700">
-            <button
-              type="button"
-              onClick={() => setCampaignMode('lite').catch((e) => setError(e.message))}
-              className="px-4 py-2 rounded-lg text-sm font-semibold bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm"
-            >
-              Lite mode
-            </button>
-            <button
-              type="button"
-              onClick={() => setCampaignMode('pro').catch((e) => setError(e.message))}
-              className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-slate-600/50"
-            >
-              Pro mode
-            </button>
-          </div>
-          <div className="flex-1 min-w-[8px]" />
-          <button
-            type="button"
-            onClick={() => setPaletteOpen(true)}
-            className="text-sm px-4 py-2 rounded-xl border border-gray-200 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-gray-200"
-          >
-            Commands <kbd className="ml-1 opacity-70">⌘K</kbd>
-          </button>
-        </div>
+        <CompactHeader
+          className="hidden lg:flex"
+          title="Campaign"
+          rightSlot={
+            <>
+              <div className="inline-flex rounded-lg p-0.5 bg-gray-100 dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700">
+                <button type="button" disabled={isSwitching} onClick={() => setCampaignMode('lite').catch((e) => setError(e.message))} className="px-3 py-1.5 rounded-md text-xs font-semibold bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm disabled:opacity-60">Lite</button>
+                <button type="button" disabled={isSwitching} onClick={() => setCampaignMode('pro').catch((e) => setError(e.message))} className="px-3 py-1.5 rounded-md text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-slate-600/50 disabled:opacity-60">Pro</button>
+              </div>
+              <button type="button" onClick={() => setPaletteOpen(true)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-gray-200">
+                Commands
+              </button>
+            </>
+          }
+        />
 
         {error && (
           <div className="mx-3 mt-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-200 px-3 py-2 text-sm border border-red-100 dark:border-red-900/50">
@@ -1913,44 +1904,23 @@ export default function Campaign() {
         <TabBtn id="templates" label="Tools" />
       </div>
 
-      <div className="hidden lg:flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 flex-wrap">
-        <div className="inline-flex rounded-xl p-1 bg-gray-100 dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700">
-          <button
-            type="button"
-            onClick={() => setCampaignMode('lite').catch((e) => setError(e.message))}
-            className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-slate-600/50"
-          >
-            Lite mode
-          </button>
-          <button
-            type="button"
-            onClick={() => setCampaignMode('pro').catch((e) => setError(e.message))}
-            className="px-4 py-2 rounded-lg text-sm font-semibold bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm"
-          >
-            Pro mode
-          </button>
-        </div>
-        {toolbarBtn('campaigns', 'Campaigns')}
-        {toolbarBtn('chat', 'Chat')}
-        {toolbarBtn('settings', 'Composer')}
-        {toolbarBtn('tools', 'Tools / CSV / Analytics')}
-        {toolbarBtn('activity', 'Activity')}
-        <div className="flex-1 min-w-[8px]" />
-        <button
-          type="button"
-          onClick={() => setPaletteOpen(true)}
-          className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800"
-        >
-          Commands <kbd className="ml-1 opacity-70">⌘K</kbd>
-        </button>
-        <button
-          type="button"
-          className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
-          onClick={() => downloadOptOutCsv().catch((e) => setError(e.message))}
-        >
-          Export opt-outs ({optOutTotal})
-        </button>
-      </div>
+      <CompactHeader
+        className="hidden lg:flex"
+        title="Campaign Workspace"
+        rightSlot={
+          <>
+            {toolbarBtn('campaigns', 'Campaigns')}
+            {toolbarBtn('chat', 'Chat')}
+            {toolbarBtn('settings', 'Composer')}
+            {toolbarBtn('tools', 'Tools')}
+            {toolbarBtn('activity', 'Activity')}
+            <div className="inline-flex rounded-lg p-0.5 bg-gray-100 dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700">
+              <button type="button" disabled={isSwitching} onClick={() => setCampaignMode('lite').catch((e) => setError(e.message))} className="px-3 py-1.5 rounded-md text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-slate-600/50 disabled:opacity-60">Lite</button>
+              <button type="button" disabled={isSwitching} onClick={() => setCampaignMode('pro').catch((e) => setError(e.message))} className="px-3 py-1.5 rounded-md text-xs font-semibold bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm disabled:opacity-60">Pro</button>
+            </div>
+          </>
+        }
+      />
 
       {error && (
         <div className="mx-3 mt-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-200 px-3 py-2 text-sm border border-red-100 dark:border-red-900/50">
@@ -1958,13 +1928,7 @@ export default function Campaign() {
         </div>
       )}
 
-      <div className="hidden lg:flex flex-1 min-h-0 min-w-0 p-2">
-        <CampaignProResizableGrid
-          paneIds={activeWindows}
-          renderPane={(id) => renderProPaneShell(id)}
-          autoSaveId="otodial-campaign-pro"
-        />
-      </div>
+      <CampaignProLayout getThreadCache={getThreadCache} setThreadCache={setThreadCache} />
 
       {expandedPane && (
         <div

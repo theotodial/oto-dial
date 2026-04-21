@@ -34,7 +34,8 @@ const navItems = [
 
 const communicationsItems = [
   { path: '/adminbobby/calls', label: 'Calls', role: 'calls' },
-  { path: '/adminbobby/sms', label: 'SMS', role: 'sms' },
+  { path: '/adminbobby/sms', label: 'SMS', role: 'sms', exact: true },
+  { path: '/adminbobby/sms-approval', label: 'SMS Approval', role: 'sms' },
   { path: '/adminbobby/numbers', label: 'Numbers', role: 'numbers' },
 ];
 
@@ -68,9 +69,10 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
   };
 
   // Check if any communications item is active
-  const isCommunicationsActive = visibleCommunicationsItems.some(item => 
-    location.pathname === item.path || location.pathname.startsWith(item.path + '/')
-  );
+  const isCommunicationsActive = visibleCommunicationsItems.some((item) => {
+    if (item.exact) return location.pathname === item.path;
+    return location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+  });
   const isSiteActive = visibleSiteItems.some((item) =>
     location.pathname === item.path || location.pathname.startsWith(item.path + "/")
   );
@@ -205,7 +207,9 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
               {communicationsOpen && (
                 <div className="mt-1 ml-8 space-y-1">
                   {visibleCommunicationsItems.map((item) => {
-                    const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+                    const isActive = item.exact
+                      ? location.pathname === item.path
+                      : location.pathname === item.path || location.pathname.startsWith(item.path + '/');
                     return (
                       <Link
                         key={item.path}

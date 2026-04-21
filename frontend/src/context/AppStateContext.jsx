@@ -72,6 +72,7 @@ function normalizeUserFromLoginOrMe(u) {
     isEmailVerified: u.isEmailVerified !== false,
     features: normalizeClientFeatures(u),
     preferences: normalizeClientPreferences(u),
+    mode: u.mode === "campaign" ? "campaign" : "voice",
   };
 }
 
@@ -119,6 +120,7 @@ export function AppStateProvider({ children }) {
           ...rawUser,
           features: normalizeClientFeatures(rawUser),
           preferences: normalizeClientPreferences(rawUser),
+          mode: rawUser.mode === "campaign" ? "campaign" : "voice",
         }
       : null;
     const nextSubscription = data?.subscription || null;

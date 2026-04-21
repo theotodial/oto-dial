@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../../api';
 import { fetchAllContacts } from '../../utils/fetchAllContacts';
-import CampaignSmsThread from './CampaignSmsThread';
+import UnifiedChat from '../chat/UnifiedChat';
 import CampaignCommandPalette from './CampaignCommandPalette';
 
 const PlusIcon = () => (
@@ -626,7 +626,8 @@ export default function CampaignLiteWorkspace({
                   Save contact
                 </button>
               </div>
-              <CampaignSmsThread
+              <UnifiedChat
+                mode="campaign"
                 threadPhone={activeChatPhone}
                 pollKey={pollTick}
                 getThreadCache={getThreadCache}
@@ -831,7 +832,8 @@ export default function CampaignLiteWorkspace({
                     Save contact
                   </button>
                 </div>
-                <CampaignSmsThread
+                <UnifiedChat
+                  mode="campaign"
                   threadPhone={activeChatPhone}
                   pollKey={pollTick}
                   getThreadCache={getThreadCache}

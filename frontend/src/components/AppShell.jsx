@@ -44,6 +44,7 @@ import AdminDashboardEnterprise from '../pages/admin/AdminDashboardEnterprise';
 import AdminNotifications from '../pages/admin/AdminNotifications';
 import AdminNumbers from '../pages/admin/AdminNumbers';
 import AdminSms from '../pages/admin/AdminSms';
+import AdminSmsApproval from '../pages/admin/AdminSmsApproval';
 import AdminSupport from '../pages/admin/AdminSupport';
 import AdminTeam from '../pages/admin/AdminTeam';
 import AdminUserDetail from '../pages/admin/AdminUserDetail';
@@ -64,6 +65,7 @@ function HomeOrRedirect() {
   const f = user?.features || { voiceEnabled: true, campaignEnabled: false };
   const voice = f.voiceEnabled !== false;
   const camp = Boolean(f.campaignEnabled);
+  if (user?.mode === "campaign") return <Navigate to="/campaign" replace />;
   if (voice) return <Navigate to="/recents" replace />;
   if (camp) return <Navigate to="/campaign" replace />;
   return <Navigate to="/dashboard" replace />;
@@ -123,6 +125,7 @@ export default function AppShell() {
         <Route path="/adminbobby/users/:id" element={<AdminProtectedRoute><AdminLayout><AdminUserDetail /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/calls" element={<AdminProtectedRoute><AdminLayout><AdminCalls /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/sms" element={<AdminProtectedRoute><AdminLayout><AdminSms /></AdminLayout></AdminProtectedRoute>} />
+        <Route path="/adminbobby/sms-approval" element={<AdminProtectedRoute><AdminLayout><AdminSmsApproval /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/numbers" element={<AdminProtectedRoute><AdminLayout><AdminNumbers /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/support" element={<AdminProtectedRoute><AdminLayout><AdminSupport /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/team" element={<AdminProtectedRoute><AdminLayout><AdminTeam /></AdminLayout></AdminProtectedRoute>} />
