@@ -131,3 +131,16 @@ export async function emitAdminLiveSms(event = {}) {
   pushEvent("sms", payload);
   ioInstance?.to(ADMIN_ROOM).emit("admin:live_sms", payload);
 }
+
+/**
+ * Arbitrary realtime events for admin dashboards (e.g. SMS moderation lifecycle).
+ * @param {string} eventName
+ * @param {Record<string, unknown>} payload
+ */
+export function emitAdminSocketEvent(eventName, payload = {}) {
+  if (!eventName) return;
+  ioInstance?.to(ADMIN_ROOM).emit(eventName, {
+    at: new Date().toISOString(),
+    ...payload,
+  });
+}

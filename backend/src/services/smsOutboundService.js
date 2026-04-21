@@ -8,7 +8,7 @@ import {
   createSuspiciousActivityErrorPayload,
   isUnlimitedSubscription,
 } from "./unlimitedUsageService.js";
-import { emitAdminLiveSms } from "./adminLiveEventsService.js";
+import { emitAdminLiveSms, emitAdminSocketEvent } from "./adminLiveEventsService.js";
 import { evaluateFraudEvent } from "./fraudDetectionService.js";
 import { enforceTelecomPolicy } from "./telecomPolicyService.js";
 import { enforceUsageRateLimit } from "./usageRateLimitService.js";
@@ -26,7 +26,6 @@ import {
   SmsGuardError,
 } from "./smsGuardService.js";
 import { enqueueOutboundSms } from "./smsQueueService.js";
-import { emitAdminSocketEvent } from "./adminLiveEventsService.js";
 
 const SMS_OPT_OUT_KEYWORDS = new Set([
   "STOP",
