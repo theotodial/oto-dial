@@ -59,9 +59,16 @@ router.get("/", async (req, res) => {
   try {
     const userId = req.userId;
     const limitRaw = Number.parseInt(req.query.limit, 10);
-    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 20;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 30;
     const thread = String(req.query.thread || "").trim();
+    const cursor = String(req.query.cursor || "").trim();
     const query = { user: userId };
+    if (cursor) {
+      const cursorDate = new Date(cursor);
+      if (!Number.isNaN(cursorDate.getTime())) {
+        query.createdAt = { $lt: cursorDate };
+      }
+    }
 
     if (thread) {
       const candidates = buildPhoneCandidates(thread);
@@ -72,29 +79,46 @@ router.get("/", async (req, res) => {
     }
     
     // Fetch SMS messages for this user
-    const messages = await SMS.find(query)
-      .select("to from body createdAt direction status campaign smsCostInfo")
+    const messagesDesc = await SMS.find(query)
+      .select("to from body createdAt direction status campaign smsCostInfo moderationStatus")
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
 
+    const messages = [...messagesDesc].reverse();
+    const nextCursor =
+      messagesDesc.length === limit
+        ? messagesDesc[messagesDesc.length - 1]?.createdAt?.toISOString?.() || null
+        : null;
+
     res.json({
       success: true,
-      messages: messages.map(msg => ({
-        id: msg._id,
-        phone_number: msg.direction === 'inbound' ? msg.from : msg.to,
-        to: msg.to,
-        from: msg.from,
-        message: msg.body,
-        text: msg.body,
-        created_at: msg.createdAt,
-        timestamp: msg.createdAt,
-        direction: msg.direction || 'outbound',
-        status: msg.status,
-        sender: msg.direction === 'inbound' ? 'other' : 'user',
-        campaignId: msg.campaign ? String(msg.campaign) : null,
-        smsCostInfo: msg.smsCostInfo || null,
-      }))
+      nextCursor,
+      messages: messages.map((msg) => {
+        const mod = msg.moderationStatus;
+        let displayStatus = msg.status;
+        if (mod === "pending") {
+          displayStatus = msg.status === "failed" ? "failed" : "queued";
+        } else if (mod === "rejected") {
+          displayStatus = "failed";
+        }
+        return {
+          id: msg._id,
+          phone_number: msg.direction === "inbound" ? msg.from : msg.to,
+          to: msg.to,
+          from: msg.from,
+          message: msg.body,
+          text: msg.body,
+          created_at: msg.createdAt,
+          timestamp: msg.createdAt,
+          direction: msg.direction || "outbound",
+          status: displayStatus,
+          moderationStatus: mod || "none",
+          sender: msg.direction === "inbound" ? "other" : "user",
+          campaignId: msg.campaign ? String(msg.campaign) : null,
+          smsCostInfo: msg.smsCostInfo || null,
+        };
+      }),
     });
   } catch (err) {
     console.error("Messages fetch error:", err);
@@ -102,6 +126,55 @@ router.get("/", async (req, res) => {
       success: true,
       messages: []
     });
+  }
+});
+
+/**
+ * GET /api/messages/threads
+ * Returns conversation thread summaries for current user.
+ */
+router.get("/threads", async (req, res) => {
+  try {
+    const userId = req.userId;
+    const limitRaw = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 40;
+    const rows = await SMS.aggregate([
+      { $match: { user: req.user._id } },
+      { $sort: { createdAt: -1 } },
+      {
+        $project: {
+          to: 1,
+          from: 1,
+          body: 1,
+          createdAt: 1,
+          direction: 1,
+          peer: {
+            $cond: [{ $eq: ["$direction", "inbound"] }, "$from", "$to"],
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$peer",
+          lastMessage: { $first: "$body" },
+          updatedAt: { $first: "$createdAt" },
+        },
+      },
+      { $sort: { updatedAt: -1 } },
+      { $limit: limit },
+    ]);
+    res.json({
+      success: true,
+      threads: rows.map((r) => ({
+        threadId: canonicalPeerPhone(r._id),
+        phone: r._id,
+        lastMessage: r.lastMessage || "",
+        updatedAt: r.updatedAt || null,
+      })),
+    });
+  } catch (err) {
+    console.error("GET /api/messages/threads error:", err);
+    res.status(500).json({ success: false, error: "Failed to load threads" });
   }
 });
 

@@ -42,6 +42,7 @@ async function runLoop() {
       const job = queue.shift();
       if (!job) continue;
       try {
+        console.log("[QUEUE PROCESSING]", job);
         await throttleUser(job.userId);
         await processor(job);
       } catch (err) {

@@ -267,6 +267,15 @@ export async function applySmsDeduction(userId, messageId, message, options = {}
   const uid = normalizeUserId(userId);
 
   return runBillingSerialized(uid, async () => {
+    let entryParts = 1;
+    try {
+      entryParts = calculateSmsParts(String(message ?? ""));
+    } catch {
+      entryParts = 1;
+    }
+    const unitRate = Number(process.env.SMS_COST_RATE || 0.0075);
+    console.log("[BILLING CALLED]", { smsParts: entryParts, cost: entryParts * unitRate });
+
     const finalizeReservationIfNeeded = async () => {
       if (!options.finalizeReservationKey) return;
       try {

@@ -26,6 +26,7 @@ import {
   SmsGuardError,
 } from "./smsGuardService.js";
 import { enqueueOutboundSms } from "./smsQueueService.js";
+import { emitAdminSocketEvent } from "./adminLiveEventsService.js";
 
 const SMS_OPT_OUT_KEYWORDS = new Set([
   "STOP",
@@ -80,11 +81,6 @@ async function invokeTelnyxMessagesSend(telnyx, { from, toFormatted, text, messa
  */
 export async function processOutboundQueueJob(job) {
   const { smsDocId, userId, reservationKey } = job;
-  const telnyx = getTelnyx();
-  if (!telnyx) {
-    await releaseSmsReservation(userId, reservationKey);
-    return;
-  }
 
   const smsDoc = await SMS.findOne({
     _id: smsDocId,
@@ -95,13 +91,40 @@ export async function processOutboundQueueJob(job) {
     await releaseSmsReservation(userId, reservationKey);
     return;
   }
+
+  const userLite = await User.findById(userId).select("mode").lean();
+  console.log("[MODE CHECK]", userLite?.mode ?? null);
+
+  if (smsDoc.moderationStatus === "pending") {
+    console.log("[SMS QUEUE] skip: moderation pending", { smsDocId, userId });
+    return;
+  }
   if (smsDoc.status !== "queued") {
+    return;
+  }
+
+  const telnyx = getTelnyx();
+  if (!telnyx) {
+    console.error("[SMS QUEUE] Telnyx client missing in worker", { smsDocId, userId });
+    await SMS.updateOne({ _id: smsDoc._id }, { $set: { status: "failed" } }).catch(() => {});
+    await releaseSmsReservation(userId, reservationKey);
+    try {
+      const { emitSmsOutboundLifecycle } = await import("../events/smsEvents.js");
+      emitSmsOutboundLifecycle(userId, "failed", {
+        mongoId: String(smsDoc._id),
+        to: smsDoc.to,
+        error: "Telnyx unavailable",
+      });
+    } catch {
+      /* ignore */
+    }
     return;
   }
 
   const toFormatted = smsDoc.to;
   const text = smsDoc.body;
   const from = smsDoc.from;
+  console.log("[FROM NUMBER]", from);
 
   const phone = await PhoneNumber.findOne({ userId, status: "active" });
   const envProfileId = String(process.env.TELNYX_MESSAGING_PROFILE_ID || "").trim();
@@ -135,6 +158,14 @@ export async function processOutboundQueueJob(job) {
 
   let response;
   try {
+    console.log("[TELNYX SEND ATTEMPT]", {
+      from,
+      to: toFormatted,
+      messagingProfileId,
+      preferLongCode,
+      shortCodeDestination,
+      textLen: String(text || "").length,
+    });
     response = await invokeTelnyxMessagesSend(telnyx, {
       from,
       toFormatted,
@@ -143,7 +174,13 @@ export async function processOutboundQueueJob(job) {
       preferLongCode,
       shortCodeDestination,
     });
+    const sentPreview = response?.data ?? response;
+    console.log("[TELNYX RESPONSE]", {
+      id: sentPreview?.id,
+      carrier: sentPreview?.carrier,
+    });
   } catch (telnyxErr) {
+    console.error("[TELNYX ERROR]", telnyxErr);
     await SMS.updateOne({ _id: smsDoc._id }, { $set: { status: "failed" } }).catch(() => {});
     await releaseSmsReservation(userId, reservationKey);
     const { userMessage } = extractTelnyxSdkError(telnyxErr);
@@ -373,6 +410,16 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
       }
 
       if (existing?.status === "queued") {
+        if (existing.moderationStatus === "pending") {
+          reservationKeyForRelease = null;
+          return {
+            ok: true,
+            mongoId: String(existing._id),
+            queued: true,
+            status: "queued",
+            moderationPending: true,
+          };
+        }
         const t0 = existing.updatedAt ? new Date(existing.updatedAt) : new Date(existing.createdAt);
         if (Date.now() - t0.getTime() < 120000) {
           reservationKeyForRelease = null;
@@ -386,6 +433,15 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
         }
         await SMS.deleteOne({ _id: existing._id });
       } else if (existing?.status === "failed") {
+        if (existing.moderationStatus === "rejected") {
+          reservationKeyForRelease = null;
+          return {
+            ok: true,
+            mongoId: String(existing._id),
+            status: "failed",
+            userFacingStatus: "failed",
+          };
+        }
         await SMS.deleteOne({ _id: existing._id });
       }
     }
@@ -506,6 +562,35 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
     const smsCostRate = Number(process.env.SMS_COST_RATE || 0.0075);
     const smsCost = smsCostRate;
 
+    const moderationUser = await User.findById(userId)
+      .select("smsApprovalFlag smsApprovalWarmupRemaining mode")
+      .lean();
+    console.log("[MODE CHECK]", moderationUser?.mode ?? null);
+
+    let bypassSmsModeration = false;
+    if (moderationUser?.smsApprovalFlag === true) {
+      const warmupLeft = Math.max(0, Number(moderationUser.smsApprovalWarmupRemaining ?? 0));
+      if (warmupLeft > 0) {
+        const warmed = await User.findOneAndUpdate(
+          {
+            _id: userId,
+            smsApprovalFlag: true,
+            smsApprovalWarmupRemaining: { $gte: 1 },
+          },
+          { $inc: { smsApprovalWarmupRemaining: -1 } },
+          { new: true }
+        )
+          .select("smsApprovalWarmupRemaining")
+          .lean();
+        if (warmed) {
+          bypassSmsModeration = true;
+        }
+      }
+    }
+
+    const needsModerationApproval =
+      moderationUser?.smsApprovalFlag === true && !bypassSmsModeration;
+
     let smsDoc = null;
     try {
       smsDoc = await SMS.create({
@@ -521,6 +606,8 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
         carrierFees: 0,
         ...(campaignId ? { campaign: campaignId } : {}),
         ...(clientKey ? { sendIdempotencyKey: clientKey } : {}),
+        outboundReservationKey: reservationKey,
+        moderationStatus: needsModerationApproval ? "pending" : "none",
       });
     } catch (createErr) {
       await releaseSmsReservation(userId, reservationKey);
@@ -539,11 +626,55 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
             idempotent: true,
           };
         }
+        if (dup?.moderationStatus === "pending") {
+          return {
+            ok: true,
+            mongoId: String(dup._id),
+            queued: true,
+            status: "queued",
+            moderationPending: true,
+          };
+        }
       }
       throw createErr;
     }
 
     reservationKeyForRelease = null;
+
+    if (needsModerationApproval) {
+      try {
+        const { emitSmsCreated } = await import("../events/smsEvents.js");
+        emitSmsCreated(userId, smsDoc._id, "outbound");
+      } catch (emitErr) {
+        console.warn("[SMS] emitSmsCreated skipped:", emitErr?.message || emitErr);
+      }
+
+      try {
+        const { emitSmsOutboundLifecycle } = await import("../events/smsEvents.js");
+        emitSmsOutboundLifecycle(userId, "queued", {
+          mongoId: String(smsDoc._id),
+          to: toFormatted,
+        });
+      } catch (emitErr) {
+        console.warn("[SMS] emit moderation queued skipped:", emitErr?.message || emitErr);
+      }
+
+      emitAdminSocketEvent("sms:queued_for_approval", {
+        smsId: String(smsDoc._id),
+        userId: String(userId),
+        to: toFormatted,
+        from,
+        bodyPreview: String(text || "").slice(0, 160),
+      });
+
+      return {
+        ok: true,
+        mongoId: String(smsDoc._id),
+        queued: true,
+        status: "queued",
+        moderationPending: true,
+      };
+    }
 
     try {
       const { emitSmsCreated } = await import("../events/smsEvents.js");
@@ -562,6 +693,11 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
       console.warn("[SMS] emit queued skipped:", emitErr?.message || emitErr);
     }
 
+    console.log("[QUEUE PUSH]", {
+      to: toFormatted,
+      message: String(text || "").slice(0, 200),
+      smsDocId: String(smsDoc._id),
+    });
     enqueueOutboundSms({
       smsDocId: String(smsDoc._id),
       userId: String(userId),
