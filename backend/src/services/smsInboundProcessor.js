@@ -1,6 +1,7 @@
 import SMS from "../models/SMS.js";
 import { calculateSmsCost, applySmsDeduction } from "./smsBillingService.js";
 import { emitSmsCreated } from "../events/smsEvents.js";
+import { buildSmsThreadKey, normalizeThreadPhone } from "../utils/smsThreadKey.js";
 
 /**
  * Dedicated inbound pipeline: persist first, then cost snapshot, then credit deduction + realtime.
@@ -9,13 +10,24 @@ import { emitSmsCreated } from "../events/smsEvents.js";
  *   userId: import("mongoose").Types.ObjectId|string|null,
  *   toNumber: string,
  *   fromNumber: string,
+ *   ownedNumber?: string,
+ *   externalNumber?: string,
  *   messageText: string,
  *   telnyxId?: string|null,
  *   carrier?: string|null,
  * }} payload
  */
 export async function processInboundSms(payload) {
-  const { userId, toNumber, fromNumber, messageText, telnyxId, carrier } = payload;
+  const {
+    userId,
+    toNumber,
+    fromNumber,
+    ownedNumber,
+    externalNumber,
+    messageText,
+    telnyxId,
+    carrier,
+  } = payload;
 
   const smsCostRate = Number(process.env.SMS_COST_RATE || 0.0075);
   const smsCost = smsCostRate;
@@ -24,6 +36,13 @@ export async function processInboundSms(payload) {
     user: userId || undefined,
     to: toNumber,
     from: fromNumber,
+    ownedNumber: normalizeThreadPhone(ownedNumber || toNumber),
+    externalNumber: normalizeThreadPhone(externalNumber || fromNumber),
+    threadKey: buildSmsThreadKey({
+      userId,
+      ownedNumber: ownedNumber || toNumber,
+      externalNumber: externalNumber || fromNumber,
+    }),
     body: messageText,
     status: "received",
     direction: "inbound",

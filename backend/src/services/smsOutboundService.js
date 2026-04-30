@@ -18,6 +18,7 @@ import { isOptedOut } from "./optOutService.js";
 import { isSameCountryOutboundOnlyEnabled } from "../utils/telecomCountryLock.js";
 import { extractTelnyxSdkError } from "../utils/telnyxErrorMessage.js";
 import { applySmsDeduction } from "./smsBillingService.js";
+import { buildSmsThreadKey, normalizeThreadPhone } from "../utils/smsThreadKey.js";
 import {
   calculateSmsParts,
   reserveSmsCredits,
@@ -26,6 +27,13 @@ import {
   SmsGuardError,
 } from "./smsGuardService.js";
 import { enqueueOutboundSms } from "./smsQueueService.js";
+
+/** Telnyx accepted send (carrier delivery tracked separately via webhooks). */
+function isOutboundSendCompleteForIdempotency(row) {
+  return Boolean(
+    row?.telnyxMessageId && (row.status === "sent" || row.status === "delivered")
+  );
+}
 
 const SMS_OPT_OUT_KEYWORDS = new Set([
   "STOP",
@@ -66,6 +74,7 @@ async function invokeTelnyxMessagesSend(telnyx, { from, toFormatted, text, messa
           from,
           to: toFormatted,
           text,
+          use_profile_webhooks: true,
         });
   return response;
 }
@@ -174,12 +183,18 @@ export async function processOutboundQueueJob(job) {
       shortCodeDestination,
     });
     const sentPreview = response?.data ?? response;
+    console.log("[TELNYX RESPONSE FULL]", response?.data ?? response);
     console.log("[TELNYX RESPONSE]", {
       id: sentPreview?.id,
       carrier: sentPreview?.carrier,
     });
   } catch (telnyxErr) {
     console.error("[TELNYX ERROR]", telnyxErr);
+    console.error("[SMS DELIVERY FAILED]", {
+      to: toFormatted,
+      error: extractTelnyxSdkError(telnyxErr)?.userMessage || telnyxErr?.message,
+      status: telnyxErr?.status ?? telnyxErr?.response?.status,
+    });
     await SMS.updateOne({ _id: smsDoc._id }, { $set: { status: "failed" } }).catch(() => {});
     await releaseSmsReservation(userId, reservationKey);
     const { userMessage } = extractTelnyxSdkError(telnyxErr);
@@ -223,6 +238,7 @@ export async function processOutboundQueueJob(job) {
         telnyxMessageId: messageId,
         carrier: sent?.carrier || null,
       },
+      $unset: { deliveryError: "" },
     }
   );
 
@@ -398,7 +414,7 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
         .sort({ createdAt: -1 })
         .lean();
 
-      if (existing?.status === "sent" && existing.telnyxMessageId) {
+      if (isOutboundSendCompleteForIdempotency(existing)) {
         reservationKeyForRelease = null;
         return {
           ok: true,
@@ -469,7 +485,7 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
         })
           .sort({ createdAt: -1 })
           .lean();
-        if (dupFinal?.status === "sent" && dupFinal.telnyxMessageId) {
+        if (isOutboundSendCompleteForIdempotency(dupFinal)) {
           return {
             ok: true,
             messageId: dupFinal.telnyxMessageId,
@@ -557,6 +573,11 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
 
     const format = (n) => (n.startsWith("+") ? n : `+${n}`);
     const from = format(phone.phoneNumber);
+    console.log("[OUTBOUND SMS]", {
+      userId: String(userId),
+      from,
+      to: toFormatted,
+    });
 
     const smsCostRate = Number(process.env.SMS_COST_RATE || 0.0075);
     const smsCost = smsCostRate;
@@ -596,6 +617,13 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
         user: userId,
         from,
         to: toFormatted,
+        ownedNumber: normalizeThreadPhone(from),
+        externalNumber: normalizeThreadPhone(toFormatted),
+        threadKey: buildSmsThreadKey({
+          userId,
+          ownedNumber: from,
+          externalNumber: toFormatted,
+        }),
         body: text,
         status: "queued",
         direction: "outbound",
@@ -617,7 +645,7 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
           sendIdempotencyKey: clientKey,
           direction: "outbound",
         }).lean();
-        if (dup?.status === "sent" && dup.telnyxMessageId) {
+        if (isOutboundSendCompleteForIdempotency(dup)) {
           return {
             ok: true,
             messageId: dup.telnyxMessageId,

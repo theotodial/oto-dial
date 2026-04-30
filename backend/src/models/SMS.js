@@ -24,6 +24,21 @@ const smsSchema = new mongoose.Schema(
       type: String,
       required: true
     },
+    ownedNumber: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    externalNumber: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    threadKey: {
+      type: String,
+      default: null,
+      index: true,
+    },
 
     body: {
       type: String,
@@ -43,6 +58,12 @@ const smsSchema = new mongoose.Schema(
     },
 
     telnyxMessageId: String,
+
+    /** Populated when Telnyx reports message.failed (carrier / policy). */
+    deliveryError: {
+      code: { type: String, default: null },
+      reason: { type: String, default: null },
+    },
 
     // Enhanced cost tracking
     cost: {
@@ -94,13 +115,35 @@ const smsSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+
+    /** Ties queue worker billing to smsReservations idempotency key. */
+    outboundReservationKey: {
+      type: String,
+      default: null,
+    },
+
+    moderationStatus: {
+      type: String,
+      enum: ["none", "pending", "approved", "rejected"],
+      default: "none",
+      index: true,
+    },
+
+    moderationMeta: {
+      reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      reviewedAt: { type: Date, default: null },
+      reason: { type: String, default: "" },
+    },
   },
   { timestamps: true }
 );
 
+smsSchema.index({ user: 1, moderationStatus: 1, createdAt: -1 });
+
 smsSchema.index({ user: 1, sendIdempotencyKey: 1 }, { unique: true, sparse: true });
 smsSchema.index({ user: 1, createdAt: -1 });
 smsSchema.index({ user: 1, direction: 1, createdAt: -1 });
+smsSchema.index({ user: 1, threadKey: 1, createdAt: -1 });
 // Thread list: $or on to/from with sort/limit
 smsSchema.index({ user: 1, to: 1, createdAt: -1 });
 smsSchema.index({ user: 1, from: 1, createdAt: -1 });

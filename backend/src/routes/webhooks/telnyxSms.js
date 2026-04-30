@@ -3,6 +3,8 @@ import SMS from "../../models/SMS.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import { recordSmsCost } from "../../services/telnyxCostCalculator.js";
 import { processInboundSms } from "../../services/smsInboundProcessor.js";
+import { handleTelnyxMessagingLifecycle } from "../../services/telnyxMessagingLifecycleWebhook.js";
+import { buildSmsThreadKey, normalizeThreadPhone } from "../../utils/smsThreadKey.js";
 
 const INBOUND_OPT_OUT_KEYWORDS = new Set([
   "STOP",
@@ -21,12 +23,24 @@ const normalizePhone = (phone) => {
   return phone.replace(/[\s\-\(\)\+]/g, "");
 };
 
+const buildOwnedNumberCandidates = (rawTo) => {
+  const normalized = normalizeThreadPhone(rawTo);
+  if (!normalized) return [];
+  const digits = normalized.replace(/\D/g, "");
+  return Array.from(new Set([normalized, digits, `+${digits}`]));
+};
+
 /**
  * TELNYX SMS WEBHOOK
  * Handles inbound SMS messages
  */
 router.post("/", async (req, res) => {
   try {
+    const lifecycle = await handleTelnyxMessagingLifecycle(req);
+    if (lifecycle.handled) {
+      return res.json({ received: true });
+    }
+
     console.log("📱 SMS WEBHOOK RECEIVED");
     console.log("📱 Headers:", JSON.stringify(req.headers, null, 2));
     console.log("📱 Body:", JSON.stringify(req.body, null, 2));
@@ -35,9 +49,9 @@ router.post("/", async (req, res) => {
     const payload = req.body?.data?.payload || req.body?.payload || req.body;
     const eventType = req.body?.data?.event_type || req.body?.event_type;
 
-    // Only process message.received events
+    // Only process message.received events (delivery lifecycle handled above)
     if (eventType && eventType !== "message.received") {
-      console.log("📱 Ignoring non-message event:", eventType);
+      console.log("📱 Ignoring non-inbound SMS event:", eventType);
       return res.json({ received: true });
     }
 
@@ -73,33 +87,29 @@ router.post("/", async (req, res) => {
 
     console.log(`📱 Processing inbound SMS: ${fromNumber} -> ${toNumber}`);
 
-    // Find the user who owns this phone number (try multiple formats)
-    const normalizedTo = normalizePhone(toNumber);
-    
-    let phoneNumber = await PhoneNumber.findOne({ 
-      phoneNumber: toNumber,
-      status: "active"
-    });
+    const ownedNumber = normalizeThreadPhone(toNumber);
+    const externalNumber = normalizeThreadPhone(fromNumber);
+    const ownedCandidates = buildOwnedNumberCandidates(toNumber);
+    const ownerMatches = await PhoneNumber.find({
+      phoneNumber: { $in: ownedCandidates },
+      status: "active",
+    })
+      .select("_id userId phoneNumber")
+      .limit(2)
+      .lean();
 
-    // If not found, try without + prefix
-    if (!phoneNumber) {
-      phoneNumber = await PhoneNumber.findOne({ 
-        phoneNumber: toNumber.startsWith("+") ? toNumber.slice(1) : `+${toNumber}`,
-        status: "active"
+    if (ownerMatches.length !== 1) {
+      console.error("[INBOUND SMS] ownership resolution failed", {
+        to: toNumber,
+        toNormalized: ownedNumber,
+        candidates: ownedCandidates,
+        matchedRecords: ownerMatches.length,
       });
+      return res.json({ received: true, dropped: true });
     }
 
-    // If still not found, try normalized matching
-    if (!phoneNumber) {
-      const allNumbers = await PhoneNumber.find({ status: "active" });
-      phoneNumber = allNumbers.find(n => normalizePhone(n.phoneNumber) === normalizedTo);
-    }
-
-    const userId = phoneNumber?.userId || null;
-
-    if (!userId) {
-      console.warn(`⚠️ Could not find owner for number: ${toNumber}`);
-    }
+    const phoneNumber = ownerMatches[0];
+    const userId = phoneNumber.userId;
 
     // Format numbers consistently for storage
     const formatPhone = (n) => n.startsWith("+") ? n : `+${n}`;
@@ -108,9 +118,22 @@ router.post("/", async (req, res) => {
       userId,
       toNumber: formatPhone(toNumber),
       fromNumber: formatPhone(fromNumber),
+      ownedNumber,
+      externalNumber,
       messageText,
       telnyxId,
       carrier: payload.carrier || null,
+    });
+
+    console.log("[INBOUND SMS]", {
+      from: externalNumber,
+      to: ownedNumber,
+      resolvedUser: String(userId),
+      threadId: buildSmsThreadKey({
+        userId,
+        ownedNumber,
+        externalNumber,
+      }),
     });
 
     console.log(`✅ Inbound SMS saved: ${fromNumber} -> ${toNumber} (userId: ${userId || 'unknown'}) [id: ${sms._id}]`);

@@ -16,6 +16,7 @@ import { evaluateFraudEvent } from "../services/fraudDetectionService.js";
 import { enforceTelecomPolicy } from "../services/telecomPolicyService.js";
 import { enforceUsageRateLimit } from "../services/usageRateLimitService.js";
 import { TERMINAL_STATUSES } from "../utils/callStateMachine.js";
+import { normalizeThreadPhone } from "../utils/smsThreadKey.js";
 
 const router = express.Router();
 
@@ -80,6 +81,12 @@ async function persistFailedCallAttempt(req, fields, hangupCause) {
 
 router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
   try {
+    if (req.user?.mode === "campaign") {
+      return res.status(403).json({
+        success: false,
+        error: "CALLING_DISABLED_FOR_PLAN"
+      });
+    }
     console.log("[REQ BODY RAW]", req.body);
     console.log("[CALL CREATED REQUEST]", req.body);
     console.log("[CALL FLOW] CREATE CALL REQUEST", {
@@ -241,6 +248,23 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       }
       fromNumber = owned.phoneNumber;
     }
+
+    let calleeOwnedUser = null;
+    if (toNumber) {
+      const calleeOwned = await PhoneNumber.findOne({
+        phoneNumber: normalizeThreadPhone(toNumber),
+        status: "active",
+      })
+        .select("userId")
+        .lean();
+      calleeOwnedUser = calleeOwned?.userId ? String(calleeOwned.userId) : null;
+    }
+    console.log("[CALL ROUTING]", {
+      from: normalizeThreadPhone(fromNumber),
+      to: normalizeThreadPhone(toNumber || phoneNumber),
+      callerUser: String(req.userId),
+      calleeUser: calleeOwnedUser,
+    });
 
     const existing = await findRecentActiveCallForUser(req.userId);
     if (existing) {
@@ -635,6 +659,12 @@ router.delete("/", async (req, res) => {
  */
 router.post("/:id/answer", requireActiveSubscription, async (req, res) => {
   try {
+    if (req.user?.mode === "campaign") {
+      return res.status(403).json({
+        success: false,
+        error: "CALLING_DISABLED_FOR_PLAN"
+      });
+    }
     const call = await Call.findOne({
       _id: req.params.id,
       user: req.userId,

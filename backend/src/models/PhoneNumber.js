@@ -118,5 +118,6 @@ const phoneNumberSchema = new mongoose.Schema(
 );
 
 phoneNumberSchema.index({ userId: 1, status: 1 });
+phoneNumberSchema.index({ phoneNumber: 1 }, { unique: true, name: "phoneNumber_unique_isolation" });
 
 export default mongoose.model("PhoneNumber", phoneNumberSchema);

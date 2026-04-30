@@ -19,6 +19,7 @@ import {
   isWebhookParkedOutboundInitiated,
   parseOtdFromTelnyxClientState,
 } from "../../services/telnyxParkedOutboundService.js";
+import { normalizeThreadPhone } from "../../utils/smsThreadKey.js";
 
 const router = express.Router();
 
@@ -31,6 +32,13 @@ const HANDLED_EVENTS = new Set([
   "call.bridged",
   "call.hangup",
 ]);
+
+function buildOwnedNumberCandidates(rawTo) {
+  const normalized = normalizeThreadPhone(rawTo);
+  if (!normalized) return [];
+  const digits = normalized.replace(/\D/g, "");
+  return Array.from(new Set([normalized, digits, `+${digits}`]));
+}
 
 async function hangupTelnyxCallLeg(callControlId, apiKey) {
   if (!callControlId || !apiKey) return;
@@ -212,19 +220,33 @@ router.post("/", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      const searchNumber = toNumber;
-
+      const ownerCandidates = buildOwnedNumberCandidates(toNumber);
       const phoneNumber = await PhoneNumber.findOne({
-        phoneNumber: searchNumber,
+        phoneNumber: { $in: ownerCandidates },
         status: "active",
       });
 
       if (!phoneNumber) {
         console.warn(
-          `[WEBHOOK RECEIVED] call.initiated — no active phone for to ${searchNumber}`
+          `[WEBHOOK RECEIVED] call.initiated — no active phone for to ${toNumber}`
         );
         return res.sendStatus(200);
       }
+
+      const calleeUser = String(phoneNumber.userId);
+      const callerOwned = await PhoneNumber.findOne({
+        phoneNumber: { $in: buildOwnedNumberCandidates(fromNumber) },
+        status: "active",
+      })
+        .select("userId")
+        .lean();
+      const callerUser = callerOwned?.userId ? String(callerOwned.userId) : null;
+      console.log("[CALL ROUTING]", {
+        from: normalizeThreadPhone(fromNumber),
+        to: normalizeThreadPhone(toNumber),
+        callerUser,
+        calleeUser,
+      });
 
       const apiKeyInbound = process.env.TELNYX_API_KEY?.trim();
       const inboundUserSub = await loadUserSubscription(phoneNumber.userId);

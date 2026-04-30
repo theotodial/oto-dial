@@ -1,6 +1,12 @@
 import express from "express";
 import SMS from "../models/SMS.js";
 import MessageReadState from "../models/MessageReadState.js";
+import {
+  buildSmsThreadKey,
+  isCompositeThreadKey,
+  normalizeThreadPhone,
+  parseSmsThreadKey,
+} from "../utils/smsThreadKey.js";
 
 const router = express.Router();
 
@@ -27,27 +33,45 @@ function buildPhoneCandidates(phone) {
   return Array.from(set);
 }
 
-/** Short codes 3–8 digits; else +digits for one row per logical peer in MessageReadState. */
-function canonicalPeerPhone(raw) {
-  const digits = normalizePhone(raw);
-  if (!digits) return String(raw || "").trim();
-  if (digits.length >= 3 && digits.length <= 8) return digits;
-  return `+${digits}`;
-}
+function parseThreadSelection(userId, threadRaw, ownedRaw) {
+  const thread = String(threadRaw || "").trim();
+  const ownedNumber = normalizeThreadPhone(ownedRaw);
+  if (!thread && !ownedNumber) return { valid: true, match: null };
 
-function lastReadAtForPeer(peerRaw, readStates) {
-  const peerCanon = canonicalPeerPhone(peerRaw);
-  const peerDigits = normalizePhone(peerRaw);
-  let best = new Date(0);
-  for (const s of readStates) {
-    const sCanon = canonicalPeerPhone(s.phoneNumber);
-    const sDigits = normalizePhone(s.phoneNumber);
-    if (sCanon === peerCanon || (peerDigits && sDigits && peerDigits === sDigits)) {
-      const t = s.lastReadAt ? new Date(s.lastReadAt) : new Date(0);
-      if (t > best) best = t;
+  if (isCompositeThreadKey(thread)) {
+    const parsed = parseSmsThreadKey(thread);
+    if (!parsed || String(parsed.userId) !== String(userId)) {
+      return { valid: false, match: null };
     }
+    return {
+      valid: true,
+      match: {
+        threadKey: buildSmsThreadKey({
+          userId,
+          ownedNumber: parsed.ownedNumber,
+          externalNumber: parsed.externalNumber,
+        }),
+      },
+    };
   }
-  return best;
+
+  if (!thread && ownedNumber) {
+    return { valid: true, match: { ownedNumber } };
+  }
+
+  const candidates = buildPhoneCandidates(thread);
+  const normalizedCandidates = candidates.map((c) => normalizeThreadPhone(c)).filter(Boolean);
+  const match = {
+    $or: [
+      { externalNumber: { $in: normalizedCandidates } },
+      { from: { $in: candidates } },
+      { to: { $in: candidates } },
+    ],
+  };
+  if (ownedNumber) {
+    match.$and = [{ ownedNumber }];
+  }
+  return { valid: true, match };
 }
 
 /**
@@ -61,6 +85,7 @@ router.get("/", async (req, res) => {
     const limitRaw = Number.parseInt(req.query.limit, 10);
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 30;
     const thread = String(req.query.thread || "").trim();
+    const ownedNumber = String(req.query.ownedNumber || "").trim();
     const cursor = String(req.query.cursor || "").trim();
     const query = { user: userId };
     if (cursor) {
@@ -70,22 +95,29 @@ router.get("/", async (req, res) => {
       }
     }
 
-    if (thread) {
-      const candidates = buildPhoneCandidates(thread);
-      query.$or = [
-        { to: { $in: candidates } },
-        { from: { $in: candidates } }
-      ];
+    if (thread || ownedNumber) {
+      const parsed = parseThreadSelection(userId, thread, ownedNumber);
+      if (!parsed.valid) {
+        return res.status(403).json({ success: false, error: "THREAD_ACCESS_DENIED" });
+      }
+      if (parsed.match) {
+        Object.assign(query, parsed.match);
+      }
     }
     
     // Fetch SMS messages for this user
     const messagesDesc = await SMS.find(query)
-      .select("to from body createdAt direction status campaign smsCostInfo moderationStatus")
+      .select(
+        "user to from body createdAt direction status campaign smsCostInfo moderationStatus deliveryError ownedNumber externalNumber threadKey"
+      )
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
 
     const messages = [...messagesDesc].reverse();
+    if (messages.some((m) => m.user && String(m.user) !== String(userId))) {
+      return res.status(403).json({ success: false, error: "THREAD_ACCESS_DENIED" });
+    }
     const nextCursor =
       messagesDesc.length === limit
         ? messagesDesc[messagesDesc.length - 1]?.createdAt?.toISOString?.() || null
@@ -104,9 +136,18 @@ router.get("/", async (req, res) => {
         }
         return {
           id: msg._id,
-          phone_number: msg.direction === "inbound" ? msg.from : msg.to,
+          phone_number: msg.externalNumber || (msg.direction === "inbound" ? msg.from : msg.to),
           to: msg.to,
           from: msg.from,
+          ownedNumber: msg.ownedNumber || null,
+          externalNumber: msg.externalNumber || null,
+          threadId:
+            msg.threadKey ||
+            buildSmsThreadKey({
+              userId,
+              ownedNumber: msg.direction === "inbound" ? msg.to : msg.from,
+              externalNumber: msg.direction === "inbound" ? msg.from : msg.to,
+            }),
           message: msg.body,
           text: msg.body,
           created_at: msg.createdAt,
@@ -117,6 +158,7 @@ router.get("/", async (req, res) => {
           sender: msg.direction === "inbound" ? "other" : "user",
           campaignId: msg.campaign ? String(msg.campaign) : null,
           smsCostInfo: msg.smsCostInfo || null,
+          deliveryError: msg.deliveryError || null,
         };
       }),
     });
@@ -135,7 +177,6 @@ router.get("/", async (req, res) => {
  */
 router.get("/threads", async (req, res) => {
   try {
-    const userId = req.userId;
     const limitRaw = Number.parseInt(req.query.limit, 10);
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 40;
     const rows = await SMS.aggregate([
@@ -143,19 +184,41 @@ router.get("/threads", async (req, res) => {
       { $sort: { createdAt: -1 } },
       {
         $project: {
+          user: 1,
+          threadKey: 1,
+          ownedNumber: 1,
+          externalNumber: 1,
           to: 1,
           from: 1,
           body: 1,
           createdAt: 1,
           direction: 1,
-          peer: {
+          fallbackOwned: {
+            $cond: [{ $eq: ["$direction", "inbound"] }, "$to", "$from"],
+          },
+          fallbackExternal: {
             $cond: [{ $eq: ["$direction", "inbound"] }, "$from", "$to"],
           },
         },
       },
       {
         $group: {
-          _id: "$peer",
+          _id: {
+            $ifNull: [
+              "$threadKey",
+              {
+                $concat: [
+                  { $toString: "$user" },
+                  ":",
+                  { $ifNull: ["$fallbackOwned", ""] },
+                  ":",
+                  { $ifNull: ["$fallbackExternal", ""] },
+                ],
+              },
+            ],
+          },
+          ownedNumber: { $first: { $ifNull: ["$ownedNumber", "$fallbackOwned"] } },
+          externalNumber: { $first: { $ifNull: ["$externalNumber", "$fallbackExternal"] } },
           lastMessage: { $first: "$body" },
           updatedAt: { $first: "$createdAt" },
         },
@@ -166,8 +229,10 @@ router.get("/threads", async (req, res) => {
     res.json({
       success: true,
       threads: rows.map((r) => ({
-        threadId: canonicalPeerPhone(r._id),
-        phone: r._id,
+        threadId: r._id,
+        phone: r.externalNumber,
+        externalNumber: r.externalNumber,
+        ownedNumber: r.ownedNumber,
         lastMessage: r.lastMessage || "",
         updatedAt: r.updatedAt || null,
       })),
@@ -193,10 +258,6 @@ router.delete("/", async (req, res) => {
   }
 });
 
-function normalizePhoneForMatch(phone) {
-  return normalizePhone(phone);
-}
-
 /**
  * GET /api/messages/read-state
  * Get last read timestamp per thread (phone number) for current user
@@ -207,7 +268,7 @@ router.get("/read-state", async (req, res) => {
     const states = await MessageReadState.find({ user: userId }).lean();
     const byPhone = {};
     states.forEach((s) => {
-      byPhone[canonicalPeerPhone(s.phoneNumber)] = s.lastReadAt;
+      byPhone[s.phoneNumber] = s.lastReadAt;
     });
     res.json({ success: true, readState: byPhone });
   } catch (err) {
@@ -223,16 +284,17 @@ router.get("/read-state", async (req, res) => {
 router.post("/read-state", async (req, res) => {
   try {
     const userId = req.userId;
-    const raw = String(req.body.phoneNumber || req.body.phone || "").trim();
+    const raw = String(req.body.threadId || req.body.phoneNumber || req.body.phone || "").trim();
     if (!raw) {
-      return res.status(400).json({ success: false, error: "phoneNumber required" });
+      return res.status(400).json({ success: false, error: "threadId required" });
     }
-    const phoneNumber = canonicalPeerPhone(raw);
-    if (!phoneNumber) {
-      return res.status(400).json({ success: false, error: "phoneNumber required" });
+    const parsed = parseThreadSelection(userId, raw, req.body?.ownedNumber);
+    if (!parsed.valid || !parsed.match) {
+      return res.status(403).json({ success: false, error: "THREAD_ACCESS_DENIED" });
     }
+    const threadId = parsed.match.threadKey || raw;
     await MessageReadState.findOneAndUpdate(
-      { user: userId, phoneNumber },
+      { user: userId, phoneNumber: threadId },
       { lastReadAt: new Date() },
       { upsert: true, new: true }
     );
@@ -254,29 +316,46 @@ router.get("/unread-counts", async (req, res) => {
       .select("phoneNumber lastReadAt")
       .lean();
 
-    // Distinct inbound peers (cap for cost); unread = inbound after lastReadAt for that peer.
+    // Distinct inbound threads (cap for cost); unread = inbound after lastReadAt for that thread.
     const inboundPeers = await SMS.aggregate([
       { $match: { user: req.user._id, direction: "inbound" } },
       { $sort: { createdAt: -1 } },
-      { $group: { _id: "$from" } },
+      {
+        $group: {
+          _id: {
+            $ifNull: [
+              "$threadKey",
+              {
+                $concat: [
+                  { $toString: "$user" },
+                  ":",
+                  { $ifNull: ["$ownedNumber", "$to"] },
+                  ":",
+                  { $ifNull: ["$externalNumber", "$from"] },
+                ],
+              },
+            ],
+          },
+        },
+      },
       { $limit: 300 },
     ]);
 
     const unreadByPhone = {};
     await Promise.all(
       inboundPeers.map(async (row) => {
-        const peer = row._id;
-        if (!peer) return;
-        const candidates = buildPhoneCandidates(peer);
-        const lastReadAt = lastReadAtForPeer(peer, readStates);
+        const threadId = row._id;
+        if (!threadId) return;
+        const readState = readStates.find((s) => s.phoneNumber === threadId);
+        const lastReadAt = readState?.lastReadAt ? new Date(readState.lastReadAt) : new Date(0);
         const count = await SMS.countDocuments({
           user: userId,
           direction: "inbound",
-          from: { $in: candidates },
+          threadKey: threadId,
           createdAt: { $gt: lastReadAt },
         });
         if (count > 0) {
-          unreadByPhone[canonicalPeerPhone(peer)] = count;
+          unreadByPhone[threadId] = count;
         }
       })
     );
@@ -297,18 +376,11 @@ router.delete("/thread/:phoneNumber", async (req, res) => {
   try {
     const userId = req.userId;
     const raw = req.params.phoneNumber ? decodeURIComponent(req.params.phoneNumber) : "";
-    const normalized = normalizePhoneForMatch(raw);
-    if (!normalized) {
-      return res.status(400).json({ success: false, error: "Phone number required" });
+    const parsed = parseThreadSelection(userId, raw, req.query?.ownedNumber);
+    if (!parsed.valid || !parsed.match) {
+      return res.status(403).json({ success: false, error: "THREAD_ACCESS_DENIED" });
     }
-    const candidates = buildPhoneCandidates(raw);
-    const result = await SMS.deleteMany({
-      user: userId,
-      $or: [
-        { to: { $in: candidates } },
-        { from: { $in: candidates } },
-      ],
-    });
+    const result = await SMS.deleteMany({ user: userId, ...parsed.match });
     res.json({ success: true, deleted: result.deletedCount });
   } catch (err) {
     console.error("DELETE /api/messages/thread error:", err);
