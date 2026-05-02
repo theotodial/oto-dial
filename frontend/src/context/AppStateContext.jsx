@@ -178,6 +178,23 @@ export function AppStateProvider({ children }) {
     }
   }, [applyBootstrapData, clearAppState]);
 
+  const requestBootstrapRefresh = useCallback((detail = {}) => {
+    const now = Date.now();
+    if (now - lastBootstrapRefreshRef.current < 1500) {
+      return;
+    }
+
+    const currentUserId = user?._id ?? user?.id ?? null;
+    if (!shouldRefreshSubscription(detail, currentUserId)) {
+      return;
+    }
+
+    lastBootstrapRefreshRef.current = now;
+    fetchBootstrap({ force: true }).catch(() => {
+      /* handled in fetchBootstrap */
+    });
+  }, [fetchBootstrap, user]);
+
   useEffect(() => {
     const activeToken = localStorage.getItem("token");
     setToken(activeToken);
@@ -200,23 +217,6 @@ export function AppStateProvider({ children }) {
     if (!token) {
       return undefined;
     }
-
-    const requestBootstrapRefresh = (detail = {}) => {
-      const now = Date.now();
-      if (now - lastBootstrapRefreshRef.current < 1500) {
-        return;
-      }
-
-      const currentUserId = user?._id ?? user?.id ?? null;
-      if (!shouldRefreshSubscription(detail, currentUserId)) {
-        return;
-      }
-
-      lastBootstrapRefreshRef.current = now;
-      fetchBootstrap({ force: true }).catch(() => {
-        /* handled in fetchBootstrap */
-      });
-    };
 
     const handleBootstrapRefresh = (event) => {
       requestBootstrapRefresh(event?.detail || {});
@@ -241,7 +241,7 @@ export function AppStateProvider({ children }) {
       window.removeEventListener(BOOTSTRAP_REFRESH_EVENT, handleBootstrapRefresh);
       window.removeEventListener("storage", handleStorageRefresh);
     };
-  }, [fetchBootstrap, token, user]);
+  }, [requestBootstrapRefresh, token]);
 
   useEffect(() => {
     const activeToken = localStorage.getItem("token");

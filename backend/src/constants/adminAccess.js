@@ -2,6 +2,7 @@ export const PRIMARY_ADMIN_EMAIL = "theotodial@gmail.com";
 
 export const ADMIN_ACCESS_AREAS = [
   "dashboard",
+  "oto_agents",
   "system_health",
   "users",
   "affiliates",
@@ -20,6 +21,7 @@ export const ADMIN_ACCESS_AREAS = [
 
 export const ADMIN_ACCESS_LABELS = {
   dashboard: "Dashboard",
+  oto_agents: "OTO Agents",
   system_health: "System Health",
   users: "Users",
   affiliates: "Affiliates",
@@ -82,6 +84,7 @@ export const getRequiredAdminRolesForPath = (path = "") => {
   if (normalizedPath.startsWith("/api/admin/analytics")) return ["analytics"];
   if (normalizedPath.startsWith("/api/admin/users")) return ["users"];
   if (normalizedPath.startsWith("/api/admin/actions")) return ["users"];
+  if (normalizedPath.startsWith("/api/admin/oto-agents")) return ["oto_agents", "dashboard"];
   if (normalizedPath.startsWith("/api/admin/affiliates")) return ["affiliates"];
   if (normalizedPath.startsWith("/api/admin/notifications")) return ["notifications"];
   if (normalizedPath.startsWith("/api/admin/calls")) return ["calls"];

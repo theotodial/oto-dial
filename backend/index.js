@@ -32,6 +32,7 @@ import { initCampaignQueue } from "./src/services/campaignQueueService.js";
 import { runCampaignJob } from "./src/services/campaignSendWorker.js";
 import { startCampaignSchedulePoller } from "./src/services/campaignSchedulePoller.js";
 import { startAgentRuntime, stopAgentRuntime } from "./src/agents/agentRuntime.js";
+import { startOtoAgentsTaskQueue, stopOtoAgentsTaskQueue } from "./src/modules/otoAgents/scheduler/taskQueue.js";
 import Subscription from "./src/models/Subscription.js";
 import SMS from "./src/models/SMS.js";
 import Contact from "./src/models/Contact.js";
@@ -625,6 +626,12 @@ async function startServer() {
       console.error("⚠️ Production agent runtime failed to start:", agentErr.message);
     }
 
+    try {
+      startOtoAgentsTaskQueue();
+    } catch (otoAgentErr) {
+      console.error("⚠️ OTO Agents task queue failed to start:", otoAgentErr.message);
+    }
+
     server.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
@@ -641,6 +648,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
     stopAgentRuntime()
       .catch(() => {})
       .finally(() => {
+        stopOtoAgentsTaskQueue();
         process.exit(0);
       });
   });

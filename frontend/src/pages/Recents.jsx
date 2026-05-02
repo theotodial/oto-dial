@@ -822,13 +822,19 @@ function Recents() {
   }, [filteredCalls]);
   const filteredChats = useMemo(() => {
     const archived = new Set(loadArchivedPhones(archiveUserKey).map(recentsNormPhone));
-    return (chats || []).filter((chat) => {
+    const list = (chats || []).filter((chat) => {
       const lastMessage = String(chat?.lastMessage || chat?.message || '').trim();
       if (!lastMessage) return false;
       if (/^(inbound|outbound|incoming|outgoing)\s+call$/i.test(lastMessage)) return false;
       const p = chat.phoneNumber || chat.phone_number || '';
       if (archived.has(recentsNormPhone(p))) return false;
       return true;
+    });
+    // Map insertion order is not activity order — newest thread activity must appear first (matches combinedRecents).
+    return list.sort((a, b) => {
+      const dateA = new Date(a.date || a.created_at || a.createdAt || a.timestamp || 0).getTime();
+      const dateB = new Date(b.date || b.created_at || b.createdAt || b.timestamp || 0).getTime();
+      return dateB - dateA;
     });
   }, [chats, archiveUserKey, archiveTick]);
 

@@ -23,6 +23,7 @@ const ChevronUpIcon = () => (
 
 const navItems = [
   { path: '/adminbobby/dashboard', label: 'Dashboard', role: 'dashboard' },
+  { path: '/adminbobby/oto-agents', label: 'OTO Agents', role: 'dashboard', ai: true },
   { path: '/adminbobby/system-health', label: 'System Health', role: 'dashboard' },
   { path: '/adminbobby/users', label: 'Users', role: 'users' },
   { path: '/adminbobby/affiliates', label: 'Affiliates', role: 'affiliates' },
@@ -124,7 +125,12 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
                     }
                   `}
                 >
-                  <span>{item.label}</span>
+                  <span className="inline-flex items-center gap-2">
+                    {item.ai && (
+                      <span className="h-2 w-2 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.9)]" />
+                    )}
+                    {item.label}
+                  </span>
                 </Link>
               );
             })}

@@ -43,6 +43,7 @@ import AdminCalls from '../pages/admin/AdminCalls';
 import AdminDashboardEnterprise from '../pages/admin/AdminDashboardEnterprise';
 import AdminNotifications from '../pages/admin/AdminNotifications';
 import AdminNumbers from '../pages/admin/AdminNumbers';
+import OtoAgents from '../pages/admin/OtoAgents';
 import AdminSms from '../pages/admin/AdminSms';
 import AdminSmsApproval from '../pages/admin/AdminSmsApproval';
 import AdminSupport from '../pages/admin/AdminSupport';
@@ -123,6 +124,7 @@ export default function AppShell() {
         <Route path="/adminbobby" element={<AdminLogin />} />
         <Route path="/adminbobby/dashboard" element={<AdminProtectedRoute><AdminLayout><AdminDashboardEnterprise /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/system-health" element={<AdminProtectedRoute><AdminLayout><AdminSystemHealth /></AdminLayout></AdminProtectedRoute>} />
+        <Route path="/adminbobby/oto-agents" element={<AdminProtectedRoute><AdminLayout><OtoAgents /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/users" element={<AdminProtectedRoute><AdminLayout><AdminUsers /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/users/:id" element={<AdminProtectedRoute><AdminLayout><AdminUserDetail /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/calls" element={<AdminProtectedRoute><AdminLayout><AdminCalls /></AdminLayout></AdminProtectedRoute>} />
