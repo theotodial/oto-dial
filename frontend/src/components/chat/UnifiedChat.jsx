@@ -15,8 +15,9 @@ function deliveryLabel(status, direction) {
   if (direction === 'inbound') return null;
   const s = String(status || '').toLowerCase();
   if (s === 'failed') return 'Failed';
-  if (s === 'queued') return 'Queued';
-  if (s === 'sent' || s === 'delivered') return 'Sent';
+  if (s === 'queued') return 'Sending...';
+  if (s === 'sent') return 'Sent to carrier';
+  if (s === 'delivered') return 'Delivered';
   return s || null;
 }
 
@@ -66,6 +67,13 @@ const MessageList = memo(function MessageList({ messages, loading }) {
               <span className="opacity-95">· {modPending ? 'Pending approval' : 'Sending...'}</span>
             )}
             {isOutbound && del && <span className="opacity-90">· {del}</span>}
+            {isOutbound &&
+              String(item.status || '').toLowerCase() === 'failed' &&
+              (item.deliveryError?.reason || item.deliveryError?.code) && (
+                <span className="opacity-90 block max-w-[220px] truncate" title={item.deliveryError?.reason || ''}>
+                  · {item.deliveryError?.reason || item.deliveryError?.code}
+                </span>
+              )}
           </div>
         </div>
       </div>

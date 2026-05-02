@@ -31,6 +31,7 @@ import { startCallHeartbeatMonitor } from "./src/services/callHeartbeatMonitor.j
 import { initCampaignQueue } from "./src/services/campaignQueueService.js";
 import { runCampaignJob } from "./src/services/campaignSendWorker.js";
 import { startCampaignSchedulePoller } from "./src/services/campaignSchedulePoller.js";
+import { startAgentRuntime, stopAgentRuntime } from "./src/agents/agentRuntime.js";
 import Subscription from "./src/models/Subscription.js";
 import SMS from "./src/models/SMS.js";
 import Contact from "./src/models/Contact.js";
@@ -618,6 +619,12 @@ async function startServer() {
       console.error("⚠️ Campaign scheduler/queue failed to start:", campaignInfraErr.message);
     }
 
+    try {
+      startAgentRuntime();
+    } catch (agentErr) {
+      console.error("⚠️ Production agent runtime failed to start:", agentErr.message);
+    }
+
     server.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
@@ -628,3 +635,13 @@ async function startServer() {
 }
 
 startServer();
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, () => {
+    stopAgentRuntime()
+      .catch(() => {})
+      .finally(() => {
+        process.exit(0);
+      });
+  });
+}

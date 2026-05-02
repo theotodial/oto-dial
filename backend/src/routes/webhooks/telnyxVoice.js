@@ -23,6 +23,10 @@ import {
   parseOtdFromTelnyxClientState,
 } from "../../services/telnyxParkedOutboundService.js";
 import { normalizeThreadPhone } from "../../utils/smsThreadKey.js";
+import {
+  claimWebhookEvent,
+  extractWebhookEnvelope,
+} from "../../agents/shared/webhookIdempotency.js";
 
 const router = express.Router();
 
@@ -155,6 +159,16 @@ router.post("/", async (req, res) => {
 
     const occurredAtMs = Date.parse(payload.occurred_at || "") || Date.now();
     const telnyxEventId = payload.id != null ? String(payload.id) : null;
+    const claim = await claimWebhookEvent({
+      provider: "telnyx:voice",
+      eventId: telnyxEventId,
+      eventType: event,
+      payload: extractWebhookEnvelope(req.body).payload,
+    });
+    if (claim.duplicate) {
+      console.log("[WEBHOOK DEDUP] duplicate Telnyx voice event", telnyxEventId, event);
+      return res.sendStatus(200);
+    }
     if (rememberTelnyxVoiceEventId(telnyxEventId)) {
       console.log("[WEBHOOK DEDUP] duplicate Telnyx voice event", telnyxEventId, event);
       return res.sendStatus(200);

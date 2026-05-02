@@ -1,6 +1,12 @@
 import { featuresMatchMiddleware } from "../utils/userFeatures.js";
 
 export function requireVoiceEnabled(req, res, next) {
+  if (req.user?.mode === "campaign") {
+    return res.status(403).json({
+      error: "CALLING_DISABLED_FOR_PLAN",
+      code: "CALLING_DISABLED_FOR_PLAN",
+    });
+  }
   if (req.subscription?.voiceCallsEnabled === false) {
     return res.status(403).json({
       error: "Voice is not included on your current plan",
@@ -14,6 +20,38 @@ export function requireVoiceEnabled(req, res, next) {
     });
   }
   return next();
+}
+
+export function checkPlanAccess(feature) {
+  return (req, res, next) => {
+    if (!feature) return next();
+    const featureKey = String(feature).trim();
+    if (!featureKey) return next();
+    if (featureKey === "smsCampaignEnabled") {
+      if (!featuresMatchMiddleware(req.user, "campaign")) {
+        return res.status(403).json({
+          error: "FEATURE_NOT_AVAILABLE",
+          code: "FEATURE_NOT_AVAILABLE",
+        });
+      }
+      return next();
+    }
+    if (featureKey === "voiceEnabled") {
+      if (req.user?.mode === "campaign") {
+        return res.status(403).json({
+          error: "CALLING_DISABLED_FOR_PLAN",
+          code: "CALLING_DISABLED_FOR_PLAN",
+        });
+      }
+      if (!featuresMatchMiddleware(req.user, "voice")) {
+        return res.status(403).json({
+          error: "FEATURE_NOT_AVAILABLE",
+          code: "FEATURE_NOT_AVAILABLE",
+        });
+      }
+    }
+    return next();
+  };
 }
 
 export function requireCampaignEnabled(req, res, next) {

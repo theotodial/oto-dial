@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import API from '../../api';
 import { notifySubscriptionChanged } from '../../utils/subscriptionSync';
+import { SUPPORTED_COUNTRIES } from '../../utils/supportedCountries';
 
 function AdminUserDetail() {
   const navigate = useNavigate();
@@ -44,6 +45,8 @@ function AdminUserDetail() {
   const [hasMongoSubscription, setHasMongoSubscription] = useState(false);
   const [subscriptionPeriodEnd, setSubscriptionPeriodEnd] = useState('');
   const [featureSaving, setFeatureSaving] = useState(false);
+  const [allowedCallCountries, setAllowedCallCountries] = useState([]);
+  const [showCountriesDropdown, setShowCountriesDropdown] = useState(false);
 
   const userFeatures = user?.features || { voiceEnabled: true, campaignEnabled: false };
   const voiceFeatureOn = userFeatures.voiceEnabled !== false;
@@ -69,6 +72,19 @@ function AdminUserDetail() {
     } finally {
       setFeatureSaving(false);
     }
+  };
+
+  const availableCallingCountries = [...SUPPORTED_COUNTRIES].sort((a, b) =>
+    String(a.name || '').localeCompare(String(b.name || ''))
+  );
+
+  const toggleAllowedCallCountry = (countryCode) => {
+    setAllowedCallCountries((prev) => {
+      if (prev.includes(countryCode)) {
+        return prev.filter((code) => code !== countryCode);
+      }
+      return [...prev, countryCode];
+    });
   };
 
   useEffect(() => {
@@ -135,6 +151,8 @@ function AdminUserDetail() {
         setPackageBlockedCountries((nextCustomPackage?.blockedCountries || []).join(', '));
         setPackageCallsEnabled(nextCustomPackage ? nextCustomPackage.isCallEnabled !== false : true);
         setPackageSmsEnabled(nextCustomPackage ? nextCustomPackage.isSmsEnabled !== false : true);
+        const userAllowedCallCountries = response.data.user?.allowedCallCountries || [];
+        setAllowedCallCountries(userAllowedCallCountries);
       } else {
         setError('Failed to load user');
       }
@@ -642,6 +660,31 @@ function AdminUserDetail() {
     }
   };
 
+  const handleSaveAllowedCallCountries = async () => {
+    setActionLoading('calling-countries');
+    try {
+      const token = localStorage.getItem('adminToken');
+      const payload = {
+        allowedCountries: allowedCallCountries,
+      };
+      const response = await API.patch(`/api/admin/users/${id}/calling-countries`, payload, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.error) {
+        alert(response.error);
+      } else if (response.data?.success) {
+        await fetchUser();
+        alert(response.data.message || 'Allowed calling countries updated');
+      } else {
+        alert(response.data?.error || 'Failed to update allowed calling countries');
+      }
+    } catch (err) {
+      alert(err?.error || err?.response?.data?.error || 'Failed to update allowed calling countries');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex items-center justify-center">
@@ -768,6 +811,75 @@ function AdminUserDetail() {
                       onChange={(e) => handleFeaturesSave({ campaignEnabled: e.target.checked })}
                     />
                   </label>
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Calling Countries</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  Choose allowed outbound call countries. If none are selected, default policy (US, CA) is used.
+                </p>
+                <div className="space-y-3">
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowCountriesDropdown((prev) => !prev)}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white"
+                    >
+                      <span className="truncate text-left">
+                        {allowedCallCountries.length > 0
+                          ? `${allowedCallCountries.length} country${allowedCallCountries.length > 1 ? 'ies' : 'y'} selected`
+                          : 'No override selected (default US/CA)'}
+                      </span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">{showCountriesDropdown ? '▲' : '▼'}</span>
+                    </button>
+                    {showCountriesDropdown && (
+                      <div className="absolute z-30 mt-2 w-full max-h-64 overflow-y-auto rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg p-2">
+                        {availableCallingCountries.map((country) => {
+                          const checked = allowedCallCountries.includes(country.code);
+                          return (
+                            <label
+                              key={country.code}
+                              className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-100 dark:hover:bg-slate-700 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleAllowedCallCountry(country.code)}
+                                className="h-4 w-4 rounded border-gray-300"
+                              />
+                              <span className="text-sm">{country.flag}</span>
+                              <span className="text-sm text-gray-900 dark:text-white flex-1">{country.name}</span>
+                              <span className="text-xs text-gray-500 dark:text-gray-400">{country.code}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAllowedCallCountries(['US', 'CA'])}
+                      className="px-3 py-1.5 text-xs bg-gray-200 dark:bg-slate-700 text-gray-800 dark:text-gray-100 rounded-lg"
+                    >
+                      US/CA Default
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAllowedCallCountries([])}
+                      className="px-3 py-1.5 text-xs bg-gray-200 dark:bg-slate-700 text-gray-800 dark:text-gray-100 rounded-lg"
+                    >
+                      Clear Override
+                    </button>
+                  </div>
+                  <button
+                    onClick={handleSaveAllowedCallCountries}
+                    disabled={actionLoading === 'calling-countries'}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {actionLoading === 'calling-countries' ? 'Saving...' : 'Save Countries'}
+                  </button>
                 </div>
               </div>
 

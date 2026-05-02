@@ -41,7 +41,13 @@ export async function computeSmsCreditsUsed(userId, opts = {}) {
     user: normalizedUserId,
     $or: [
       { direction: "inbound" },
-      { direction: "outbound", status: { $nin: ["failed", "queued"] } },
+      {
+        direction: "outbound",
+        $or: [
+          { status: { $nin: ["failed", "queued"] } },
+          { moderationStatus: { $in: ["pending", "rejected"] } },
+        ],
+      },
     ],
   };
   if (excludeIds.length) {
@@ -77,7 +83,13 @@ export async function computeUsage(userId) {
           user: normalizedUserId,
           $or: [
             { direction: "inbound" },
-            { direction: "outbound", status: { $nin: ["failed", "queued"] } },
+            {
+              direction: "outbound",
+              $or: [
+                { status: { $nin: ["failed", "queued"] } },
+                { moderationStatus: { $in: ["pending", "rejected"] } },
+              ],
+            },
           ],
         },
       },
@@ -138,7 +150,13 @@ export async function computeUsageInWindow(userId, windowStart, windowEnd) {
           createdAt: { $gte: start, $lte: end },
           $or: [
             { direction: "inbound" },
-            { direction: "outbound", status: { $nin: ["failed", "queued"] } },
+            {
+              direction: "outbound",
+              $or: [
+                { status: { $nin: ["failed", "queued"] } },
+                { moderationStatus: { $in: ["pending", "rejected"] } },
+              ],
+            },
           ],
         },
       },

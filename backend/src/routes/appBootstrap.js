@@ -30,7 +30,9 @@ router.get("/bootstrap", async (req, res) => {
     });
 
     const [userDoc, latestSub] = await Promise.all([
-      User.findById(userId).select("_id name email isEmailVerified features preferences").lean(),
+      User.findById(userId)
+        .select("_id name email isEmailVerified features preferences mode allowedCallCountries")
+        .lean(),
       getLatestSubscription(userId),
     ]);
 
@@ -50,6 +52,10 @@ router.get("/bootstrap", async (req, res) => {
           preferences: {
             campaignMode: userDoc.preferences?.campaignMode === "pro" ? "pro" : "lite",
           },
+          mode: userDoc.mode === "campaign" ? "campaign" : "voice",
+          allowedCallCountries: Array.isArray(userDoc.allowedCallCountries)
+            ? userDoc.allowedCallCountries
+            : [],
         }
       : null;
 

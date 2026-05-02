@@ -84,7 +84,8 @@ router.get("/", requireAdmin, async (req, res) => {
         costPerSms: sms.costPerSms || sms.cost,
         carrierFees: sms.carrierFees || 0,
         totalCost: sms.cost || 0,
-        createdAt: sms.createdAt
+        createdAt: sms.createdAt,
+        deliveryError: sms.deliveryError || null,
       })),
       pagination: {
         page: parseInt(page),
@@ -139,7 +140,8 @@ router.get("/:id", requireAdmin, async (req, res) => {
         carrierFees: sms.carrierFees || 0,
         totalCost: sms.cost || 0,
         createdAt: sms.createdAt,
-        updatedAt: sms.updatedAt
+        updatedAt: sms.updatedAt,
+        deliveryError: sms.deliveryError || null,
       }
     });
   } catch (err) {

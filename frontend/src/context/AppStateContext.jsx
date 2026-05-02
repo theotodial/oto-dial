@@ -73,6 +73,7 @@ function normalizeUserFromLoginOrMe(u) {
     features: normalizeClientFeatures(u),
     preferences: normalizeClientPreferences(u),
     mode: u.mode === "campaign" ? "campaign" : "voice",
+    allowedCallCountries: Array.isArray(u.allowedCallCountries) ? u.allowedCallCountries : [],
   };
 }
 
@@ -280,20 +281,37 @@ export function AppStateProvider({ children }) {
 
     const onQueued = (p) => dispatchOutboundLifecycle("queued", p);
     const onSent = (p) => dispatchOutboundLifecycle("sent", p);
+    const onDelivered = (p) => dispatchOutboundLifecycle("delivered", p);
     const onFailed = (p) => dispatchOutboundLifecycle("failed", p);
+    const onStateResyncRequired = (payload) => {
+      if (payload?.userId && String(payload.userId) !== String(uid)) return;
+      requestBootstrapRefresh({
+        reason: payload?.reason || "state_resync_required",
+        preserveUiState: true,
+      });
+      window.dispatchEvent(
+        new CustomEvent("otodial:state-resync-required", {
+          detail: payload || {},
+        })
+      );
+    };
 
     socket.on("sms:queued", onQueued);
     socket.on("sms:sent", onSent);
+    socket.on("sms:delivered", onDelivered);
     socket.on("sms:failed", onFailed);
+    socket.on("state_resync_required", onStateResyncRequired);
 
     return () => {
       socket.off("sms:usage-updated", onUsage);
       socket.off("sms:queued", onQueued);
       socket.off("sms:sent", onSent);
+      socket.off("sms:delivered", onDelivered);
       socket.off("sms:failed", onFailed);
+      socket.off("state_resync_required", onStateResyncRequired);
       socket.disconnect();
     };
-  }, [user?._id, user?.id]);
+  }, [requestBootstrapRefresh, user?._id, user?.id]);
 
   const mergeUser = useCallback((partial) => {
     setUser((prev) => {

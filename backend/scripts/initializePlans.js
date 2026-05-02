@@ -18,7 +18,8 @@ import {
 } from "../src/constants/unlimitedPlan.js";
 import {
   SMS_CAMPAIGN_PLAN_TYPE,
-  SMS_CAMPAIGN_STRIPE_PRICE_ID
+  SMS_CAMPAIGN_STRIPE_PRICE_ID,
+  SMS_CAMPAIGN_1000_STRIPE_PRICE_ID
 } from "../src/constants/smsCampaignPlan.js";
 
 // Load environment variables
@@ -123,6 +124,26 @@ async function initializePlans() {
         limits: {
           minutesTotal: 0,
           smsTotal: 1700,
+          numbersTotal: 1
+        },
+        dedicatedNumbers: 1,
+        displayUnlimited: false,
+        adminOnly: false,
+        voiceCallsEnabled: false,
+        smsCampaignPlan: true,
+        active: true
+      },
+      {
+        type: "campaign",
+        name: "1000 SMS",
+        planName: "1000 SMS",
+        price: 70,
+        currency: "USD",
+        stripeProductId: "prod_Tj3I37A5KEUqJG",
+        stripePriceId: SMS_CAMPAIGN_1000_STRIPE_PRICE_ID,
+        limits: {
+          minutesTotal: 0,
+          smsTotal: 1000,
           numbersTotal: 1
         },
         dedicatedNumbers: 1,

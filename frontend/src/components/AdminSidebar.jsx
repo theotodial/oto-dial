@@ -23,6 +23,7 @@ const ChevronUpIcon = () => (
 
 const navItems = [
   { path: '/adminbobby/dashboard', label: 'Dashboard', role: 'dashboard' },
+  { path: '/adminbobby/system-health', label: 'System Health', role: 'dashboard' },
   { path: '/adminbobby/users', label: 'Users', role: 'users' },
   { path: '/adminbobby/affiliates', label: 'Affiliates', role: 'affiliates' },
   { path: '/adminbobby/notifications', label: 'Notifications', role: 'notifications' },

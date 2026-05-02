@@ -66,3 +66,12 @@ export function enqueueOutboundSms(job) {
 export function startSmsOutboundQueueWorker() {
   console.log(`[smsQueue] in-process queue ready (min gap ${MIN_GAP_MS}ms / user)`);
 }
+
+export function getSmsQueueStats() {
+  return {
+    depth: queue.length,
+    processing,
+    minGapMs: MIN_GAP_MS,
+    usersTracked: lastSentByUser.size,
+  };
+}

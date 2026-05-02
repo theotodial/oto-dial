@@ -27,6 +27,7 @@ function Billing() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [plans, setPlans] = useState([]);
+  const [planCategory, setPlanCategory] = useState('campaign');
   const [addonPlans, setAddonPlans] = useState([]);
   const [currentSubscription, setCurrentSubscription] = useState(null);
   const [buyingAddonId, setBuyingAddonId] = useState(null);
@@ -36,6 +37,12 @@ function Billing() {
   const [searchParams] = useSearchParams();
   const { user, isAuthenticated } = useAuth();
   const { subscription, usage, refreshSubscription } = useSubscription();
+
+  const isCampaignPlan = (plan) => {
+    if (!plan) return false;
+    const normalizedType = String(plan.type || '').toLowerCase();
+    return Boolean(plan.smsCampaignPlan) || normalizedType === 'campaign' || normalizedType === 'sms_campaign';
+  };
 
   useEffect(() => {
     setCurrentSubscription(subscription);
@@ -137,6 +144,8 @@ function Billing() {
             return {
               _id: plan._id,
               name: plan.name,
+              type: plan.type || null,
+              smsCampaignPlan: Boolean(plan.smsCampaignPlan),
               price: priceString,
               description: planMarketingDescription(plan),
               features: getPlanFeatureBullets(plan),
@@ -164,6 +173,7 @@ function Billing() {
         {
           _id: 'fallback-unlimited',
           name: 'Unlimited Call',
+          type: 'bundle',
           price: '39.99',
           description: 'Unlimited outbound calling for power users',
           features: getPlanFeatureBullets({
@@ -178,6 +188,7 @@ function Billing() {
         {
           _id: 'fallback-basic',
           name: 'Basic Plan',
+          type: 'bundle',
           price: '19.99',
           description: 'Perfect for individuals and small teams',
           features: getPlanFeatureBullets({
@@ -190,6 +201,7 @@ function Billing() {
         {
           _id: 'fallback-super',
           name: 'Super Plan',
+          type: 'bundle',
           price: '29.99',
           description: 'For growing businesses and power users',
           features: getPlanFeatureBullets({
@@ -369,7 +381,9 @@ function Billing() {
     );
   }
 
-  const effectivePlans = plans || [];
+  const effectivePlans = (plans || []).filter((plan) =>
+    planCategory === 'campaign' ? isCampaignPlan(plan) : !isCampaignPlan(plan)
+  );
   const defaultSelectedId =
     selectedPlan ||
     effectivePlans.find((p) => p.name === "Basic Plan")?._id ||
@@ -489,7 +503,7 @@ function Billing() {
                   Choose your plan
                 </h2>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  All plans include a free virtual number and secure Stripe billing.
+                  Pick a plan category first, then choose a subscription.
                 </p>
               </div>
               {activePlan && (
@@ -498,6 +512,31 @@ function Billing() {
                   Selected: {activePlan.name}
                 </div>
               )}
+            </div>
+
+            <div className="mb-5 inline-flex rounded-xl p-1 bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => setPlanCategory('campaign')}
+                className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors ${
+                  planCategory === 'campaign'
+                    ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm'
+                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200/70 dark:hover:bg-slate-700/60'
+                }`}
+              >
+                SMS Campaign Plans
+              </button>
+              <button
+                type="button"
+                onClick={() => setPlanCategory('bundle')}
+                className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-colors ${
+                  planCategory === 'bundle'
+                    ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm'
+                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200/70 dark:hover:bg-slate-700/60'
+                }`}
+              >
+                Call + SMS Plans
+              </button>
             </div>
 
             {/* Dropdown selector + active plan summary */}

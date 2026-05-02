@@ -1,5 +1,30 @@
 import { detectCountryFromPhoneNumber } from "../utils/countryUtils.js";
 import { getActiveCustomPackage, isCountryAllowedByPolicy } from "./customPackageService.js";
+import User from "../models/User.js";
+
+const DEFAULT_ALLOWED_CALL_COUNTRIES = ["US", "CA"];
+
+function normalizeCountryList(values = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => String(value || "").trim().toUpperCase())
+        .filter(Boolean)
+    )
+  );
+}
+
+async function getUserCallCountryPolicy(userId) {
+  const user = await User.findById(userId).select("allowedCallCountries").lean();
+  const configuredAllowedCountries = normalizeCountryList(user?.allowedCallCountries);
+  return {
+    configuredAllowedCountries,
+    effectiveAllowedCountries:
+      configuredAllowedCountries.length > 0
+        ? configuredAllowedCountries
+        : DEFAULT_ALLOWED_CALL_COUNTRIES,
+  };
+}
 
 export async function getEffectiveTelecomPolicy(userId) {
   const customPackage = await getActiveCustomPackage(userId);
@@ -21,9 +46,26 @@ export async function getEffectiveTelecomPolicy(userId) {
 }
 
 export async function enforceTelecomPolicy({ userId, channel, destinationNumber }) {
+  const userCallCountryPolicy = await getUserCallCountryPolicy(userId);
   const policy = await getEffectiveTelecomPolicy(userId);
+  const destinationCountry = detectCountryFromPhoneNumber(destinationNumber);
+
+  if (
+    channel === "call" &&
+    destinationCountry &&
+    !userCallCountryPolicy.effectiveAllowedCountries.includes(destinationCountry)
+  ) {
+    return {
+      allowed: false,
+      error: `Calling to ${destinationCountry} is disabled for this user. Allowed countries: ${userCallCountryPolicy.effectiveAllowedCountries.join(", ")}.`,
+      destinationCountry,
+      userCallCountryPolicy,
+      policy,
+    };
+  }
+
   if (!policy) {
-    return { allowed: true, policy: null };
+    return { allowed: true, destinationCountry, userCallCountryPolicy, policy: null };
   }
 
   if (channel === "call" && !policy.isCallEnabled) {
@@ -42,13 +84,13 @@ export async function enforceTelecomPolicy({ userId, channel, destinationNumber 
     };
   }
 
-  const destinationCountry = detectCountryFromPhoneNumber(destinationNumber);
   const countryCheck = isCountryAllowedByPolicy(destinationCountry, policy);
   if (!countryCheck.allowed) {
     return {
       allowed: false,
       error: countryCheck.error,
       destinationCountry,
+      userCallCountryPolicy,
       policy,
     };
   }
@@ -56,6 +98,7 @@ export async function enforceTelecomPolicy({ userId, channel, destinationNumber 
   return {
     allowed: true,
     destinationCountry,
+    userCallCountryPolicy,
     policy,
   };
 }

@@ -5,6 +5,10 @@ import { recordSmsCost } from "../../services/telnyxCostCalculator.js";
 import { processInboundSms } from "../../services/smsInboundProcessor.js";
 import { handleTelnyxMessagingLifecycle } from "../../services/telnyxMessagingLifecycleWebhook.js";
 import { buildSmsThreadKey, normalizeThreadPhone } from "../../utils/smsThreadKey.js";
+import {
+  claimWebhookEvent,
+  extractWebhookEnvelope,
+} from "../../agents/shared/webhookIdempotency.js";
 
 const INBOUND_OPT_OUT_KEYWORDS = new Set([
   "STOP",
@@ -36,6 +40,17 @@ const buildOwnedNumberCandidates = (rawTo) => {
  */
 router.post("/", async (req, res) => {
   try {
+    const envelope = extractWebhookEnvelope(req.body);
+    const claim = await claimWebhookEvent({
+      provider: "telnyx:sms",
+      eventId: envelope.eventId,
+      eventType: envelope.eventType,
+      payload: envelope.payload,
+    });
+    if (claim.duplicate) {
+      return res.json({ received: true, duplicate: true });
+    }
+
     const lifecycle = await handleTelnyxMessagingLifecycle(req);
     if (lifecycle.handled) {
       return res.json({ received: true });

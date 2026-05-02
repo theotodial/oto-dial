@@ -8,7 +8,8 @@ import {
 } from "../constants/unlimitedPlan.js";
 import {
   SMS_CAMPAIGN_PLAN_TYPE,
-  SMS_CAMPAIGN_STRIPE_PRICE_ID
+  SMS_CAMPAIGN_STRIPE_PRICE_ID,
+  SMS_CAMPAIGN_STRIPE_PRICE_IDS
 } from "../constants/smsCampaignPlan.js";
 
 export const STRIPE_PLAN_PRICE_IDS = {
@@ -111,7 +112,10 @@ export function getCanonicalAddonPriceId(addon) {
 }
 
 export function getCanonicalPlanKeyFromPriceId(priceId) {
-  if (priceId === STRIPE_PLAN_PRICE_IDS[SMS_CAMPAIGN_PLAN_TYPE]) {
+  if (
+    priceId === STRIPE_PLAN_PRICE_IDS[SMS_CAMPAIGN_PLAN_TYPE] ||
+    SMS_CAMPAIGN_STRIPE_PRICE_IDS.includes(priceId)
+  ) {
     return SMS_CAMPAIGN_PLAN_TYPE;
   }
   if (priceId === STRIPE_PLAN_PRICE_IDS[AFFILIATE_UNLIMITED_PLAN_TYPE]) {

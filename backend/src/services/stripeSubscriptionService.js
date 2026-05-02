@@ -14,7 +14,10 @@ import {
   isKnownAddonPriceId,
   STRIPE_PLAN_PRICE_IDS
 } from "../config/stripeCatalog.js";
-import { SMS_CAMPAIGN_PLAN_TYPE } from "../constants/smsCampaignPlan.js";
+import {
+  SMS_CAMPAIGN_PLAN_TYPE,
+  SMS_CAMPAIGN_STRIPE_PRICE_IDS
+} from "../constants/smsCampaignPlan.js";
 import {
   applyPlanSnapshotToSubscription
 } from "./subscriptionPlanSnapshotService.js";
@@ -271,6 +274,7 @@ async function resolvePlan({
       $or: [
         { type: SMS_CAMPAIGN_PLAN_TYPE },
         { stripePriceId: STRIPE_PLAN_PRICE_IDS[SMS_CAMPAIGN_PLAN_TYPE] },
+        { stripePriceId: { $in: SMS_CAMPAIGN_STRIPE_PRICE_IDS } },
         { smsCampaignPlan: true }
       ],
       active: true

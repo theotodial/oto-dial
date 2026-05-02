@@ -1,5 +1,6 @@
 export const ADMIN_ACCESS_AREAS = [
   "dashboard",
+  "system_health",
   "users",
   "affiliates",
   "notifications",
@@ -17,6 +18,7 @@ export const ADMIN_ACCESS_AREAS = [
 
 export const ADMIN_ACCESS_LABELS = {
   dashboard: "Dashboard",
+  system_health: "System Health",
   users: "Users",
   affiliates: "Affiliates",
   notifications: "Notifications",
@@ -34,6 +36,7 @@ export const ADMIN_ACCESS_LABELS = {
 
 const DEFAULT_PATH_BY_ROLE = {
   dashboard: "/adminbobby/dashboard",
+  system_health: "/adminbobby/system-health",
   users: "/adminbobby/users",
   affiliates: "/adminbobby/affiliates",
   notifications: "/adminbobby/notifications",
@@ -103,6 +106,7 @@ export const getRequiredRoleForAdminPath = (pathname = "") => {
   if (!pathname.startsWith("/adminbobby")) return null;
 
   if (pathname.startsWith("/adminbobby/dashboard")) return "dashboard";
+  if (pathname.startsWith("/adminbobby/system-health")) return "dashboard";
   if (pathname.startsWith("/adminbobby/users")) return "users";
   if (pathname.startsWith("/adminbobby/affiliates")) return "affiliates";
   if (pathname.startsWith("/adminbobby/notifications")) return "notifications";
@@ -129,6 +133,7 @@ export const canAccessAdminPath = (pathname, adminProfile) => {
 export const getFirstAccessibleAdminPath = (adminProfile) => {
   const priority = [
     "dashboard",
+    "system_health",
     "support",
     "analytics",
     "site_builder",

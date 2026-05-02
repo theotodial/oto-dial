@@ -80,7 +80,7 @@ export async function bridgeParkedWebRtcToPstn({
   pstnCallControlId,
   apiKey,
 }) {
-  await axios.post(
+  const response = await axios.post(
     `${TELNYX_API}/calls/${encodeURIComponent(agentCallControlId)}/actions/bridge`,
     { call_control_id: String(pstnCallControlId) },
     {
@@ -90,5 +90,5 @@ export async function bridgeParkedWebRtcToPstn({
       },
     }
   );
-  return { ok: true };
+  return { ok: true, raw: response?.data ?? null };
 }

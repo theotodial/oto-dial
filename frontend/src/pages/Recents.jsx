@@ -12,6 +12,7 @@ import { threadMatchesPeerPhone } from '../utils/phoneThreadMatch';
 import { OTODIAL_SMS_OUTBOUND_EVENT } from '../constants/smsOutboundEvents';
 import { loadSmsFavorites, addSmsFavorite, removeSmsFavorite } from '../utils/smsFavoritesStorage';
 import { loadArchivedPhones, archiveSmsChat, unarchiveSmsChat } from '../utils/smsChatArchiveStorage';
+import { getDialCountriesForUser } from '../utils/callingCountries';
 
 const ClockIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -313,24 +314,16 @@ function Recents() {
   const pushSubscribeAttemptedRef = useRef(false);
 
   // Simple dialer country list (shared for desktop + mobile)
-  const dialCountries = [
-    { code: '+1', name: 'United States', flag: '🇺🇸' },
-    { code: '+44', name: 'United Kingdom', flag: '🇬🇧' },
-    { code: '+47', name: 'Norway', flag: '🇳🇴' },
-    { code: '+46', name: 'Sweden', flag: '🇸🇪' },
-    { code: '+45', name: 'Denmark', flag: '🇩🇰' },
-    { code: '+49', name: 'Germany', flag: '🇩🇪' },
-    { code: '+33', name: 'France', flag: '🇫🇷' },
-    { code: '+39', name: 'Italy', flag: '🇮🇹' },
-    { code: '+34', name: 'Spain', flag: '🇪🇸' },
-    { code: '+61', name: 'Australia', flag: '🇦🇺' },
-    { code: '+81', name: 'Japan', flag: '🇯🇵' },
-    { code: '+82', name: 'South Korea', flag: '🇰🇷' },
-    { code: '+92', name: 'Pakistan', flag: '🇵🇰' },
-    { code: '+91', name: 'India', flag: '🇮🇳' },
-    { code: '+27', name: 'South Africa', flag: '🇿🇦' },
-    { code: '+263', name: 'Zimbabwe', flag: '🇿🇼' }
-  ];
+  const dialCountries = useMemo(
+    () => getDialCountriesForUser(user?.allowedCallCountries),
+    [user?.allowedCallCountries]
+  );
+
+  useEffect(() => {
+    if (!dialCountries.some((country) => country.code === dialCountryCode)) {
+      setDialCountryCode(dialCountries[0]?.code || '+1');
+    }
+  }, [dialCountries, dialCountryCode]);
 
   const onThreadMessagesScroll = useCallback((e) => {
     const el = e.currentTarget;
@@ -1375,7 +1368,7 @@ function Recents() {
         return;
       }
       notifySubscriptionChanged();
-      showActionToast('Sent');
+      showActionToast('Message queued for sending');
       await Promise.all([fetchRecents(false), refreshSubscription()]);
       if (selectedChat && normPhone(selectedChat) === normPhone(peerPhone)) {
         await fetchChatMessages(peerPhone);

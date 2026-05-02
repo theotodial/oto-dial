@@ -179,6 +179,18 @@ const userSchema = new mongoose.Schema(
       default: null
     },
 
+    /** When true, outbound SMS after warmup must be admin-approved (silent to user). */
+    smsApprovalFlag: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    /** While flagged: first N outbound messages skip moderation (atomic decrement per send). */
+    smsApprovalWarmupRemaining: {
+      type: Number,
+      default: 5,
+    },
+
     // Email verification (email/password signups). Legacy users may omit this field.
     isEmailVerified: {
       type: Boolean,
@@ -237,6 +249,17 @@ const userSchema = new mongoose.Schema(
         type: Boolean,
         default: false,
       },
+    },
+    allowedCallCountries: {
+      type: [String],
+      default: [],
+    },
+
+    mode: {
+      type: String,
+      enum: ["voice", "campaign"],
+      default: "voice",
+      index: true
     },
 
     /** UI preferences (non-billing) */

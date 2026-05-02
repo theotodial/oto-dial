@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import API from '../api';
 import { useCall } from '../context/CallContext';
 import { useSubscription } from '../context/SubscriptionContext';
+import { useAuth } from '../context/AuthContext';
+import { getDialCountriesForUser } from '../utils/callingCountries';
 
 const PhoneIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -42,6 +44,7 @@ function Dialer() {
   } = useCall();
 
   const { subscription } = useSubscription();
+  const { user } = useAuth();
   const canUseService = Boolean(subscription?.id ?? subscription?._id);
   const billingUiActive = Boolean(subscription?.isActive ?? subscription?.active);
   const isManuallyEnabled = Boolean(
@@ -51,24 +54,16 @@ function Dialer() {
   );
   const subscriptionUsable = billingUiActive || isManuallyEnabled;
 
-  const dialCountries = [
-    { code: '+1', name: 'United States', flag: '🇺🇸' },
-    { code: '+44', name: 'United Kingdom', flag: '🇬🇧' },
-    { code: '+47', name: 'Norway', flag: '🇳🇴' },
-    { code: '+46', name: 'Sweden', flag: '🇸🇪' },
-    { code: '+45', name: 'Denmark', flag: '🇩🇰' },
-    { code: '+49', name: 'Germany', flag: '🇩🇪' },
-    { code: '+33', name: 'France', flag: '🇫🇷' },
-    { code: '+39', name: 'Italy', flag: '🇮🇹' },
-    { code: '+34', name: 'Spain', flag: '🇪🇸' },
-    { code: '+61', name: 'Australia', flag: '🇦🇺' },
-    { code: '+81', name: 'Japan', flag: '🇯🇵' },
-    { code: '+82', name: 'South Korea', flag: '🇰🇷' },
-    { code: '+92', name: 'Pakistan', flag: '🇵🇰' },
-    { code: '+91', name: 'India', flag: '🇮🇳' },
-    { code: '+27', name: 'South Africa', flag: '🇿🇦' },
-    { code: '+263', name: 'Zimbabwe', flag: '🇿🇼' },
-  ];
+  const dialCountries = useMemo(
+    () => getDialCountriesForUser(user?.allowedCallCountries),
+    [user?.allowedCallCountries]
+  );
+
+  useEffect(() => {
+    if (!dialCountries.some((country) => country.code === dialCountryCode)) {
+      setDialCountryCode(dialCountries[0]?.code || '+1');
+    }
+  }, [dialCountries, dialCountryCode]);
 
   // Handle dialpad button clicks
   const handleDialpadClick = (digit) => {

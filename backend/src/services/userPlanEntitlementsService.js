@@ -11,8 +11,10 @@ export async function applyUserEntitlementsForPlan(userId, plan) {
     updates["features.voiceEnabled"] = false;
     updates["features.campaignEnabled"] = true;
     updates["preferences.campaignMode"] = "pro";
+    updates.mode = "campaign";
   } else if (plan.voiceCallsEnabled !== false) {
     updates["features.voiceEnabled"] = true;
+    updates.mode = "voice";
   }
 
   if (Object.keys(updates).length === 0) return;

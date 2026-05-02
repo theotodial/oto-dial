@@ -189,7 +189,11 @@ export async function ensureStripeCatalogConsistency() {
 
 /** Ensures SMS Campaign plan exists for admin + public catalog (Mongo is source of truth). */
 export async function ensureAdminAssignableInternalPlans() {
-  const { SMS_CAMPAIGN_PLAN_TYPE, SMS_CAMPAIGN_STRIPE_PRICE_ID } = await import(
+  const {
+    SMS_CAMPAIGN_PLAN_TYPE,
+    SMS_CAMPAIGN_STRIPE_PRICE_ID,
+    SMS_CAMPAIGN_1000_STRIPE_PRICE_ID
+  } = await import(
     "../constants/smsCampaignPlan.js"
   );
   const spec = {
@@ -226,6 +230,38 @@ export async function ensureAdminAssignableInternalPlans() {
   await Plan.findOneAndUpdate(
     filter,
     { $set: spec },
+    { upsert: true, new: true, runValidators: true }
+  );
+
+  await Plan.findOneAndUpdate(
+    {
+      $or: [
+        { name: "1000 SMS" },
+        { stripePriceId: SMS_CAMPAIGN_1000_STRIPE_PRICE_ID }
+      ]
+    },
+    {
+      $set: {
+        type: "campaign",
+        name: "1000 SMS",
+        planName: "1000 SMS",
+        price: 70,
+        currency: "USD",
+        limits: {
+          minutesTotal: 0,
+          smsTotal: 1000,
+          numbersTotal: 1
+        },
+        dedicatedNumbers: 1,
+        displayUnlimited: false,
+        adminOnly: false,
+        voiceCallsEnabled: false,
+        smsCampaignPlan: true,
+        active: true,
+        stripeProductId: "prod_Tj3I37A5KEUqJG",
+        stripePriceId: SMS_CAMPAIGN_1000_STRIPE_PRICE_ID
+      }
+    },
     { upsert: true, new: true, runValidators: true }
   );
   return { ok: true };

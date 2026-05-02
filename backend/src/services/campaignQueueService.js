@@ -66,23 +66,76 @@ export function initCampaignQueue(processor) {
 
 export async function enqueueCampaignJob(campaignId, userId) {
   if (!campaignQueue) return false;
+  const jobId = `campaign-${String(campaignId)}`;
   try {
+    const existing = await campaignQueue.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === "failed" || state === "completed") {
+        await existing.remove();
+      } else {
+        return true;
+      }
+    }
+
     await campaignQueue.add(
       "run",
       { campaignId: String(campaignId), userId: String(userId) },
       {
-        jobId: `campaign-${String(campaignId)}`,
+        jobId,
         attempts: 1,
       }
     );
     return true;
   } catch (e) {
     if (String(e?.message || "").includes("already exists")) {
-      return true;
+      try {
+        const existing = await campaignQueue.getJob(jobId);
+        const state = existing ? await existing.getState() : null;
+        if (state === "failed" || state === "completed") {
+          await existing.remove();
+          await campaignQueue.add(
+            "run",
+            { campaignId: String(campaignId), userId: String(userId) },
+            { jobId, attempts: 1 }
+          );
+        }
+        return true;
+      } catch (retryErr) {
+        console.warn("[campaign-queue] duplicate recovery failed, falling back:", retryErr?.message || retryErr);
+        return false;
+      }
     }
     console.warn("[campaign-queue] enqueue failed, falling back:", e?.message || e);
     return false;
   }
+}
+
+export async function getCampaignQueueHealth() {
+  if (!campaignQueue) {
+    return { available: false, waiting: 0, active: 0, delayed: 0, failed: 0, completed: 0 };
+  }
+  const counts = await campaignQueue.getJobCounts("waiting", "active", "delayed", "failed", "completed");
+  return { available: true, ...counts };
+}
+
+export async function recoverCampaignQueue() {
+  if (!campaignQueue) return { recovered: 0, quarantined: 0, available: false };
+  const failedJobs = await campaignQueue.getJobs(["failed"], 0, 25, true);
+  let recovered = 0;
+  let quarantined = 0;
+  for (const job of failedJobs) {
+    const failedAt = Number(job.failedReason ? job.finishedOn || 0 : 0);
+    const ageMs = failedAt ? Date.now() - failedAt : 0;
+    if (ageMs && ageMs < 30_000) continue;
+    try {
+      await job.retry();
+      recovered += 1;
+    } catch {
+      quarantined += 1;
+    }
+  }
+  return { recovered, quarantined, available: true };
 }
 
 export async function closeCampaignQueue() {

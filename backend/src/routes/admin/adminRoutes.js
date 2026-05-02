@@ -10,6 +10,7 @@ import adminUsers from "./adminUsers.js";
 import adminActions from "./adminActions.js";
 import adminCalls from "./adminCalls.js";
 import adminSms from "./adminSms.js";
+import adminSmsApproval from "./adminSmsApproval.js";
 import adminNumbers from "./adminNumbers.js";
 import adminSupport from "./adminSupport.js";
 import adminAnalyticsTimeSeries from "./adminAnalyticsTimeSeries.js";
@@ -24,6 +25,7 @@ import adminAffiliates from "./adminAffiliates.js";
 import adminNotifications from "./adminNotifications.js";
 import Plan from "../../models/Plan.js";
 import adminSite from "./adminSite.js";
+import adminSystemHealth from "./adminSystemHealth.js";
 
 const router = express.Router();
 
@@ -43,9 +45,11 @@ router.use("/users", adminUsersUpdate);
 
 // Admin actions (subscription, telnyx controls)
 router.use("/actions", adminActions);
+router.use("/system-health", adminSystemHealth);
 
 // Drill-down pages
 router.use("/calls", adminCalls);
+router.use("/sms/approval", adminSmsApproval);
 router.use("/sms", adminSms);
 router.use("/numbers", adminNumbers);
 router.use("/support", adminSupport);

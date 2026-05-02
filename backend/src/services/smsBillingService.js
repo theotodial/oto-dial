@@ -147,15 +147,23 @@ const billingQueues = new Map();
 function runBillingSerialized(userId, fn) {
   const key = String(userId);
   const prev = billingQueues.get(key) || Promise.resolve();
-  const next = prev.then(() => fn()).catch((err) => {
-    console.error("[smsBilling] serialized task failed:", err?.message || err);
-  });
-  billingQueues.set(
-    key,
-    next.finally(() => {
-      if (billingQueues.get(key) === next) billingQueues.delete(key);
+  const next = prev
+    .catch(() => {
+      /* keep this user's billing queue moving after a previous failure */
     })
-  );
+    .then(() => fn())
+    .catch((err) => {
+      console.error("[smsBilling] serialized task failed:", err?.message || err);
+      throw err;
+    });
+  const cleanup = next
+    .finally(() => {
+      if (billingQueues.get(key) === cleanup) billingQueues.delete(key);
+    })
+    .catch(() => {
+      /* callers receive the original rejection via `next` */
+    });
+  billingQueues.set(key, cleanup);
   return next;
 }
 
@@ -372,15 +380,11 @@ export async function applySmsDeduction(userId, messageId, message, options = {}
       await finalizeReservationIfNeeded();
     };
 
-    const runCore = async (session) => {
+    const computeBilledParts = async (actualParts, session) => {
       const subscription = await Subscription.findOne({ userId: uid }).sort({ createdAt: -1 }).lean();
       const unlimited = subscription && isUnlimitedSubscription(subscription);
 
-      /** Actual segmentation count (Telnyx-style). */
-      const actualParts = smsParts;
-      /** Charged units for quota (future: promos / pricing); today equals capped actual. */
       let billedParts = actualParts;
-
       if (!unlimited) {
         const canonical = await getCanonicalUsage(uid, subscription);
         const smsLimit = Math.max(0, Number(canonical?.smsLimit ?? 0));
@@ -388,10 +392,18 @@ export async function applySmsDeduction(userId, messageId, message, options = {}
         const remaining = Math.max(0, smsLimit - used);
         billedParts = Math.min(actualParts, remaining);
       }
+      return billedParts;
+    };
+
+    const runCore = async (session) => {
+      /** Actual segmentation count (Telnyx-style). */
+      const actualParts = smsParts;
+      /** Charged units for quota (future: promos / pricing); today equals capped actual. */
+      const billedParts = await computeBilledParts(actualParts, session);
 
       billingSnapshot = { actualParts, billedParts };
 
-      await SMS.updateOne(
+      const smsUpdate = await SMS.updateOne(
         { _id: oid, user: uid, direction },
         {
           $set: {
@@ -403,6 +415,10 @@ export async function applySmsDeduction(userId, messageId, message, options = {}
         },
         session ? { session } : {}
       );
+      if (!smsUpdate.matchedCount) {
+        billingSnapshot = null;
+        throw new Error("sms_billing_target_missing");
+      }
 
       try {
         await User.updateOne(
@@ -427,29 +443,34 @@ export async function applySmsDeduction(userId, messageId, message, options = {}
           ? precomputed.characters
           : sanitizeMessage(String(message ?? "")).length;
 
+      const billedPartsFbNum = await computeBilledParts(smsPartsFbNum, null);
+
       console.warn("[smsBilling] SMS billing fallback triggered", {
         userId: String(uid),
         messageId: String(oid),
         messageLength: String(message ?? "").length,
         smsParts: smsPartsFbNum,
-        costDeducted: smsPartsFbNum,
+        costDeducted: billedPartsFbNum,
       });
 
       try {
-        await SMS.updateOne(
+        const fallbackUpdate = await SMS.updateOne(
           { _id: oid, user: uid, direction },
           {
             $set: {
               "smsCostInfo.smsParts": smsPartsFbNum,
               "smsCostInfo.encoding": encFb,
               "smsCostInfo.characters": charsFb,
-              "smsCostInfo.costDeducted": smsPartsFbNum,
+              "smsCostInfo.costDeducted": billedPartsFbNum,
             },
           }
         );
-        billingSnapshot = { actualParts: smsPartsFbNum, billedParts: smsPartsFbNum };
+        if (!fallbackUpdate.matchedCount) {
+          throw new Error("sms_billing_target_missing");
+        }
+        billingSnapshot = { actualParts: smsPartsFbNum, billedParts: billedPartsFbNum };
         try {
-          await User.updateOne({ _id: uid }, { $inc: { smsUsed: smsPartsFbNum } });
+          await User.updateOne({ _id: uid }, { $inc: { smsUsed: billedPartsFbNum } });
         } catch (userErr) {
           console.warn(
             "[smsBilling] User.smsUsed fallback increment skipped:",
@@ -461,6 +482,7 @@ export async function applySmsDeduction(userId, messageId, message, options = {}
           "[smsBilling] fallback smsCostInfo persist failed:",
           fallbackErr?.message || fallbackErr
         );
+        throw fallbackErr;
       }
     };
 

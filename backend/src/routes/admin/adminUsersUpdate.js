@@ -7,6 +7,7 @@ import { clearAdminUsersCache } from "../../services/adminUsersCacheService.js";
 import { cacheKeys, deleteCachedKey } from "../../services/cache.service.js";
 import { invalidateUserSubscriptionCache } from "../../services/subscriptionService.js";
 import { sanitizeCustomPackageInput } from "../../services/customPackageService.js";
+import { isCountrySupported } from "../../utils/countryUtils.js";
 
 const router = express.Router();
 
@@ -321,6 +322,125 @@ router.put("/:id/custom-package", requireAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       error: err.message || "Failed to save custom package"
+    });
+  }
+});
+
+/**
+ * PATCH /api/admin/users/:id/sms-approval
+ * Body: { flagged: boolean, resetWarmup?: boolean } — when enabling, resets warmup to 5 by default.
+ */
+router.patch("/:id/sms-approval", requireAdmin, async (req, res) => {
+  try {
+    const flagged = req.body?.flagged === true || req.body?.flagged === "true";
+    const resetWarmup = req.body?.resetWarmup !== false;
+
+    const update = flagged
+      ? {
+          smsApprovalFlag: true,
+          ...(resetWarmup ? { smsApprovalWarmupRemaining: 5 } : {}),
+        }
+      : { smsApprovalFlag: false };
+
+    const user = await User.findByIdAndUpdate(req.params.id, { $set: update }, { new: true }).select(
+      "-password"
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+
+    await AdminLog.create({
+      adminId: req.user._id,
+      userId: req.params.id,
+      action: flagged ? "SMS_APPROVAL_FLAG_ON" : "SMS_APPROVAL_FLAG_OFF",
+      payload: { resetWarmup: Boolean(resetWarmup) },
+    });
+
+    clearAdminUsersCache();
+    res.json({
+      success: true,
+      message: flagged
+        ? "User flagged for SMS approval review (warm-up messages apply)."
+        : "SMS approval flag removed",
+      user,
+    });
+  } catch (err) {
+    console.error("PATCH sms-approval error:", err);
+    res.status(500).json({ success: false, error: err.message || "Update failed" });
+  }
+});
+
+/**
+ * PATCH /api/admin/users/:id/calling-countries
+ * Body: { allowedCountries: string[] | "US,CA,GB" }
+ * Empty list means fallback to default US/CA policy.
+ */
+router.patch("/:id/calling-countries", requireAdmin, async (req, res) => {
+  try {
+    const rawAllowedCountries = req.body?.allowedCountries;
+    const normalizedAllowedCountries = Array.from(
+      new Set(
+        (Array.isArray(rawAllowedCountries)
+          ? rawAllowedCountries
+          : String(rawAllowedCountries || "")
+              .split(",")
+              .map((value) => value.trim())
+        )
+          .map((value) => String(value || "").trim().toUpperCase())
+          .filter(Boolean)
+      )
+    );
+
+    const invalidCountries = normalizedAllowedCountries.filter(
+      (countryCode) => !isCountrySupported(countryCode)
+    );
+    if (invalidCountries.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Unsupported country codes: ${invalidCountries.join(", ")}`,
+      });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { $set: { allowedCallCountries: normalizedAllowedCountries } },
+      { new: true }
+    ).select("-password");
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+
+    await AdminLog.create({
+      adminId: req.user._id,
+      userId: req.params.id,
+      action: "CALLING_COUNTRIES_UPDATED",
+      payload: {
+        allowedCallCountries: normalizedAllowedCountries,
+      },
+    });
+
+    await deleteCachedKey(cacheKeys.userProfile(req.params.id));
+    clearAdminUsersCache();
+    return res.json({
+      success: true,
+      message:
+        normalizedAllowedCountries.length > 0
+          ? "Allowed calling countries updated"
+          : "Allowed calling countries reset to default (US/CA)",
+      allowedCallCountries: normalizedAllowedCountries,
+      effectiveAllowedCallCountries:
+        normalizedAllowedCountries.length > 0
+          ? normalizedAllowedCountries
+          : ["US", "CA"],
+      user,
+    });
+  } catch (err) {
+    console.error("Update allowed calling countries error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to update allowed calling countries",
     });
   }
 });

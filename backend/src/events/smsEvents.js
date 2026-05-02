@@ -109,8 +109,8 @@ export function emitSmsUpdated(userId, messageId, direction) {
 }
 
 /**
- * Outbound lifecycle for UI: queued → sent | failed
- * @param {"queued"|"sent"|"failed"} phase
+ * Outbound lifecycle for UI: queued → sent → delivered | failed
+ * @param {"queued"|"sent"|"delivered"|"failed"} phase
  * @param {{ mongoId?: string, messageId?: string, error?: string }} detail
  */
 export function emitSmsOutboundLifecycle(userId, phase, detail = {}) {
@@ -118,11 +118,31 @@ export function emitSmsOutboundLifecycle(userId, phase, detail = {}) {
   const nsp = userNamespace();
   if (!nsp) return;
   const event =
-    phase === "queued" ? "sms:queued" : phase === "sent" ? "sms:sent" : "sms:failed";
+    phase === "queued"
+      ? "sms:queued"
+      : phase === "sent"
+        ? "sms:sent"
+        : phase === "delivered"
+          ? "sms:delivered"
+          : "sms:failed";
   const payload = {
     userId: String(userId),
     ...detail,
   };
   nsp.to(`user:${String(userId)}`).emit(event, payload);
   smsEventBus.emit(event, payload);
+}
+
+export function emitUserStateResyncRequired(userId, detail = {}) {
+  if (!userId) return;
+  const nsp = userNamespace();
+  if (!nsp) return;
+  const payload = {
+    userId: String(userId),
+    reason: detail.reason || "state_reconcile",
+    at: new Date().toISOString(),
+    ...detail,
+  };
+  nsp.to(`user:${String(userId)}`).emit("state_resync_required", payload);
+  smsEventBus.emit("state_resync_required", payload);
 }
