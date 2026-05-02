@@ -1,3 +1,5 @@
+import { emitAdminThrottleEvent } from "./adminLiveEventsService.js";
+
 const buckets = globalThis.__otoDialUsageRateLimits || new Map();
 
 if (!globalThis.__otoDialUsageRateLimits) {
@@ -6,12 +8,12 @@ if (!globalThis.__otoDialUsageRateLimits) {
 
 function getWindowConfig(channel) {
   if (channel === "call") {
-    return { limit: 10, windowMs: 60_000 };
+    return { limit: 28, windowMs: 60_000 };
   }
   if (channel === "sms") {
-    return { limit: 20, windowMs: 60_000 };
+    return { limit: 45, windowMs: 60_000 };
   }
-  return { limit: 10, windowMs: 60_000 };
+  return { limit: 28, windowMs: 60_000 };
 }
 
 export function enforceUsageRateLimit({ userId, channel }) {
@@ -28,8 +30,30 @@ export function enforceUsageRateLimit({ userId, channel }) {
   row.count += 1;
   buckets.set(key, row);
 
+  const allowed = row.count <= limit;
+  if (!allowed && userId) {
+    console.warn("[usageRateLimit] soft cap exceeded (429, no account lock)", {
+      userId: String(userId),
+      channel,
+      count: row.count,
+      limit,
+    });
+    try {
+      emitAdminThrottleEvent({
+        kind: "usage_rate_limit",
+        userId: String(userId),
+        channel,
+        count: row.count,
+        limit,
+        retryAfterMs: Math.max(0, row.resetAt - now),
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
   return {
-    allowed: row.count <= limit,
+    allowed,
     limit,
     remaining: Math.max(0, limit - row.count),
     retryAfterMs: Math.max(0, row.resetAt - now),

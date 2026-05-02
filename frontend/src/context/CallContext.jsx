@@ -188,6 +188,40 @@ const TELNYX_FAIL_HINTS = {
     'The number does not exist or is not complete. US/Canada numbers must be +1 followed by exactly 10 digits (e.g. +16465550100). Check for a missing digit or wrong country code.',
 };
 
+/** User-facing end states before falling back to raw Telnyx causes */
+function mapOutboundHangupUserMessage({
+  causeNorm,
+  causeCode,
+  hadAnswered,
+  sawRinging,
+}) {
+  if (hadAnswered) return null;
+  if (
+    causeNorm === 'RECOVERY_ON_TIMER_EXPIRE' ||
+    causeNorm === 'INTERWORKING' ||
+    causeNorm === 'NETWORK_OUT_OF_ORDER'
+  ) {
+    return 'Carrier timeout';
+  }
+  const busy = new Set(['USER_BUSY', 'BUSY']);
+  const noAnswer = new Set(['NO_ANSWER', 'NO_USER_RESPONSE', 'SUBSCRIBER_ABSENT', 'ALLOTTED_TIMEOUT']);
+  const reject = new Set(['CALL_REJECTED', 'DECLINE']);
+  if (busy.has(causeNorm)) return 'Busy';
+  if (noAnswer.has(causeNorm)) return 'No answer';
+  if (reject.has(causeNorm)) return 'Call declined';
+  if (causeNorm === 'ORIGINATOR_CANCEL' || causeNorm === 'ORIGINATOR_CANCELLED') {
+    return 'Canceled';
+  }
+  const q = Number(causeCode);
+  if (Number.isFinite(q)) {
+    if (q === 486 || q === 600) return 'Busy';
+    if (q === 487 || q === 408) return 'No answer';
+    if (q === 603) return 'Call declined';
+  }
+  if (!sawRinging && causeNorm === 'NORMAL_CLEARING') return 'Call ended';
+  return null;
+}
+
 /** ITU E.164 — same idea as backend `validateE164`; NANP (+1…) must be exactly 10 digits after the country code. */
 function validateE164(number) {
   const s = String(number ?? '')
@@ -302,6 +336,7 @@ export const useCall = () => {
       expandCall: () => {},
       callingMode: "webrtc",
       CALL_STATES,
+      callPhaseLabel: null,
       isInCall: false,
       isRinging: false,
       isActive: false,
@@ -322,6 +357,7 @@ export const CallProvider = ({ children }) => {
   const [remoteNumber, setRemoteNumber] = useState('');
   const [incomingCall, setIncomingCall] = useState(null);
   const [error, setError] = useState(null);
+  const [callPhaseLabel, setCallPhaseLabel] = useState(null);
   const [isClientReady, setIsClientReady] = useState(false);
   const [credentials, setCredentials] = useState(null);
   const latestWebrtcCredsRef = useRef(null);
@@ -560,12 +596,22 @@ export const CallProvider = ({ children }) => {
           wasActive,
         });
         if (terminalStatus === 'failed' && hangupCauseDb) {
-          userVisibleFailMessage = `Call failed: ${hangupCauseDb}${
-            hangupCauseCodeDb ? ` (${hangupCauseCodeDb})` : ''
-          }`;
+          const friendly = mapOutboundHangupUserMessage({
+            causeNorm,
+            causeCode: hangupCauseCodeDb,
+            hadAnswered,
+            sawRinging,
+          });
           const hint = TELNYX_FAIL_HINTS[causeNorm];
-          if (hint) {
-            userVisibleFailMessage = `${userVisibleFailMessage}\n\n${hint}`;
+          if (friendly) {
+            userVisibleFailMessage = hint ? `${friendly}\n\n${hint}` : friendly;
+          } else {
+            userVisibleFailMessage = `Call failed: ${hangupCauseDb}${
+              hangupCauseCodeDb ? ` (${hangupCauseCodeDb})` : ''
+            }`;
+            if (hint) {
+              userVisibleFailMessage = `${userVisibleFailMessage}\n\n${hint}`;
+            }
           }
         }
         void API.patch(`/api/calls/${oid}`, {
@@ -639,6 +685,7 @@ export const CallProvider = ({ children }) => {
         }
         setIncomingCall(null);
         setIsMinimized(false);
+        setCallPhaseLabel(null);
         handledIncomingCallIdsRef.current.clear();
         handledTerminalCallIdsRef.current.clear();
         manualHangupRef.current = false;
@@ -670,6 +717,54 @@ export const CallProvider = ({ children }) => {
       }
     }
   }, [resetOutboundRetryState]);
+
+  const startDurationTimerRef = useRef(startDurationTimer);
+  startDurationTimerRef.current = startDurationTimer;
+
+  const handleCallEndRef = useRef(handleCallEnd);
+  handleCallEndRef.current = handleCallEnd;
+
+  // Server reconciliation + heartbeat while a session is open (outbound row required).
+  useEffect(() => {
+    if (callState === CALL_STATES.IDLE) return undefined;
+
+    const syncFromServer = async () => {
+      const id = outboundCallRecordIdRef.current;
+      if (!id) return;
+      try {
+        const res = await API.get(`/api/calls/${id}`, { timeout: 70000 });
+        if (typeof res.status === 'number' && res.status >= 400) return;
+        const doc = res.data?.call;
+        if (!doc) return;
+        const st = doc.status;
+        if (
+          ['completed', 'failed', 'missed'].includes(st) &&
+          callStateRef.current !== CALL_STATES.IDLE
+        ) {
+          console.warn('[CALL FLOW] server reports terminal call; syncing UI', st);
+          handleCallEndRef.current?.({ preserveError: true });
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    };
+
+    const hb = setInterval(() => {
+      const id = outboundCallRecordIdRef.current;
+      if (!id) return;
+      void API.patch(`/api/calls/${id}`, {
+        lastHeartbeatAt: new Date().toISOString(),
+      }).catch(() => {});
+    }, 15000);
+
+    const poll = setInterval(syncFromServer, 5000);
+    void syncFromServer();
+
+    return () => {
+      clearInterval(hb);
+      clearInterval(poll);
+    };
+  }, [callState]);
 
   // Handle call state updates from Telnyx
   const handleCallStateChange = useCallback(async (call) => {
@@ -771,6 +866,7 @@ export const CallProvider = ({ children }) => {
         if (isInboundIncomingForUi(call, outboundDialActiveRef, currentCallRef)) {
           try {
             setCallState(CALL_STATES.CONNECTING);
+            setCallPhaseLabel('Connecting...');
             console.log('[CALL FLOW] STATE UPDATED → connecting (inbound early)');
           } catch (err) {
             console.error('Error setting connecting state (handled):', err);
@@ -781,10 +877,12 @@ export const CallProvider = ({ children }) => {
           }
           try {
             setCallState(CALL_STATES.DIALING);
+            setCallPhaseLabel('Connecting...');
             console.log('[CALL FLOW] STATE UPDATED → dialing (Telnyx new/requesting)');
           } catch (err) {
             console.error('Error in outbound new→dialing UI (handled):', err);
             setCallState(CALL_STATES.DIALING);
+            setCallPhaseLabel('Connecting...');
           }
         }
         break;
@@ -793,6 +891,7 @@ export const CallProvider = ({ children }) => {
         if (isInboundIncomingForUi(call, outboundDialActiveRef, currentCallRef)) {
           try {
             setCallState(CALL_STATES.CONNECTING);
+            setCallPhaseLabel('Connecting...');
             console.log('[CALL FLOW] STATE UPDATED → connecting (inbound trying)');
           } catch (err) {
             console.error('Error setting connecting state (handled):', err);
@@ -822,6 +921,7 @@ export const CallProvider = ({ children }) => {
               }).catch((e) => console.warn('[WEBRTC] ringing PATCH:', e));
             }
             setCallState(CALL_STATES.RINGING);
+            setCallPhaseLabel('Waiting for answer...');
             console.log(
               '[CALL FLOW] STATE UPDATED → ringing (outbound trying/recovering — PSTN in progress)'
             );
@@ -836,6 +936,7 @@ export const CallProvider = ({ children }) => {
           } catch (err) {
             console.error('Error in outbound trying→ringing UI (handled):', err);
             setCallState(CALL_STATES.RINGING);
+            setCallPhaseLabel('Waiting for answer...');
           }
         } else {
           if (shouldHoldOutboundUiRank(callStateRef)) {
@@ -843,10 +944,12 @@ export const CallProvider = ({ children }) => {
           }
           try {
             setCallState(CALL_STATES.DIALING);
+            setCallPhaseLabel('Connecting...');
             console.log('[CALL FLOW] STATE UPDATED → dialing (Telnyx trying/recovering)');
           } catch (err) {
             console.error('Error in outbound trying→dialing UI (handled):', err);
             setCallState(CALL_STATES.DIALING);
+            setCallPhaseLabel('Connecting...');
           }
         }
         break;
@@ -876,6 +979,7 @@ export const CallProvider = ({ children }) => {
             }).catch((e) => console.warn("[WEBRTC] ringing PATCH:", e));
           }
           setCallState(CALL_STATES.RINGING);
+          setCallPhaseLabel('Waiting for answer...');
           console.log('[CALL FLOW] STATE UPDATED → ringing (Telnyx ringing/early)');
           if (!outboundRingbackStartedRef.current) {
             outboundRingbackStartedRef.current = true;
@@ -888,11 +992,13 @@ export const CallProvider = ({ children }) => {
         } catch (err) {
           console.error('Error in ringing state (handled):', err);
           setCallState(CALL_STATES.RINGING);
+          setCallPhaseLabel('Waiting for answer...');
         }
         break;
       case 'answering':
         try {
           setCallState(CALL_STATES.CONNECTING);
+          setCallPhaseLabel('Connecting...');
         } catch (err) {
           console.error('Error setting answering state (handled):', err);
         }
@@ -925,6 +1031,7 @@ export const CallProvider = ({ children }) => {
                 callStateRef.current !== CALL_STATES.HELD
               ) {
                 setCallState(CALL_STATES.RINGING);
+                setCallPhaseLabel('Waiting for answer...');
                 if (!outboundRingbackStartedRef.current) {
                   outboundRingbackStartedRef.current = true;
                   try {
@@ -952,6 +1059,7 @@ export const CallProvider = ({ children }) => {
               callStartedAt: new Date().toISOString(),
             }).catch((e) => console.warn("[WEBRTC] active PATCH:", e));
           }
+          setCallPhaseLabel(null);
           setCallState(CALL_STATES.ACTIVE);
           console.log('[CALL FLOW] STATE UPDATED → active (Telnyx)');
           stopTelnyxSdkRingbackEverywhere(telnyxClientRef.current);
@@ -992,6 +1100,7 @@ export const CallProvider = ({ children }) => {
           // Catch any unexpected errors to prevent ErrorBoundary from triggering
           console.error('Error in active call state handler (handled):', err);
           // Still set the state to active even if other operations fail
+          setCallPhaseLabel(null);
           setCallState(CALL_STATES.ACTIVE);
         }
         break;
@@ -1128,6 +1237,7 @@ export const CallProvider = ({ children }) => {
 
     setRemoteNumber(callerNumber);
     setCallState(CALL_STATES.INCOMING);
+    setCallPhaseLabel('Ringing...');
     setIncomingCall(call);
     setIsMinimized(false);
 
@@ -1306,7 +1416,7 @@ export const CallProvider = ({ children }) => {
         const readyPromise = new Promise((resolve, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error('Connection timeout - please check your credentials'));
-          }, 15000);
+          }, 45000);
 
           client.on('telnyx.ready', () => {
             clearTimeout(timeout);
@@ -1462,7 +1572,7 @@ export const CallProvider = ({ children }) => {
       payload,
     });
 
-    const response = await API.post('/api/calls', payload);
+    const response = await API.post('/api/calls', payload, { timeout: 90000 });
 
     console.log('[CALL FLOW] Response from /api/calls', {
       status: response.status,
@@ -1623,6 +1733,7 @@ export const CallProvider = ({ children }) => {
       if (!saved.ok) {
         outboundDialActiveRef.current = false;
         setError(saved.error || 'Could not start call');
+        setCallPhaseLabel(null);
         setCallState(CALL_STATES.IDLE);
         return false;
       }
@@ -1630,6 +1741,7 @@ export const CallProvider = ({ children }) => {
       outboundCallRecordIdRef.current = callRecordId || null;
 
       setCallState(CALL_STATES.DIALING);
+      setCallPhaseLabel('Connecting...');
 
       let outboundRepairHadActions = false;
       try {
@@ -1914,7 +2026,7 @@ export const CallProvider = ({ children }) => {
       outboundDialActiveRef.current = false;
       outboundNewCallLegRef.current = null;
       outboundLegArrivalMsRef.current = {};
-      setError(err.message || 'Failed to initiate call');
+      setError(`Call connection failed: ${err.message || 'Failed to initiate call'}`);
       setCallState(CALL_STATES.IDLE);
       if (recordIdToFail) {
         void API.patch(`/api/calls/${recordIdToFail}`, {
@@ -2317,6 +2429,7 @@ export const CallProvider = ({ children }) => {
     remoteNumber,
     incomingCall,
     error,
+    callPhaseLabel,
     callingMode,
     isClientReady,
     isInitializing,

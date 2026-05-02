@@ -109,10 +109,10 @@ function buildTelnyxVoiceWebhookUrl() {
 }
 
 function buildCredentialWebhookPatchPayload(webhookUrl) {
-  const timeoutRaw = Number(process.env.TELNYX_WEBHOOK_TIMEOUT_SECS || 25);
+  const timeoutRaw = Number(process.env.TELNYX_WEBHOOK_TIMEOUT_SECS || 55);
   const timeoutSecs = Number.isFinite(timeoutRaw)
-    ? Math.min(30, Math.max(5, Math.round(timeoutRaw)))
-    : 25;
+    ? Math.min(90, Math.max(20, Math.round(timeoutRaw)))
+    : 55;
   return {
     webhook_event_url: webhookUrl,
     webhook_event_failover_url: webhookUrl,
@@ -135,7 +135,7 @@ function credentialWebhookDiffers(currentConn, webhookUrl) {
     failoverUrl !== desiredUrl ||
     apiVersion !== "2" ||
     !Number.isFinite(timeout) ||
-    timeout < 5
+    timeout < 20
   );
 }
 
@@ -333,6 +333,9 @@ async function retrieveTelnyxConnection({ connectionId, headers }) {
  */
 router.get("/token", async (req, res) => {
   try {
+    if (req.user?.mode === "campaign") {
+      return res.status(403).json({ error: "CALLING_DISABLED_FOR_PLAN" });
+    }
     if (!req.subscription || !(req.subscription.id || req.subscription._id)) {
       return res.status(403).json({ error: "No subscription found" });
     }

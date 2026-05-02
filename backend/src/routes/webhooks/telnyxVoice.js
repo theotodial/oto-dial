@@ -5,7 +5,10 @@ import Call from "../../models/Call.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import { loadUserSubscription } from "../../services/subscriptionService.js";
 import { recordCallCost } from "../../services/telnyxCostCalculator.js";
-import { emitAdminLiveCall } from "../../services/adminLiveEventsService.js";
+import {
+  emitAdminCallDebugEvent,
+  emitAdminLiveCall,
+} from "../../services/adminLiveEventsService.js";
 import { normalizeCallPartyNumber } from "../../utils/callLifecycle.js";
 import {
   findCallForTelnyxEvent,
@@ -23,7 +26,25 @@ import { normalizeThreadPhone } from "../../utils/smsThreadKey.js";
 
 const router = express.Router();
 
-const WEBHOOK_PENDING_WINDOW_MS = 120000;
+const telnyxVoiceDedupIds = globalThis.__otoTelnyxVoiceDedupIds || [];
+const telnyxVoiceDedupSet = globalThis.__otoTelnyxVoiceDedupSet || new Set();
+if (!globalThis.__otoTelnyxVoiceDedupIds) {
+  globalThis.__otoTelnyxVoiceDedupIds = telnyxVoiceDedupIds;
+  globalThis.__otoTelnyxVoiceDedupSet = telnyxVoiceDedupSet;
+}
+
+function rememberTelnyxVoiceEventId(id) {
+  if (id == null || id === "") return false;
+  const s = String(id);
+  if (telnyxVoiceDedupSet.has(s)) return true;
+  telnyxVoiceDedupSet.add(s);
+  telnyxVoiceDedupIds.push(s);
+  while (telnyxVoiceDedupIds.length > 8000) {
+    const old = telnyxVoiceDedupIds.shift();
+    telnyxVoiceDedupSet.delete(old);
+  }
+  return false;
+}
 
 const HANDLED_EVENTS = new Set([
   "call.initiated",
@@ -31,6 +52,8 @@ const HANDLED_EVENTS = new Set([
   "call.answered",
   "call.bridged",
   "call.hangup",
+  "call.machine.detection.ended",
+  "call.playback.ended",
 ]);
 
 function buildOwnedNumberCandidates(rawTo) {
@@ -38,6 +61,33 @@ function buildOwnedNumberCandidates(rawTo) {
   if (!normalized) return [];
   const digits = normalized.replace(/\D/g, "");
   return Array.from(new Set([normalized, digits, `+${digits}`]));
+}
+
+function logCallEvent(eventType, callPayload, callControlId, callSessionId, state = null) {
+  const from = normalizeThreadPhone(callPayload?.from);
+  const to = normalizeThreadPhone(callPayload?.to);
+  const nextState =
+    state ||
+    callPayload?.state ||
+    callPayload?.call_state ||
+    callPayload?.call_leg_state ||
+    null;
+  console.log("[CALL EVENT]", {
+    eventType,
+    callControlId,
+    callSessionId,
+    from,
+    to,
+    state: nextState,
+  });
+  emitAdminCallDebugEvent({
+    eventType,
+    callControlId,
+    callSessionId,
+    from,
+    to,
+    state: nextState,
+  });
 }
 
 async function hangupTelnyxCallLeg(callControlId, apiKey) {
@@ -91,6 +141,7 @@ router.post("/", async (req, res) => {
     const callControlId =
       callPayload.call_control_id || payload.call_control_id || null;
     const callSessionId = callPayload.call_session_id || null;
+    logCallEvent(event, callPayload, callControlId, callSessionId);
 
     console.log("[WEBHOOK RECEIVED]", {
       event_type: event,
@@ -99,6 +150,13 @@ router.post("/", async (req, res) => {
     });
 
     if (!HANDLED_EVENTS.has(event)) {
+      return res.sendStatus(200);
+    }
+
+    const occurredAtMs = Date.parse(payload.occurred_at || "") || Date.now();
+    const telnyxEventId = payload.id != null ? String(payload.id) : null;
+    if (rememberTelnyxVoiceEventId(telnyxEventId)) {
+      console.log("[WEBHOOK DEDUP] duplicate Telnyx voice event", telnyxEventId, event);
       return res.sendStatus(200);
     }
 
@@ -125,6 +183,13 @@ router.post("/", async (req, res) => {
         callControlId &&
         isWebhookParkedOutboundInitiated(callPayload)
       ) {
+        console.log("[CALL LEG]", {
+          legType: "outbound_parked_agent_leg",
+          callControlId,
+          callSessionId,
+          from: normalizeThreadPhone(fromNumber),
+          to: normalizeThreadPhone(toNumber),
+        });
         const otd = parseOtdFromTelnyxClientState(callPayload.client_state);
         const apiKey = process.env.TELNYX_API_KEY?.trim();
         const connId = process.env.TELNYX_CONNECTION_ID?.trim();
@@ -161,6 +226,7 @@ router.post("/", async (req, res) => {
               await mergeTelnyxCallIdentifiers(claimed, {
                 callControlId,
                 callSessionId,
+                occurredAtMs,
               });
               const to =
                 normalizeCallPartyNumber(callPayload.to) ||
@@ -197,6 +263,17 @@ router.post("/", async (req, res) => {
                 otd,
                 agentCc: callControlId,
                 pstnCc: dial.pstnCallControlId,
+                telnyxResponse: dial.raw || null,
+              });
+              emitAdminCallDebugEvent({
+                eventType: "call.leg.dialed",
+                callControlId,
+                callSessionId,
+                legType: "outbound_pstn_leg",
+                from,
+                to,
+                state: "dialed",
+                response: dial.raw || null,
               });
             } catch (parkErr) {
               await Call.updateOne(
@@ -247,6 +324,15 @@ router.post("/", async (req, res) => {
         callerUser,
         calleeUser,
       });
+      console.log("[CALL LEG]", {
+        legType: "inbound_callee_leg",
+        callControlId,
+        callSessionId,
+        from: normalizeThreadPhone(fromNumber),
+        to: normalizeThreadPhone(toNumber),
+        callerUser,
+        calleeUser,
+      });
 
       const apiKeyInbound = process.env.TELNYX_API_KEY?.trim();
       const inboundUserSub = await loadUserSubscription(phoneNumber.userId);
@@ -284,6 +370,7 @@ router.post("/", async (req, res) => {
         await mergeTelnyxCallIdentifiers(callRecord, {
           callControlId,
           callSessionId,
+          occurredAtMs,
         });
         callRecord = await Call.findById(callRecord._id);
         console.log("[CALL CREATED] webhook inbound call.initiated", {
@@ -300,6 +387,7 @@ router.post("/", async (req, res) => {
         await mergeTelnyxCallIdentifiers(callRecord, {
           callControlId,
           callSessionId,
+          occurredAtMs,
         });
         callRecord = await Call.findById(callRecord._id);
         callRecord.callInitiatedAt = callRecord.callInitiatedAt || new Date();
@@ -351,6 +439,7 @@ router.post("/", async (req, res) => {
       await mergeTelnyxCallIdentifiers(call, {
         callControlId,
         callSessionId: callPayload.call_session_id,
+        occurredAtMs,
       });
       const fresh = await Call.findById(call._id);
       if (isTerminalStatus(fresh.status)) {
@@ -394,14 +483,24 @@ router.post("/", async (req, res) => {
         });
         if (parkedAns?.telnyxCallControlId) {
           try {
-            await bridgeParkedWebRtcToPstn({
+            const bridgeResponse = await bridgeParkedWebRtcToPstn({
               agentCallControlId: parkedAns.telnyxCallControlId,
               pstnCallControlId: callControlId,
               apiKey: apiKeyAns,
             });
+            console.log("[BRIDGE RESPONSE]", bridgeResponse?.raw || bridgeResponse || null);
+            emitAdminCallDebugEvent({
+              eventType: "call.bridge.command",
+              callControlId: parkedAns.telnyxCallControlId,
+              callSessionId: parkedAns.telnyxCallSessionId || null,
+              from: normalizeThreadPhone(parkedAns.fromNumber),
+              to: normalizeThreadPhone(parkedAns.toNumber),
+              state: "bridge_sent",
+              response: bridgeResponse?.raw || bridgeResponse || null,
+            });
             await Call.updateOne(
               { _id: parkedAns._id },
-              { $set: { webrtcParkBridgeAttempted: true } }
+              { $set: { webrtcParkBridgeAttempted: true, callBridgedAt: new Date() } }
             );
             console.log("[PARK OUTBOUND] Bridged WebRTC leg ↔ PSTN", {
               callId: String(parkedAns._id),
@@ -414,6 +513,16 @@ router.post("/", async (req, res) => {
           }
           return res.sendStatus(200);
         }
+      }
+      if (event === "call.answered") {
+        emitAdminCallDebugEvent({
+          eventType: "call.bridge.command",
+          callControlId,
+          callSessionId,
+          from: normalizeThreadPhone(callPayload?.from),
+          to: normalizeThreadPhone(callPayload?.to),
+          state: "not_sent_non_parked_flow",
+        });
       }
 
       let call = await findCallForTelnyxEvent({ callControlId, callPayload });
@@ -433,6 +542,7 @@ router.post("/", async (req, res) => {
       await mergeTelnyxCallIdentifiers(call, {
         callControlId,
         callSessionId: callPayload.call_session_id,
+        occurredAtMs,
       });
       const fresh = await Call.findById(call._id);
       if (isTerminalStatus(fresh.status)) {
@@ -445,6 +555,12 @@ router.post("/", async (req, res) => {
       const set = { status: "in-progress" };
       if (!fresh.callStartedAt) {
         set.callStartedAt = new Date();
+      }
+      if (!fresh.callAnsweredAt && event === "call.answered") {
+        set.callAnsweredAt = new Date();
+      }
+      if (!fresh.callBridgedAt && event === "call.bridged") {
+        set.callBridgedAt = new Date();
       }
       const updated = await Call.findOneAndUpdate(
         {
@@ -489,6 +605,7 @@ router.post("/", async (req, res) => {
       await mergeTelnyxCallIdentifiers(call, {
         callControlId,
         callSessionId: callPayload.call_session_id,
+        occurredAtMs,
       });
       call = await Call.findById(call._id);
 
@@ -536,6 +653,23 @@ router.post("/", async (req, res) => {
 
       const hangupCause = callPayload.hangup_cause || "unknown";
       let finalStatus = "completed";
+      if (!call.callAnsweredAt) {
+        console.warn("[CALL ANSWER CHECK] call.hangup received without prior call.answered", {
+          callId: String(call._id),
+          callControlId,
+          callSessionId,
+          from: normalizeThreadPhone(call.fromNumber),
+          to: normalizeThreadPhone(call.toNumber),
+        });
+        emitAdminCallDebugEvent({
+          eventType: "call.answer.missing_before_hangup",
+          callControlId,
+          callSessionId,
+          from: normalizeThreadPhone(call.fromNumber),
+          to: normalizeThreadPhone(call.toNumber),
+          state: "missing_answer_webhook",
+        });
+      }
 
       if (!call.callStartedAt) {
         finalStatus = call.direction === "inbound" ? "missed" : "failed";
@@ -572,6 +706,7 @@ router.post("/", async (req, res) => {
       call.answeredDuration = answeredDuration;
       call.status = finalStatus;
       call.hangupCause = hangupCause;
+      call.failReason = finalStatus === "failed" ? hangupCause : null;
       call.telnyxCallId = callPayload.call_leg_id || callPayload.id || null;
       call.billedSeconds = billableSeconds;
 

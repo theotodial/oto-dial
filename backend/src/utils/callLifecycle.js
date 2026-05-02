@@ -13,7 +13,7 @@ export const ACTIVE_CALL_STATUSES = [
 const ACTIVE_CALL_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 /** Early-phase rows left behind after refresh/errors block new dials (409) — auto-fail after this. */
-const STALE_EARLY_STATUS_MS = 20 * 60 * 1000;
+const STALE_EARLY_STATUS_MS = 45 * 60 * 1000;
 const STALE_EARLY_STATUSES = ["initiated", "dialing", "queued"];
 
 /**

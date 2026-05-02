@@ -27,6 +27,7 @@ import {
 } from "./src/services/stripeCatalogBootstrapService.js";
 import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
 import { startSystemHealthService } from "./src/services/systemHealthService.js";
+import { startCallHeartbeatMonitor } from "./src/services/callHeartbeatMonitor.js";
 import { initCampaignQueue } from "./src/services/campaignQueueService.js";
 import { runCampaignJob } from "./src/services/campaignSendWorker.js";
 import { startCampaignSchedulePoller } from "./src/services/campaignSchedulePoller.js";
@@ -41,6 +42,7 @@ import loadSubscription from "./src/middleware/loadSubscription.js";
 import {
   requireVoiceEnabled,
   requireCampaignEnabled,
+  checkPlanAccess,
 } from "./src/middleware/requireUserFeatures.js";
 
 // ========================
@@ -100,7 +102,6 @@ import NotFoundLog from "./src/models/NotFoundLog.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
 import telnyxSmsWebhook from "./src/routes/webhooks/telnyxSms.js";
-import telnyxWebhookRoutes from "./src/routes/webhooks/telnyx.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -386,7 +387,8 @@ app.get("/api/uploads/*", uploadsFallbackHandler);
 // ========================
 app.use("/api/webhooks/telnyx/voice", telnyxVoiceWebhook);
 app.use("/api/webhooks/telnyx/sms", telnyxSmsWebhook);
-app.use("/webhooks/telnyx", telnyxWebhookRoutes);
+app.use("/webhooks/telnyx", telnyxSmsWebhook);
+app.use("/webhooks/telnyx/sms", telnyxSmsWebhook);
 
 // ========================
 // PUBLIC
@@ -419,6 +421,7 @@ app.use(
   "/api/campaign",
   authenticateUser,
   loadSubscription,
+  checkPlanAccess("smsCampaignEnabled"),
   requireCampaignEnabled,
   campaignRoutes
 );
@@ -450,6 +453,8 @@ app.get("/api/webhook-info", (req, res) => {
     webhooks: {
       voice: `${backendUrl}/api/webhooks/telnyx/voice`,
       sms: `${backendUrl}/api/webhooks/telnyx/sms`,
+      telnyxMessaging: `${backendUrl}/webhooks/telnyx`,
+      telnyxMessagingAlias: `${backendUrl}/webhooks/telnyx/sms`,
       stripe: `${backendUrl}/api/webhooks/stripe`,
       stripeAliases: [
         `${backendUrl}/webhooks/stripe`,
@@ -458,7 +463,8 @@ app.get("/api/webhook-info", (req, res) => {
     },
     instructions: {
       voice: "Configure this URL on your Telnyx TeXML App or SIP Connection under Call Control settings",
-      sms: "This URL is automatically set on messaging profiles when buying numbers",
+      sms:
+        "Inbound + delivery (message.sent / message.delivered / message.failed). Set messaging profile webhook to /api/webhooks/telnyx/sms or /webhooks/telnyx",
       stripe:
         "Configure Stripe to send checkout.session.completed, invoice.payment_succeeded/invoice.paid, and customer.subscription events."
     },
@@ -595,6 +601,12 @@ async function startServer() {
       startSystemHealthService();
     } catch (healthErr) {
       console.error("⚠️ System health service failed to start:", healthErr.message);
+    }
+
+    try {
+      startCallHeartbeatMonitor();
+    } catch (hbErr) {
+      console.error("⚠️ Call heartbeat monitor failed to start:", hbErr.message);
     }
 
     try {

@@ -61,10 +61,13 @@ const MinimizeIcon = () => (
 );
 
 // Get call status text
-const getStatusText = (callState) => {
+const getStatusText = (callState, phaseLabel) => {
+  if (phaseLabel && callState !== CALL_STATES.ACTIVE) {
+    return phaseLabel;
+  }
   switch (callState) {
     case CALL_STATES.DIALING:
-      return 'Dialing...';
+      return 'Connecting...';
     case CALL_STATES.CONNECTING:
       return 'Connecting...';
     case CALL_STATES.RINGING:
@@ -161,6 +164,7 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
   const sendDTMF = callContext?.sendDTMF || (() => {});
   const minimizeCall = callContext?.minimizeCall || (() => {});
   const callError = callContext?.error || null;
+  const callPhaseLabel = callContext?.callPhaseLabel || null;
   const formatDuration = callContext?.formatDuration || ((s) => {
     const mins = Math.floor(s / 60);
     const secs = s % 60;
@@ -170,7 +174,7 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
   const isIncoming = callState === CALL_STATES.INCOMING;
 
   const [showDialpad, setShowDialpad] = useState(false);
-  const statusText = getStatusText(callState);
+  const statusText = getStatusText(callState, callPhaseLabel);
   const displayName = contactName || remoteNumber || 'Unknown';
 
   const handleDialpadDigit = (digit) => {

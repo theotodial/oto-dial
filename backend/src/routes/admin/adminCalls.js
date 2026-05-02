@@ -2,8 +2,110 @@ import express from "express";
 import requireAdmin from "../../middleware/requireAdmin.js";
 import Call from "../../models/Call.js";
 import User from "../../models/User.js";
+import PhoneNumber from "../../models/PhoneNumber.js";
+import {
+  getRecentCallDebugEvents,
+  getRecentThrottleEvents,
+} from "../../services/adminLiveEventsService.js";
 
 const router = express.Router();
+
+router.get("/debug/live", requireAdmin, async (_req, res) => {
+  try {
+    const activeCalls = await Call.find({
+      status: { $in: ["queued", "initiated", "dialing", "ringing", "in-progress", "answered"] },
+    })
+      .populate("user", "email name")
+      .sort({ updatedAt: -1 })
+      .limit(100)
+      .lean();
+
+    const recentWebhookEvents = getRecentCallDebugEvents();
+    const bridgeStatus = activeCalls.map((call) => ({
+      callId: String(call._id),
+      userId: String(call.user?._id || call.user || ""),
+      userEmail: call.user?.email || null,
+      from: call.fromNumber || null,
+      to: call.toNumber || null,
+      status: call.status,
+      answeredAt: call.callAnsweredAt || call.callStartedAt || null,
+      bridgedAt: call.callBridgedAt || null,
+      failReason: call.failReason || null,
+      telnyxCallControlId: call.telnyxCallControlId || null,
+      telnyxCallSessionId: call.telnyxCallSessionId || null,
+    }));
+
+    const recentFailures = await Call.find({
+      status: { $in: ["failed", "missed"] },
+    })
+      .sort({ updatedAt: -1 })
+      .limit(25)
+      .select("user fromNumber toNumber status failReason hangupCause hangupCauseCode updatedAt")
+      .lean();
+
+    res.json({
+      success: true,
+      activeCalls: bridgeStatus,
+      webhookEvents: recentWebhookEvents,
+      throttleEvents: getRecentThrottleEvents(),
+      failures: recentFailures.map((f) => ({
+        callId: String(f._id),
+        userId: String(f.user || ""),
+        from: f.fromNumber || null,
+        to: f.toNumber || null,
+        status: f.status,
+        failReason: f.failReason || f.hangupCause || null,
+        hangupCauseCode: f.hangupCauseCode || null,
+        updatedAt: f.updatedAt || null,
+      })),
+    });
+  } catch (err) {
+    console.error("Admin live call debug error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch live call debug data" });
+  }
+});
+
+router.get("/debug/sip-identities", requireAdmin, async (_req, res) => {
+  try {
+    const activeNumbers = await PhoneNumber.find({ status: "active" })
+      .select("userId phoneNumber telnyxPhoneNumberId")
+      .lean();
+    const usersById = new Map();
+    const users = await User.find({ _id: { $in: activeNumbers.map((n) => n.userId) } })
+      .select("_id email")
+      .lean();
+    for (const u of users) usersById.set(String(u._id), u.email);
+
+    const globalConnectionId = String(process.env.TELNYX_CONNECTION_ID || "").trim() || null;
+    const globalSipUsername = String(process.env.TELNYX_SIP_USERNAME || "").trim() || null;
+
+    const ownershipRows = activeNumbers.map((n) => ({
+      userId: String(n.userId),
+      userEmail: usersById.get(String(n.userId)) || null,
+      phoneNumber: n.phoneNumber,
+      telnyxPhoneNumberId: n.telnyxPhoneNumberId || null,
+      connectionId: globalConnectionId,
+      sipUsername: globalSipUsername,
+    }));
+
+    res.json({
+      success: true,
+      summary: {
+        uniqueSipIdentityPerAccount: false,
+        reason:
+          "Current architecture uses global TELNYX_CONNECTION_ID/TELNYX_SIP_USERNAME for all users. Number ownership remains isolated per user.",
+      },
+      globalCredentials: {
+        connectionId: globalConnectionId,
+        sipUsername: globalSipUsername,
+      },
+      rows: ownershipRows,
+    });
+  } catch (err) {
+    console.error("Admin sip identities debug error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch SIP identity report" });
+  }
+});
 
 /**
  * GET /api/admin/calls
@@ -87,6 +189,8 @@ router.get("/", requireAdmin, async (req, res) => {
         status: call.status,
         callInitiatedAt: call.callInitiatedAt,
         callStartedAt: call.callStartedAt,
+        callAnsweredAt: call.callAnsweredAt || call.callStartedAt || null,
+        callBridgedAt: call.callBridgedAt || null,
         callEndedAt: call.callEndedAt,
         ringingDuration: call.ringingDuration || 0,
         answeredDuration: call.answeredDuration || 0,
@@ -95,6 +199,7 @@ router.get("/", requireAdmin, async (req, res) => {
         costPerSecond: call.costPerSecond || (call.cost / Math.max(call.durationSeconds, 1)),
         totalCost: call.cost,
         hangupCause: call.hangupCause,
+        failReason: call.failReason || null,
         createdAt: call.createdAt
       })),
       pagination: {
@@ -148,6 +253,8 @@ router.get("/:id", requireAdmin, async (req, res) => {
         status: call.status,
         callInitiatedAt: call.callInitiatedAt,
         callStartedAt: call.callStartedAt,
+        callAnsweredAt: call.callAnsweredAt || call.callStartedAt || null,
+        callBridgedAt: call.callBridgedAt || null,
         callEndedAt: call.callEndedAt,
         ringingDuration: call.ringingDuration || 0,
         answeredDuration: call.answeredDuration || 0,
@@ -156,6 +263,7 @@ router.get("/:id", requireAdmin, async (req, res) => {
         costPerSecond: call.costPerSecond || (call.cost / Math.max(call.durationSeconds, 1)),
         totalCost: call.cost,
         hangupCause: call.hangupCause,
+        failReason: call.failReason || null,
         createdAt: call.createdAt,
         updatedAt: call.updatedAt
       }

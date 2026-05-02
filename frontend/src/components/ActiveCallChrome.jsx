@@ -18,6 +18,7 @@ export default function ActiveCallChrome({ isDesktop, dockMode = false }) {
     isMinimized,
     expandCall,
     minimizeCall,
+    callPhaseLabel,
   } = useCall();
 
   if (callState === CALL_STATES.IDLE) {
@@ -29,9 +30,12 @@ export default function ActiveCallChrome({ isDesktop, dockMode = false }) {
     : 'fixed inset-0 z-[70] bg-gray-50 dark:bg-slate-900';
 
   const getStatusText = () => {
+    if (callPhaseLabel && callState !== CALL_STATES.ACTIVE) {
+      return callPhaseLabel;
+    }
     switch (callState) {
       case CALL_STATES.DIALING:
-        return 'Dialing...';
+        return 'Connecting...';
       case CALL_STATES.CONNECTING:
         return 'Connecting...';
       case CALL_STATES.RINGING:

@@ -7,6 +7,8 @@ const actorCache = new Map();
 const recentEvents = {
   calls: [],
   sms: [],
+  callDebug: [],
+  throttle: [],
 };
 
 let ioInstance = null;
@@ -112,6 +114,43 @@ export async function emitAdminLiveCall(event = {}) {
 
   pushEvent("calls", payload);
   ioInstance?.to(ADMIN_ROOM).emit("admin:live_calls", payload);
+}
+
+export function emitAdminCallDebugEvent(event = {}) {
+  const payload = {
+    kind: "call_debug",
+    at: new Date().toISOString(),
+    ...event,
+  };
+  pushEvent("calls", payload);
+  recentEvents.callDebug.unshift(payload);
+  if (recentEvents.callDebug.length > MAX_EVENTS) {
+    recentEvents.callDebug.length = MAX_EVENTS;
+  }
+  ioInstance?.to(ADMIN_ROOM).emit("admin:call_debug", payload);
+}
+
+export function getRecentCallDebugEvents() {
+  return [...recentEvents.callDebug];
+}
+
+const MAX_THROTTLE_EVENTS = 80;
+
+export function emitAdminThrottleEvent(event = {}) {
+  const payload = {
+    kind: "throttle",
+    at: new Date().toISOString(),
+    ...event,
+  };
+  recentEvents.throttle.unshift(payload);
+  if (recentEvents.throttle.length > MAX_THROTTLE_EVENTS) {
+    recentEvents.throttle.length = MAX_THROTTLE_EVENTS;
+  }
+  ioInstance?.to(ADMIN_ROOM).emit("admin:throttle_debug", payload);
+}
+
+export function getRecentThrottleEvents() {
+  return [...recentEvents.throttle];
 }
 
 export async function emitAdminLiveSms(event = {}) {

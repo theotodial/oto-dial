@@ -207,14 +207,14 @@ export async function checkUserVelocity(userId) {
   const campaign = Boolean(subscription?.smsCampaignPlan);
   const verified = user?.isEmailVerified === true;
 
-  let maxPerMinute = 10;
-  if (campaign) maxPerMinute = 120;
-  else if (verified) maxPerMinute = 60;
+  let maxPerMinute = 18;
+  if (campaign) maxPerMinute = 180;
+  else if (verified) maxPerMinute = 90;
 
   const count = await SMS.countDocuments({
     user: uid,
     direction: "outbound",
-    status: "sent",
+    status: { $in: ["sent", "delivered"] },
     createdAt: { $gte: since },
   });
 

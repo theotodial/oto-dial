@@ -6,7 +6,7 @@ import axios from "axios";
 const baseURL = import.meta.env.VITE_API_URL || "";
 
 const REQUEST_TIMEOUT_MS = Math.min(
-  Math.max(Number.parseInt(import.meta.env.VITE_API_TIMEOUT_MS || "25000", 10), 5000),
+  Math.max(Number.parseInt(import.meta.env.VITE_API_TIMEOUT_MS || "55000", 10), 5000),
   120000
 );
 

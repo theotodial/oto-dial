@@ -99,6 +99,14 @@ const callSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    callAnsweredAt: {
+      type: Date,
+      default: null
+    },
+    callBridgedAt: {
+      type: Date,
+      default: null
+    },
 
     callEndedAt: {
       type: Date,
@@ -116,6 +124,10 @@ const callSchema = new mongoose.Schema(
     },
 
     hangupCauseCode: {
+      type: String,
+      default: null
+    },
+    failReason: {
       type: String,
       default: null
     },
@@ -185,7 +197,20 @@ const callSchema = new mongoose.Schema(
     costSyncedAt: {
       type: Date,
       default: null
-    }
+    },
+
+    /** Client PATCH heartbeat while outbound WebRTC is in flight (server watchdog). */
+    lastHeartbeatAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    /** Latest Telnyx webhook `occurred_at` applied (ordering / stale-event hints). */
+    telnyxLastWebhookAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

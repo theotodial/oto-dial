@@ -2,7 +2,7 @@ import Call from "../models/Call.js";
 import PhoneNumber from "../models/PhoneNumber.js";
 import { normalizeCallPartyNumber } from "./callLifecycle.js";
 
-const PENDING_OUTBOUND_MS = 15 * 60 * 1000;
+const PENDING_OUTBOUND_MS = 45 * 60 * 1000;
 
 /**
  * Resolve DB Call for a Telnyx webhook.
@@ -70,7 +70,10 @@ export async function findCallForTelnyxEvent({ callControlId, callPayload = {} }
  * Merge Telnyx identifiers: always set session id when present; add leg control ids;
  * never replace an existing primary telnyxCallControlId.
  */
-export async function mergeTelnyxCallIdentifiers(call, { callControlId, callSessionId }) {
+export async function mergeTelnyxCallIdentifiers(
+  call,
+  { callControlId, callSessionId, occurredAtMs } = {}
+) {
   if (!call?._id) return;
 
   const set = {};
@@ -89,11 +92,24 @@ export async function mergeTelnyxCallIdentifiers(call, { callControlId, callSess
     }
   }
 
-  if (!ops.$set && !ops.$addToSet) return;
+  if (Number.isFinite(occurredAtMs)) {
+    ops.$max = { ...(ops.$max || {}), telnyxLastWebhookAt: new Date(occurredAtMs) };
+  }
+
+  if (!ops.$set && !ops.$addToSet && !ops.$max) return;
 
   await Call.updateOne({ _id: call._id }, ops);
 
   if (ops.$set) Object.assign(call, ops.$set);
+  if (ops.$max?.telnyxLastWebhookAt) {
+    const t = ops.$max.telnyxLastWebhookAt;
+    if (
+      !call.telnyxLastWebhookAt ||
+      new Date(call.telnyxLastWebhookAt) < t
+    ) {
+      call.telnyxLastWebhookAt = t;
+    }
+  }
   if (callControlId) {
     if (!Array.isArray(call.telnyxLegControlIds)) call.telnyxLegControlIds = [];
     if (!call.telnyxLegControlIds.includes(callControlId)) {

@@ -344,13 +344,19 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
       channel: "sms",
       destinationNumber: toFormatted,
     });
-    if (!fraudCheck.allowed && fraudCheck.blocked) {
+    if (!fraudCheck.allowed) {
       return {
         ok: false,
-        error: fraudCheck.reason || "SMS blocked by fraud protection.",
-        status: 403,
-        retryable: false,
+        error: fraudCheck.reason || "SMS blocked.",
+        status: fraudCheck.statusCode || 403,
+        retryable: fraudCheck.statusCode === 429,
+        ...(Number.isFinite(fraudCheck.retryAfterMs)
+          ? { retryAfterMs: fraudCheck.retryAfterMs }
+          : {}),
       };
+    }
+    if (fraudCheck.throttleDelayMs > 0) {
+      await new Promise((r) => setTimeout(r, fraudCheck.throttleDelayMs));
     }
 
     const subscription = (await getCachedUserSubscription(userId)) || null;

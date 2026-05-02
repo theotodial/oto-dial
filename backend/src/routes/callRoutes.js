@@ -12,6 +12,7 @@ import {
 import { tryDeductVoiceUsageForCall } from "../services/voiceCallUsageService.js";
 import { recordCallCost } from "../services/telnyxCostCalculator.js";
 import { emitAdminLiveCall } from "../services/adminLiveEventsService.js";
+import { emitAdminCallDebugEvent } from "../services/adminLiveEventsService.js";
 import { evaluateFraudEvent } from "../services/fraudDetectionService.js";
 import { enforceTelecomPolicy } from "../services/telecomPolicyService.js";
 import { enforceUsageRateLimit } from "../services/usageRateLimitService.js";
@@ -19,6 +20,13 @@ import { TERMINAL_STATUSES } from "../utils/callStateMachine.js";
 import { normalizeThreadPhone } from "../utils/smsThreadKey.js";
 
 const router = express.Router();
+
+function logCallFlow(fields) {
+  console.log("[CALL FLOW]", {
+    ...fields,
+    timestamp: new Date().toISOString(),
+  });
+}
 
 function normalizeThreadDigits(phone) {
   if (!phone || typeof phone !== "string") return "";
@@ -70,6 +78,7 @@ async function persistFailedCallAttempt(req, fields, hangupCause) {
       status: "failed",
       source: "webrtc",
       hangupCause: String(hangupCause || "Blocked before start").slice(0, 500),
+      failReason: String(hangupCause || "Blocked before start").slice(0, 500),
     });
     console.log("[CALL AUDIT] persisted rejected attempt", String(c._id), hangupCause);
     return c;
@@ -186,16 +195,22 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
         channel: "call",
         destinationNumber: destE164,
       });
-      if (!fraudCheck.allowed && fraudCheck.blocked) {
+      if (!fraudCheck.allowed) {
         await persistFailedCallAttempt(
           req,
           { phoneNumber: destE164, fromNumber, toNumber: destE164 },
           fraudCheck.reason
         );
-        return res.status(403).json({
+        return res.status(fraudCheck.statusCode || 403).json({
           success: false,
-          error: fraudCheck.reason || "Call blocked by fraud protection.",
+          error: fraudCheck.reason || "Call blocked.",
+          ...(Number.isFinite(fraudCheck.retryAfterMs)
+            ? { retryAfterMs: fraudCheck.retryAfterMs }
+            : {}),
         });
+      }
+      if (fraudCheck.throttleDelayMs > 0) {
+        await new Promise((r) => setTimeout(r, fraudCheck.throttleDelayMs));
       }
 
       const callerRaw = fromNumber;
@@ -250,6 +265,7 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
     }
 
     let calleeOwnedUser = null;
+    let toNumberOwnership = "external_or_unknown";
     if (toNumber) {
       const calleeOwned = await PhoneNumber.findOne({
         phoneNumber: normalizeThreadPhone(toNumber),
@@ -258,12 +274,29 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
         .select("userId")
         .lean();
       calleeOwnedUser = calleeOwned?.userId ? String(calleeOwned.userId) : null;
+      if (calleeOwnedUser) {
+        toNumberOwnership = "internal_user_owned";
+      }
     }
     console.log("[CALL ROUTING]", {
       from: normalizeThreadPhone(fromNumber),
       to: normalizeThreadPhone(toNumber || phoneNumber),
       callerUser: String(req.userId),
       calleeUser: calleeOwnedUser,
+      fromOwnedByCaller: true,
+      toOwnership: toNumberOwnership,
+    });
+    emitAdminCallDebugEvent({
+      eventType: "call.preflight",
+      callControlId: null,
+      callSessionId: null,
+      from: normalizeThreadPhone(fromNumber),
+      to: normalizeThreadPhone(toNumber || phoneNumber),
+      state: "validated",
+      callerUser: String(req.userId),
+      calleeUser: calleeOwnedUser,
+      fromOwnedByCaller: true,
+      toOwnership: toNumberOwnership,
     });
 
     const existing = await findRecentActiveCallForUser(req.userId);
@@ -303,6 +336,15 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       direction,
       status: call.status,
       to: normalizeCallPartyNumber(toNumber || phoneNumber),
+    });
+
+    logCallFlow({
+      userId: String(req.userId),
+      from: normalizeThreadPhone(fromNumber),
+      to: normalizeThreadPhone(toNumber || phoneNumber),
+      state: call.status,
+      callControlId: call.telnyxCallControlId || null,
+      callId: String(call._id),
     });
 
     emitAdminLiveCall({
@@ -450,6 +492,7 @@ router.patch("/:id", async (req, res) => {
       telnyxCallControlId,
       hangupCause,
       hangupCauseCode,
+      lastHeartbeatAt,
     } = req.body;
 
     const call = await Call.findOne({
@@ -493,9 +536,13 @@ router.patch("/:id", async (req, res) => {
         call.status = status;
         if (hangupCause != null && hangupCause !== "") {
           call.hangupCause = String(hangupCause);
+          call.failReason = status === "failed" ? String(hangupCause) : null;
         }
         if (hangupCauseCode != null && hangupCauseCode !== "") {
           call.hangupCauseCode = String(hangupCauseCode);
+        }
+        if (lastHeartbeatAt) {
+          call.lastHeartbeatAt = new Date(lastHeartbeatAt);
         }
         if (callStartedAt) {
           call.callStartedAt = new Date(callStartedAt);
@@ -548,6 +595,9 @@ router.patch("/:id", async (req, res) => {
           } else {
             call.durationSeconds = 0;
           }
+          if (status === "failed" && !call.failReason) {
+            call.failReason = call.hangupCause || "call_connection_failed";
+          }
 
           await call.save();
           if (hadAnswered && billable > 0) {
@@ -593,6 +643,15 @@ router.patch("/:id", async (req, res) => {
           await call.save();
         }
 
+        logCallFlow({
+          userId: String(req.userId),
+          from: normalizeThreadPhone(call.fromNumber),
+          to: normalizeThreadPhone(call.toNumber),
+          state: call.status,
+          callControlId: call.telnyxCallControlId || null,
+          callId: String(call._id),
+        });
+
         console.log("[CALL UPDATED]", {
           callId: String(call._id),
           status: call.status,
@@ -610,6 +669,7 @@ router.patch("/:id", async (req, res) => {
         call.status = "failed";
         call.callEndedAt = call.callEndedAt || new Date();
         call.hangupCause = call.hangupCause || "client_abort";
+        call.failReason = call.failReason || call.hangupCause || "call_connection_failed";
       } else {
         return res.status(400).json({
           success: false,
@@ -700,7 +760,19 @@ router.post("/:id/answer", requireActiveSubscription, async (req, res) => {
 
     call.status = "in-progress";
     call.callStartedAt = new Date();
+    call.callAnsweredAt = call.callStartedAt;
     await call.save();
+
+    console.log("[ANSWER RESPONSE]", response?.data || null);
+    emitAdminCallDebugEvent({
+      eventType: "call.answer.command",
+      callControlId: call.telnyxCallControlId,
+      callSessionId: call.telnyxCallSessionId || null,
+      from: normalizeThreadPhone(call.fromNumber),
+      to: normalizeThreadPhone(call.toNumber),
+      state: "answer_sent",
+      response: response?.data || null,
+    });
 
     console.log(`[STATE TRANSITION] → in-progress (answer API) ${call._id}`);
 

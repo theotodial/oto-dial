@@ -18,10 +18,55 @@ function AdminCalls() {
   });
   const [totals, setTotals] = useState(null);
   const [error, setError] = useState('');
+  const [liveDebug, setLiveDebug] = useState({
+    activeCalls: [],
+    webhookEvents: [],
+    failures: [],
+    throttleEvents: [],
+  });
+  const [sipDebug, setSipDebug] = useState(null);
 
   useEffect(() => {
     fetchCalls();
   }, [page, filters]);
+
+  useEffect(() => {
+    let mounted = true;
+    const poll = async () => {
+      try {
+        const token = localStorage.getItem('adminToken');
+        const [liveResp, sipResp] = await Promise.all([
+          API.get('/api/admin/calls/debug/live', {
+            headers: { Authorization: `Bearer ${token}` }
+          }),
+          API.get('/api/admin/calls/debug/sip-identities', {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+        ]);
+        if (!mounted) return;
+        if (liveResp.data?.success) {
+          setLiveDebug({
+            activeCalls: liveResp.data.activeCalls || [],
+            webhookEvents: liveResp.data.webhookEvents || [],
+            failures: liveResp.data.failures || [],
+            throttleEvents: liveResp.data.throttleEvents || [],
+          });
+        }
+        if (sipResp.data?.success) {
+          setSipDebug(sipResp.data);
+        }
+      } catch (e) {
+        // Keep panel best-effort; main calls table should stay usable.
+        console.warn('Live call debug fetch failed:', e?.message || e);
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 3000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   const fetchCalls = async () => {
     setLoading(true);
@@ -140,6 +185,88 @@ function AdminCalls() {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6 mb-6">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">Live Call Debug (Temporary)</h2>
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 text-xs">
+            <div className="border border-gray-200 dark:border-slate-700 rounded p-3">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">Active Calls</h3>
+              <div className="space-y-2 max-h-56 overflow-auto">
+                {liveDebug.activeCalls.length === 0 ? (
+                  <p className="text-gray-500 dark:text-gray-400">No active calls</p>
+                ) : liveDebug.activeCalls.map((c) => (
+                  <div key={c.callId} className="bg-gray-50 dark:bg-slate-900 rounded p-2">
+                    <div>{c.from} → {c.to}</div>
+                    <div>Status: {c.status}</div>
+                    <div>Answered: {c.answeredAt ? new Date(c.answeredAt).toLocaleTimeString() : '—'}</div>
+                    <div>Bridged: {c.bridgedAt ? new Date(c.bridgedAt).toLocaleTimeString() : '—'}</div>
+                    <div>Fail: {c.failReason || '—'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="border border-gray-200 dark:border-slate-700 rounded p-3">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">Recent Webhook Events</h3>
+              <div className="space-y-2 max-h-56 overflow-auto">
+                {liveDebug.webhookEvents.slice(0, 20).map((e, idx) => (
+                  <div key={`${e.at || ''}-${idx}`} className="bg-gray-50 dark:bg-slate-900 rounded p-2">
+                    <div>{e.eventType || 'event'} @ {e.state || 'n/a'}</div>
+                    <div>{e.from || '—'} → {e.to || '—'}</div>
+                    <div>cc: {e.callControlId || '—'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="border border-gray-200 dark:border-slate-700 rounded p-3">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">Throttle / fraud (soft)</h3>
+              <div className="space-y-2 max-h-56 overflow-auto">
+                {(liveDebug.throttleEvents || []).length === 0 ? (
+                  <p className="text-gray-500 dark:text-gray-400">No recent throttle events</p>
+                ) : (
+                  liveDebug.throttleEvents.slice(0, 25).map((e, idx) => (
+                    <div key={`${e.at || ''}-${idx}`} className="bg-gray-50 dark:bg-slate-900 rounded p-2 font-mono">
+                      <div>{e.kind || 'event'} {e.level != null ? `(L${e.level})` : ''}</div>
+                      <div>user: {e.userId || '—'}</div>
+                      <div>{e.channel || ''} {e.reason || e.metric || ''}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+            <div className="border border-gray-200 dark:border-slate-700 rounded p-3 lg:col-span-4">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">SIP / Identity Check</h3>
+              {sipDebug ? (
+                <div className="space-y-1 text-gray-700 dark:text-gray-300">
+                  <div>Unique per account: {String(sipDebug.summary?.uniqueSipIdentityPerAccount)}</div>
+                  <div>Connection: {sipDebug.globalCredentials?.connectionId || '—'}</div>
+                  <div>SIP user: {sipDebug.globalCredentials?.sipUsername || '—'}</div>
+                  <div className="text-amber-600 dark:text-amber-400 mt-2">
+                    {sipDebug.summary?.reason}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-gray-500 dark:text-gray-400">Loading SIP diagnostics...</p>
+              )}
+            </div>
+          </div>
+          <div className="mt-4 border border-gray-200 dark:border-slate-700 rounded p-3 text-xs">
+            <h3 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">Recent failed / missed</h3>
+            <div className="space-y-2 max-h-40 overflow-auto">
+              {(liveDebug.failures || []).length === 0 ? (
+                <p className="text-gray-500 dark:text-gray-400">None</p>
+              ) : (
+                liveDebug.failures.slice(0, 15).map((f) => (
+                  <div key={f.callId} className="bg-gray-50 dark:bg-slate-900 rounded p-2">
+                    <div>
+                      {f.from || '—'} → {f.to || '—'} ({f.status})
+                    </div>
+                    <div className="text-gray-600 dark:text-gray-400">{f.failReason || f.hangupCause || '—'}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* Filters */}
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
