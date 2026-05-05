@@ -167,6 +167,27 @@ function isInboundIncomingForUi(call, outboundDialActiveRef, currentCallRef) {
   return isInboundTelnyxCall(call);
 }
 
+function shouldClearStaleOutboundSession({
+  outboundDialActiveRef,
+  outboundDialStartedAtRef,
+  callStateRef,
+  currentCallRef,
+  telnyxClientRef,
+}) {
+  if (!outboundDialActiveRef.current) return false;
+  const startedAt = Number(outboundDialStartedAtRef.current || 0);
+  if (startedAt > 0 && Date.now() - startedAt > 120000) return true;
+
+  const state = callStateRef.current;
+  if (state !== CALL_STATES.IDLE && state !== CALL_STATES.INCOMING) return false;
+
+  const current = currentCallRef.current;
+  const activeLegs = Object.values(telnyxClientRef.current?.calls || {}).filter(
+    (c) => c && !isTelnyxTerminalCall(c)
+  );
+  return !current && activeLegs.length === 0;
+}
+
 /** Do not regress UI from ringing/active to dialing when a stale leg keeps emitting new/trying. */
 function shouldHoldOutboundUiRank(callStateRef) {
   const s = callStateRef.current;
@@ -399,6 +420,7 @@ export const CallProvider = ({ children }) => {
   const polledCallIdRef = useRef(null);
   /** True from outbound dial start until handleCallEnd — blocks API poll during CONNECTING before `currentCallRef` is set */
   const outboundDialActiveRef = useRef(false);
+  const outboundDialStartedAtRef = useRef(0);
   /** Poll SDK call.state — some builds/envs omit telnyx.notification callUpdate for outbound */
   const sdkCallStatePollRef = useRef(null);
   /** PATCH /api/calls once per phase for outbound WebRTC (SDK is source of truth). */
@@ -519,6 +541,7 @@ export const CallProvider = ({ children }) => {
   /** Clear outbound session bookkeeping (retry / early-fail paths; safe no-op extras after handleCallEnd). */
   const resetOutboundRetryState = useCallback(() => {
     outboundDialActiveRef.current = false;
+    outboundDialStartedAtRef.current = 0;
     outboundRingbackStartedRef.current = false;
     outboundCallRecordIdRef.current = null;
     outboundNewCallLegRef.current = null;
@@ -631,6 +654,7 @@ export const CallProvider = ({ children }) => {
       polledCallIdRef.current = null;
       lastPolledIncomingIdRef.current = null;
       outboundDialActiveRef.current = false;
+      outboundDialStartedAtRef.current = 0;
       outboundRingbackStartedRef.current = false;
       outboundCallRecordIdRef.current = null;
       outboundNewCallLegRef.current = null;
@@ -844,6 +868,16 @@ export const CallProvider = ({ children }) => {
             const name = String(e?.name || "");
             if (name === "NotAllowedError" || name === "AbortError") {
               setError("Audio playback was blocked by the browser. Tap the call screen once to enable audio.");
+              const unlockAudioOnce = () => {
+                try {
+                  if (remoteAudioRef.current?.srcObject) {
+                    remoteAudioRef.current.play().catch(() => {});
+                  }
+                } catch (_) {
+                  /* ignore */
+                }
+              };
+              document.addEventListener("pointerdown", unlockAudioOnce, { once: true });
             }
           });
         }
@@ -1184,6 +1218,23 @@ export const CallProvider = ({ children }) => {
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
+    if (
+      shouldClearStaleOutboundSession({
+        outboundDialActiveRef,
+        outboundDialStartedAtRef,
+        callStateRef,
+        currentCallRef,
+        telnyxClientRef,
+      })
+    ) {
+      console.warn("📱 Clearing stale outbound session guard before inbound handling");
+      outboundDialActiveRef.current = false;
+      outboundDialStartedAtRef.current = 0;
+      outboundRingbackStartedRef.current = false;
+      outboundNewCallLegRef.current = null;
+      outboundLegArrivalMsRef.current = {};
+    }
+
     if (isActiveOutboundLeg(call, outboundDialActiveRef, currentCallRef)) {
       console.log('📱 Ignoring incoming handler for active outbound leg (wrong direction tag)');
       return;
@@ -1905,6 +1956,7 @@ export const CallProvider = ({ children }) => {
       }
 
       outboundDialActiveRef.current = true;
+      outboundDialStartedAtRef.current = Date.now();
       currentCallRef.current = call;
       outboundNewCallLegRef.current = call;
       outboundLegArrivalMsRef.current = { [call.id]: Date.now() };
@@ -2025,6 +2077,7 @@ export const CallProvider = ({ children }) => {
       console.error('📱 Failed to make call:', err);
       const recordIdToFail = outboundCallRecordIdRef.current;
       outboundDialActiveRef.current = false;
+      outboundDialStartedAtRef.current = 0;
       outboundNewCallLegRef.current = null;
       outboundLegArrivalMsRef.current = {};
       setError(`Call connection failed: ${err.message || 'Failed to initiate call'}`);
