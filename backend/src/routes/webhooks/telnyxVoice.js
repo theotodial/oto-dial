@@ -62,6 +62,24 @@ const HANDLED_EVENTS = new Set([
 
 const TELNYX_VOICE_API = "https://api.telnyx.com/v2";
 
+async function speakSafetyMessage(callControlId, message) {
+  if (!callControlId || !message) return;
+  await axios.post(
+    `${TELNYX_VOICE_API}/calls/${encodeURIComponent(callControlId)}/actions/speak`,
+    {
+      payload: message,
+      voice: "female",
+      language: "en-US",
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+}
+
 function logCallEvent(eventType, callPayload, callControlId, callSessionId, state = null) {
   const from = normalizeThreadPhone(callPayload?.from);
   const to = normalizeThreadPhone(callPayload?.to);
@@ -168,11 +186,17 @@ router.post("/", async (req, res) => {
     if (eventType === "call.initiated") {
       const payload = req.body?.data?.payload || {};
       const call_control_id = payload.call_control_id;
+      const call_session_id = payload.call_session_id || null;
+      const from = normalizeCallPartyNumber(payload.from);
+      const to = normalizeCallPartyNumber(payload.to);
+      const payloadDirection = String(payload.direction || "").toLowerCase();
+      const timestamp = new Date().toISOString();
 
-      console.log("🚨 INBOUND CALL RECEIVED", {
+      console.log("🚨 INBOUND CALL DEBUG", {
         call_control_id,
-        from: payload.from,
-        to: payload.to,
+        from,
+        to,
+        timestamp,
       });
 
       if (!call_control_id) {
@@ -180,50 +204,66 @@ router.post("/", async (req, res) => {
         return res.sendStatus(200);
       }
 
+      if (payloadDirection && payloadDirection !== "incoming" && payloadDirection !== "inbound") {
+        return res.sendStatus(200);
+      }
+
       try {
-        const answer = await axios.post(
+        await axios.post(
           `https://api.telnyx.com/v2/calls/${call_control_id}/actions/answer`,
           {},
           { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
         );
+        console.log("✅ ANSWER OK");
 
-        console.log("✅ ANSWER OK", answer.data);
+        const ownedNumber = await PhoneNumber.findOne({
+          phoneNumber: to,
+          $or: [{ status: "active" }, { isActive: true }],
+        }).lean();
 
-        const speak = await axios.post(
-          `https://api.telnyx.com/v2/calls/${call_control_id}/actions/speak`,
-          {
-            payload: "Please wait while we connect your call",
-            voice: "female",
-            language: "en-US",
-          },
-          { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
-        );
+        console.log("📞 NUMBER RESOLUTION", {
+          to,
+          resolvedUserId: ownedNumber?.userId ? String(ownedNumber.userId) : null,
+        });
 
-        console.log("🔊 SPEAK SENT", speak.data);
+        if (!ownedNumber?.userId) {
+          console.error("NUMBER NOT OWNED", { to, call_control_id });
+          await speakSafetyMessage(call_control_id, "Call cannot be completed");
+          return res.sendStatus(200);
+        }
 
-        setInterval(async () => {
-          try {
-            await axios.post(
-              `https://api.telnyx.com/v2/calls/${call_control_id}/actions/speak`,
-              {
-                payload: "Please wait",
-                voice: "female",
-              },
-              { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
-            );
-            console.log("🔁 KEEP ALIVE SENT");
-          } catch (e) {
-            console.error("KEEP ALIVE FAILED", e.message);
-          }
-        }, 4000);
+        const direction = to === ownedNumber.phoneNumber ? "inbound" : "outbound";
+        if (direction !== "inbound") {
+          console.error("❌ AMBIGUOUS DIRECTION — SAFETY LOCK", {
+            from,
+            to,
+            owned: ownedNumber.phoneNumber,
+          });
+          await speakSafetyMessage(call_control_id, "Call cannot be completed");
+          return res.sendStatus(200);
+        }
+
+        await Call.create({
+          user: ownedNumber.userId,
+          phoneNumber: from || to,
+          fromNumber: from,
+          toNumber: to,
+          direction: "inbound",
+          source: "voice_api",
+          status: "initiated",
+          telnyxCallControlId: call_control_id,
+          telnyxCallSessionId: call_session_id,
+          callInitiatedAt: new Date(),
+        });
+
+        await speakSafetyMessage(call_control_id, "Please wait while we connect your call");
+        console.log("🔊 SPEAK SENT");
       } catch (err) {
         console.error("❌ HARD FAILURE", err.response?.data || err.message);
       }
 
       return res.sendStatus(200);
     }
-
-    return res.sendStatus(200);
 
     const event = eventType;
     const callPayload = payload || {};
