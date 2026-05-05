@@ -108,6 +108,11 @@ function buildTelnyxVoiceWebhookUrl() {
   return `${base}/api/webhooks/telnyx/voice`;
 }
 
+function shouldSyncCallerNumberConnectionId() {
+  const raw = cleanEnvStr(process.env.TELNYX_SYNC_CALLER_CONNECTION_ID).toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 function buildCredentialWebhookPatchPayload(webhookUrl) {
   const timeoutRaw = Number(process.env.TELNYX_WEBHOOK_TIMEOUT_SECS || 55);
   const timeoutSecs = Number.isFinite(timeoutRaw)
@@ -630,8 +635,9 @@ router.post("/repair-outbound", async (req, res) => {
       }
     }
 
-    // 2b) Caller ID must use this credential connection for voice on the Telnyx side.
-    if (callerNumber) {
+    // 2b) Optional: sync caller number connection_id to this credential connection.
+    // Disabled by default to avoid accidentally overwriting inbound routing.
+    if (callerNumber && shouldSyncCallerNumberConnectionId()) {
       const vn = await ensureCallerNumberVoiceConnection({
         headers,
         connectionId,
@@ -642,6 +648,10 @@ router.post("/repair-outbound", async (req, res) => {
       if (!vn.ok && !vn.skipped && vn.reason) {
         result.warnings.push(`Caller voice connection: ${vn.reason}`);
       }
+    } else if (callerNumber) {
+      result.warnings.push(
+        "Skipped caller number connection sync (set TELNYX_SYNC_CALLER_CONNECTION_ID=true to enable)."
+      );
     }
 
     // 3) Ensure outbound voice profile exists.

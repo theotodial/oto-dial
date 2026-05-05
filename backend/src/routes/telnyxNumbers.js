@@ -60,6 +60,30 @@ function setCacheValue(store, key, value, ttlMs) {
   });
 }
 
+function parseBooleanEnv(value, fallback = false) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return fallback;
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+/**
+ * Inbound routing must use a dedicated inbound connection (typically Call Control / TeXML app).
+ * Do not silently reuse outbound WebRTC credential connection unless explicitly opted in.
+ */
+function getInboundVoiceConnectionId() {
+  const explicit = String(process.env.TELNYX_INBOUND_CONNECTION_ID || "").trim();
+  if (explicit) return explicit;
+
+  const allowLegacy = parseBooleanEnv(
+    process.env.TELNYX_ALLOW_OUTBOUND_CONNECTION_FOR_INBOUND,
+    false
+  );
+  if (allowLegacy) {
+    return String(process.env.TELNYX_CONNECTION_ID || "").trim();
+  }
+  return "";
+}
+
 function getNumberCostLimits(countryCode = "US") {
   const normalized = String(countryCode || "US").toUpperCase();
   if (normalized === "US") {
@@ -1904,7 +1928,7 @@ router.post(
       }
 
       // CONFIGURE VOICE - Set connection ID for incoming calls
-      const connectionId = process.env.TELNYX_CONNECTION_ID;
+      const connectionId = getInboundVoiceConnectionId();
       if (connectionId) {
         try {
           const updateResult = await updateTelnyxPhoneVoiceConnection({
@@ -2055,7 +2079,7 @@ router.post(
       );
 
       // CONFIGURE VOICE - Set connection ID for incoming calls
-      const connectionId = process.env.TELNYX_CONNECTION_ID;
+      const connectionId = getInboundVoiceConnectionId();
       if (connectionId) {
         try {
           const updateResult = await updateTelnyxPhoneVoiceConnection({
@@ -2071,7 +2095,9 @@ router.post(
           console.warn(`⚠️ Could not set voice connection:`, extractTelnyxErrorMessage(voiceErr));
         }
       } else {
-        console.warn(`⚠️ TELNYX_CONNECTION_ID not set - incoming calls won't work!`);
+        console.warn(
+          "⚠️ TELNYX_INBOUND_CONNECTION_ID not set - skipped voice connection update to avoid overwriting inbound routing."
+        );
       }
 
       res.json({ success: true, phoneNumber });
@@ -2097,11 +2123,12 @@ router.post(
         return res.status(500).json({ error: "Telnyx not configured" });
       }
 
-      const connectionId = process.env.TELNYX_CONNECTION_ID;
+      const connectionId = getInboundVoiceConnectionId();
       if (!connectionId) {
         return res.status(500).json({ 
-          error: "TELNYX_CONNECTION_ID not configured",
-          hint: "Set TELNYX_CONNECTION_ID environment variable"
+          error: "TELNYX_INBOUND_CONNECTION_ID not configured",
+          hint:
+            "Set TELNYX_INBOUND_CONNECTION_ID. To intentionally reuse TELNYX_CONNECTION_ID, set TELNYX_ALLOW_OUTBOUND_CONNECTION_FOR_INBOUND=true."
         });
       }
 
@@ -2294,7 +2321,7 @@ router.post(
         return res.status(404).json({ error: "User not found" });
       }
 
-      const connectionId = process.env.TELNYX_CONNECTION_ID;
+      const connectionId = getInboundVoiceConnectionId();
       const webhookUrl = process.env.BACKEND_URL 
         ? `${process.env.BACKEND_URL}/api/webhooks/telnyx/sms`
         : null;
@@ -2405,7 +2432,10 @@ router.get(
         user: user?._id,
         messagingProfileId: user?.messagingProfileId || null,
         messagingWebhook: null,
-        connectionId: process.env.TELNYX_CONNECTION_ID || "NOT SET",
+        outboundConnectionId: process.env.TELNYX_CONNECTION_ID || "NOT SET",
+        inboundConnectionId: process.env.TELNYX_INBOUND_CONNECTION_ID || "NOT SET",
+        allowOutboundForInbound:
+          parseBooleanEnv(process.env.TELNYX_ALLOW_OUTBOUND_CONNECTION_FOR_INBOUND, false),
         backendUrl: process.env.BACKEND_URL || "NOT SET",
         expectedWebhookUrl: process.env.BACKEND_URL 
           ? `${process.env.BACKEND_URL}/api/webhooks/telnyx/sms`
@@ -2496,7 +2526,10 @@ router.get("/webhook-urls", async (req, res) => {
     },
     configuration: {
       backendUrl: process.env.BACKEND_URL || "NOT SET",
-      connectionId: process.env.TELNYX_CONNECTION_ID || "NOT SET",
+      outboundConnectionId: process.env.TELNYX_CONNECTION_ID || "NOT SET",
+      inboundConnectionId: process.env.TELNYX_INBOUND_CONNECTION_ID || "NOT SET",
+      allowOutboundForInbound:
+        parseBooleanEnv(process.env.TELNYX_ALLOW_OUTBOUND_CONNECTION_FOR_INBOUND, false),
       sipUsername: process.env.TELNYX_SIP_USERNAME ? "SET" : "NOT SET",
       telnyxApiKey: process.env.TELNYX_API_KEY ? "SET" : "NOT SET"
     }

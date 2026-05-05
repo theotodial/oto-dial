@@ -388,6 +388,7 @@ app.get("/api/uploads/*", uploadsFallbackHandler);
 // WEBHOOKS
 // ========================
 app.use("/api/webhooks/telnyx/voice", telnyxVoiceWebhook);
+app.use("/webhooks/telnyx/voice", telnyxVoiceWebhook);
 app.use("/api/webhooks/telnyx/sms", telnyxSmsWebhook);
 app.use("/webhooks/telnyx", telnyxSmsWebhook);
 app.use("/webhooks/telnyx/sms", telnyxSmsWebhook);

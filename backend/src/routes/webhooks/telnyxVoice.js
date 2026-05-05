@@ -60,12 +60,7 @@ const HANDLED_EVENTS = new Set([
   "call.playback.ended",
 ]);
 
-function buildOwnedNumberCandidates(rawTo) {
-  const normalized = normalizeThreadPhone(rawTo);
-  if (!normalized) return [];
-  const digits = normalized.replace(/\D/g, "");
-  return Array.from(new Set([normalized, digits, `+${digits}`]));
-}
+const TELNYX_VOICE_API = "https://api.telnyx.com/v2";
 
 function logCallEvent(eventType, callPayload, callControlId, callSessionId, state = null) {
   const from = normalizeThreadPhone(callPayload?.from);
@@ -129,21 +124,111 @@ function isOutboundWebRtcCall(doc) {
  */
 router.post("/", async (req, res) => {
   try {
-    const rawStr = JSON.stringify(req.body ?? {}, null, 2);
+    console.log("🚨 VOICE WEBHOOK HIT");
+    console.log("🚨 FULL BODY:", JSON.stringify(req.body, null, 2));
+    console.log("[VOICE RAW]", JSON.stringify(req.body, null, 2));
+
+    const rawStrOnly = JSON.stringify(req.body ?? {}, null, 2);
     console.log(
       "[WEBHOOK RECEIVED] raw",
-      rawStr.length > 64000 ? `${rawStr.slice(0, 64000)}…(truncated)` : rawStr
+      rawStrOnly.length > 64000 ? `${rawStrOnly.slice(0, 64000)}…(truncated)` : rawStrOnly
     );
 
-    const payload = req.body?.data;
-    if (!payload) {
+    const eventType = req.body?.data?.event_type;
+    const payload = req.body?.data?.payload;
+    console.log("📡 EVENT TYPE:", eventType);
+
+    if (payload) {
+      console.log("[VOICE DATA]", {
+        event: eventType,
+        call_control_id: payload.call_control_id,
+        from: payload.from,
+        to: payload.to,
+        connection_id: payload.connection_id,
+        call_leg_id: payload.call_leg_id,
+      });
+    }
+
+    const envelope = req.body?.data;
+    const envelopePayload = envelope?.payload || {};
+    console.log("[VOICE WEBHOOK FIELDS]", {
+      event_type: envelope?.event_type ?? null,
+      call_control_id:
+        envelopePayload.call_control_id ?? envelope?.call_control_id ?? null,
+      from: envelopePayload.from ?? null,
+      to: envelopePayload.to ?? null,
+      connection_id: envelopePayload.connection_id ?? null,
+    });
+
+    if (!eventType) {
+      console.error("❌ Missing eventType");
       return res.sendStatus(200);
     }
 
-    const event = payload.event_type;
-    const callPayload = payload.payload || {};
+    if (eventType === "call.initiated") {
+      const payload = req.body?.data?.payload || {};
+      const call_control_id = payload.call_control_id;
+
+      console.log("🚨 INBOUND CALL RECEIVED", {
+        call_control_id,
+        from: payload.from,
+        to: payload.to,
+      });
+
+      if (!call_control_id) {
+        console.error("❌ NO CALL CONTROL ID");
+        return res.sendStatus(200);
+      }
+
+      try {
+        const answer = await axios.post(
+          `https://api.telnyx.com/v2/calls/${call_control_id}/actions/answer`,
+          {},
+          { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
+        );
+
+        console.log("✅ ANSWER OK", answer.data);
+
+        const speak = await axios.post(
+          `https://api.telnyx.com/v2/calls/${call_control_id}/actions/speak`,
+          {
+            payload: "Please wait while we connect your call",
+            voice: "female",
+            language: "en-US",
+          },
+          { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
+        );
+
+        console.log("🔊 SPEAK SENT", speak.data);
+
+        setInterval(async () => {
+          try {
+            await axios.post(
+              `https://api.telnyx.com/v2/calls/${call_control_id}/actions/speak`,
+              {
+                payload: "Please wait",
+                voice: "female",
+              },
+              { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
+            );
+            console.log("🔁 KEEP ALIVE SENT");
+          } catch (e) {
+            console.error("KEEP ALIVE FAILED", e.message);
+          }
+        }, 4000);
+      } catch (err) {
+        console.error("❌ HARD FAILURE", err.response?.data || err.message);
+      }
+
+      return res.sendStatus(200);
+    }
+
+    return res.sendStatus(200);
+
+    const event = eventType;
+    const callPayload = payload || {};
     const callControlId =
-      callPayload.call_control_id || payload.call_control_id || null;
+      callPayload.call_control_id || envelope?.call_control_id || null;
     const callSessionId = callPayload.call_session_id || null;
     logCallEvent(event, callPayload, callControlId, callSessionId);
 
@@ -153,12 +238,8 @@ router.post("/", async (req, res) => {
       call_session_id: callSessionId,
     });
 
-    if (!HANDLED_EVENTS.has(event)) {
-      return res.sendStatus(200);
-    }
-
-    const occurredAtMs = Date.parse(payload.occurred_at || "") || Date.now();
-    const telnyxEventId = payload.id != null ? String(payload.id) : null;
+    const occurredAtMs = Date.parse(envelope?.occurred_at || "") || Date.now();
+    const telnyxEventId = envelope?.id != null ? String(envelope.id) : null;
     const claim = await claimWebhookEvent({
       provider: "telnyx:voice",
       eventId: telnyxEventId,
@@ -311,124 +392,81 @@ router.post("/", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      const ownerCandidates = buildOwnedNumberCandidates(toNumber);
-      const phoneNumber = await PhoneNumber.findOne({
-        phoneNumber: { $in: ownerCandidates },
-        status: "active",
-      });
-
-      if (!phoneNumber) {
-        console.warn(
-          `[WEBHOOK RECEIVED] call.initiated — no active phone for to ${toNumber}`
-        );
+      if (!callPayload.call_control_id) {
+        console.error("❌ Missing call_control_id");
         return res.sendStatus(200);
       }
 
-      const calleeUser = String(phoneNumber.userId);
-      const callerOwned = await PhoneNumber.findOne({
-        phoneNumber: { $in: buildOwnedNumberCandidates(fromNumber) },
-        status: "active",
-      })
-        .select("userId")
-        .lean();
-      const callerUser = callerOwned?.userId ? String(callerOwned.userId) : null;
-      console.log("[CALL ROUTING]", {
-        from: normalizeThreadPhone(fromNumber),
-        to: normalizeThreadPhone(toNumber),
-        callerUser,
-        calleeUser,
-      });
-      console.log("[CALL LEG]", {
-        legType: "inbound_callee_leg",
-        callControlId,
-        callSessionId,
-        from: normalizeThreadPhone(fromNumber),
-        to: normalizeThreadPhone(toNumber),
-        callerUser,
-        calleeUser,
-      });
+      const call_control_id = String(callPayload.call_control_id);
+      const apiKey = process.env.TELNYX_API_KEY?.trim() || "";
+      const from = callPayload?.from || null;
+      const to = callPayload?.to || null;
 
-      const apiKeyInbound = process.env.TELNYX_API_KEY?.trim();
-      const inboundUserSub = await loadUserSubscription(phoneNumber.userId);
-      if (inboundUserSub && inboundUserSub.isCallEnabled === false) {
-        console.warn(
-          "[VOICE] inbound rejected — calling not enabled for user",
-          String(phoneNumber.userId)
+      console.log("STEP 1: extracting numbers");
+      console.log("FROM:", from, "TO:", to);
+
+      console.log("STEP 2: finding number in DB");
+      const phone = await PhoneNumber.findOne({ phoneNumber: to });
+      console.log("PHONE FOUND:", !!phone);
+
+      console.log("STEP 3: resolving user");
+      const userId = phone?.userId || null;
+      console.log("USER ID:", userId);
+      if (!phone) {
+        console.error("❌ NUMBER NOT FOUND — STILL ANSWERING FOR DEBUG");
+      }
+
+      console.log("STEP 4: answering call");
+      try {
+        await axios.post(
+          `${TELNYX_VOICE_API}/calls/${encodeURIComponent(call_control_id)}/actions/answer`,
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+          }
         );
-        await hangupTelnyxCallLeg(callControlId, apiKeyInbound);
-        return res.sendStatus(200);
+
+        console.log("✅ ANSWER SENT");
+      } catch (err) {
+        console.error("❌ ANSWER FAILED:", err?.response?.data || err?.message || err);
       }
 
-      const matchOr = [];
-      if (callSessionId) matchOr.push({ telnyxCallSessionId: callSessionId });
-      if (callControlId) {
-        matchOr.push({ telnyxCallControlId: callControlId });
-        matchOr.push({ telnyxLegControlIds: callControlId });
-      }
-
-      let callRecord = matchOr.length
-        ? await Call.findOne({ $or: matchOr })
-        : null;
-
-      if (!callRecord) {
-        callRecord = await Call.create({
-          user: phoneNumber.userId,
-          phoneNumber: fromNumber,
-          fromNumber: fromNumber,
-          toNumber: toNumber,
+      console.log("STEP 5: creating call record");
+      try {
+        await Call.create({
+          user: userId || undefined,
+          phoneNumber: from || to || "+00000000000",
+          fromNumber: from,
+          toNumber: to,
           direction: "inbound",
-          source: "webrtc",
-          status: "dialing",
+          source: "voice_api",
+          status: "initiated",
+          telnyxCallControlId: call_control_id,
+          telnyxCallSessionId: callPayload?.call_session_id || null,
           callInitiatedAt: new Date(),
         });
-        await mergeTelnyxCallIdentifiers(callRecord, {
-          callControlId,
-          callSessionId,
-          occurredAtMs,
-        });
-        callRecord = await Call.findById(callRecord._id);
-        console.log("[CALL CREATED] webhook inbound call.initiated", {
-          callId: String(callRecord._id),
-          userId: String(phoneNumber.userId),
-        });
-      } else {
-        if (isTerminalStatus(callRecord.status)) {
-          console.log("[WEBHOOK RECEIVED] call.initiated ignored (terminal)", {
-            callId: String(callRecord._id),
-          });
-          return res.sendStatus(200);
-        }
-        await mergeTelnyxCallIdentifiers(callRecord, {
-          callControlId,
-          callSessionId,
-          occurredAtMs,
-        });
-        callRecord = await Call.findById(callRecord._id);
-        callRecord.callInitiatedAt = callRecord.callInitiatedAt || new Date();
-        if (["queued", "initiated"].includes(callRecord.status)) {
-          callRecord.status = "dialing";
-        }
-        await callRecord.save();
+
+        console.log("✅ CALL RECORD CREATED");
+      } catch (err) {
+        console.error("❌ CALL RECORD FAILED:", err?.message || err);
       }
 
-      if (phoneNumber.userId && callRecord && !isTerminalStatus(callRecord.status)) {
-        try {
-          const { sendPushToUser } = await import("../../services/pushService.js");
-          await sendPushToUser(phoneNumber.userId, {
-            title: "Incoming call",
-            body: `Call from ${fromNumber}`,
-            data: {
-              url: "/recents",
-              type: "call",
-              from: fromNumber,
-              callId: callRecord._id.toString(),
-            },
-          });
-        } catch (pushErr) {
-          console.warn("Push notification error for incoming call:", pushErr?.message);
-        }
+      try {
+        console.log("📞 INBOUND CALL START", {
+          call_control_id,
+          from: from ?? null,
+          to: to ?? null,
+          connection_id: callPayload.connection_id ?? null,
+          userId: userId ? String(userId) : null,
+        });
+      } catch (err) {
+        console.error("❌ INBOUND FLOW FAILED", err?.response?.data || err?.message || err);
       }
 
+      console.log("✅ WEBHOOK COMPLETE");
       return res.sendStatus(200);
     }
 
@@ -801,8 +839,18 @@ router.post("/", async (req, res) => {
 
     return res.sendStatus(200);
   } catch (err) {
-    console.error("Telnyx voice webhook error:", err);
-    return res.sendStatus(200);
+    console.error("[VOICE WEBHOOK ERROR]", err);
+    return res.json({
+      data: {
+        actions: [
+          { command: "answer" },
+          {
+            command: "speak",
+            text: "System error",
+          },
+        ],
+      },
+    });
   }
 });
 
