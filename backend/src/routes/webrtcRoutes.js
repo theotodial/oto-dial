@@ -110,6 +110,8 @@ function buildTelnyxVoiceWebhookUrl() {
 
 function shouldSyncCallerNumberConnectionId() {
   const raw = cleanEnvStr(process.env.TELNYX_SYNC_CALLER_CONNECTION_ID).toLowerCase();
+  if (!raw) return true;
+  if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return false;
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
@@ -525,6 +527,7 @@ router.post("/repair-outbound", async (req, res) => {
 
     const destinationNumber = String(req.body?.destinationNumber || "").trim() || null;
     const callerNumber = String(req.body?.callerNumber || "").trim() || null;
+    const forceSyncCallerConnectionId = req.body?.forceSyncCallerConnectionId === true;
     const destinationCountry = destinationNumber ? detectCountryFromPhoneNumber(destinationNumber) : null;
 
     const result = {
@@ -637,7 +640,7 @@ router.post("/repair-outbound", async (req, res) => {
 
     // 2b) Optional: sync caller number connection_id to this credential connection.
     // Disabled by default to avoid accidentally overwriting inbound routing.
-    if (callerNumber && shouldSyncCallerNumberConnectionId()) {
+    if (callerNumber && (forceSyncCallerConnectionId || shouldSyncCallerNumberConnectionId())) {
       const vn = await ensureCallerNumberVoiceConnection({
         headers,
         connectionId,

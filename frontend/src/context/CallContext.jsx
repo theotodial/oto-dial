@@ -1748,6 +1748,7 @@ export const CallProvider = ({ children }) => {
         const repair = await API.post('/api/webrtc/repair-outbound', {
           destinationNumber: destE164,
           callerNumber: callerE164,
+          forceSyncCallerConnectionId: true,
         });
         const ok =
           typeof repair.status === 'number' &&
@@ -2340,7 +2341,21 @@ export const CallProvider = ({ children }) => {
     setIsMinimized(false);
   }, []);
 
-  // WebRTC intentionally initializes lazily from user intent (dial/open voice), not on app boot.
+  // Keep WebRTC ready for real inbound rings even when user has not opened the dialer yet.
+  useEffect(() => {
+    const hasUserToken = typeof window !== 'undefined' && !!localStorage.getItem('token');
+    if (!hasUserToken) return;
+    if (isClientReadyRef.current || isInitializingRef.current) return;
+    if (callStateRef.current !== CALL_STATES.IDLE) return;
+
+    const timer = window.setTimeout(() => {
+      initializeClient().catch((e) => {
+        console.warn('📱 Background WebRTC init failed (will retry on demand):', e?.message || e);
+      });
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [initializeClient]);
 
   // Inbound calls: only via Telnyx WebRTC (telnyx.rtc.incoming / notifications). API polling was removed — it matched
   // stale DB rows after hangup and opened a second "Unknown" incoming UI while the real call was outbound.
