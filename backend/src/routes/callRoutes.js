@@ -312,6 +312,13 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       });
     }
 
+    if (direction === "outbound") {
+      console.log("[OUTBOUND CALL]", {
+        from: normalizeCallPartyNumber(fromNumber) || fromNumber,
+        to: normalizeCallPartyNumber(toNumber || phoneNumber) || toNumber || phoneNumber,
+      });
+    }
+
     const call = await Call.create({
       user: req.userId,
       phoneNumber,
