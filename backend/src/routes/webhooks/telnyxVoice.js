@@ -204,65 +204,73 @@ router.post("/", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      if (payloadDirection && payloadDirection !== "incoming" && payloadDirection !== "inbound") {
-        return res.sendStatus(200);
-      }
+      const isInboundEvent =
+        payloadDirection === "incoming" || payloadDirection === "inbound";
+      if (!isInboundEvent) {
+        // Preserve existing outbound parked flow below for non-inbound call.initiated.
+      } else {
+        try {
+          await axios.post(
+            `https://api.telnyx.com/v2/calls/${call_control_id}/actions/answer`,
+            {},
+            { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
+          );
+          console.log("✅ ANSWER OK");
 
-      try {
-        await axios.post(
-          `https://api.telnyx.com/v2/calls/${call_control_id}/actions/answer`,
-          {},
-          { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
-        );
-        console.log("✅ ANSWER OK");
+          const ownedNumber = await PhoneNumber.findOne({
+            phoneNumber: to,
+            isActive: true,
+          }).lean();
 
-        const ownedNumber = await PhoneNumber.findOne({
-          phoneNumber: to,
-          $or: [{ status: "active" }, { isActive: true }],
-        }).lean();
-
-        console.log("📞 NUMBER RESOLUTION", {
-          to,
-          resolvedUserId: ownedNumber?.userId ? String(ownedNumber.userId) : null,
-        });
-
-        if (!ownedNumber?.userId) {
-          console.error("NUMBER NOT OWNED", { to, call_control_id });
-          await speakSafetyMessage(call_control_id, "Call cannot be completed");
-          return res.sendStatus(200);
-        }
-
-        const direction = to === ownedNumber.phoneNumber ? "inbound" : "outbound";
-        if (direction !== "inbound") {
-          console.error("❌ AMBIGUOUS DIRECTION — SAFETY LOCK", {
-            from,
+          console.log("📞 RESOLVED USER", {
             to,
-            owned: ownedNumber.phoneNumber,
+            userId: ownedNumber?.userId ? String(ownedNumber.userId) : null,
           });
-          await speakSafetyMessage(call_control_id, "Call cannot be completed");
+
+          if (!ownedNumber?.userId) {
+            console.error("UNOWNED NUMBER", { to, call_control_id });
+            await speakSafetyMessage(call_control_id, "number not available");
+            return res.sendStatus(200);
+          }
+
+          const direction = to === ownedNumber.phoneNumber ? "inbound" : "outbound";
+          if (direction !== "inbound") {
+            console.error("❌ AMBIGUOUS DIRECTION — SAFETY LOCK", {
+              from,
+              to,
+              owned: ownedNumber.phoneNumber,
+            });
+            await speakSafetyMessage(call_control_id, "Call cannot be completed");
+            return res.sendStatus(200);
+          }
+
+          await Call.create({
+            user: ownedNumber.userId,
+            phoneNumber: from || to,
+            fromNumber: from,
+            toNumber: to,
+            direction: "inbound",
+            source: "voice_api",
+            status: "initiated",
+            telnyxCallControlId: call_control_id,
+            telnyxCallSessionId: call_session_id,
+            callInitiatedAt: new Date(),
+          });
+
+          await speakSafetyMessage(call_control_id, "Please wait while we connect your call");
+          console.log("🔊 SPEAK SENT");
+          return res.sendStatus(200);
+        } catch (err) {
+          console.error("❌ HARD FAILURE", err.response?.data || err.message);
+          // Failsafe lock: never route on ambiguity/errors.
+          try {
+            await speakSafetyMessage(call_control_id, "Call cannot be completed");
+          } catch (_) {
+            /* no-op */
+          }
           return res.sendStatus(200);
         }
-
-        await Call.create({
-          user: ownedNumber.userId,
-          phoneNumber: from || to,
-          fromNumber: from,
-          toNumber: to,
-          direction: "inbound",
-          source: "voice_api",
-          status: "initiated",
-          telnyxCallControlId: call_control_id,
-          telnyxCallSessionId: call_session_id,
-          callInitiatedAt: new Date(),
-        });
-
-        await speakSafetyMessage(call_control_id, "Please wait while we connect your call");
-        console.log("🔊 SPEAK SENT");
-      } catch (err) {
-        console.error("❌ HARD FAILURE", err.response?.data || err.message);
       }
-
-      return res.sendStatus(200);
     }
 
     const event = eventType;
@@ -497,7 +505,7 @@ router.post("/", async (req, res) => {
       try {
         console.log("📞 INBOUND CALL START", {
           call_control_id,
-          from: from ?? null,
+            from,
           to: to ?? null,
           connection_id: callPayload.connection_id ?? null,
           userId: userId ? String(userId) : null,

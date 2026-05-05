@@ -45,7 +45,7 @@ async function dedupePhoneNumbers() {
 
     const result = await PhoneNumber.updateMany(
       { _id: { $in: duplicateIds } },
-      { $set: { status: "released" } }
+      { $set: { status: "released", isActive: false } }
     );
 
     totalMarkedReleased += Number(result.modifiedCount || 0);

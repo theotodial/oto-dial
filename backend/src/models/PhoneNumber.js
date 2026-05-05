@@ -21,6 +21,12 @@ const phoneNumberSchema = new mongoose.Schema(
       default: "active"
     },
 
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true
+    },
+
     telnyxPhoneNumberId: {
       type: String,
       required: true
@@ -120,5 +126,14 @@ const phoneNumberSchema = new mongoose.Schema(
 
 phoneNumberSchema.index({ userId: 1, status: 1 });
 phoneNumberSchema.index({ phoneNumber: 1 }, { unique: true, name: "phoneNumber_unique_isolation" });
+
+phoneNumberSchema.pre("save", function syncStatusAndActive(next) {
+  if (this.isModified("status") && !this.isModified("isActive")) {
+    this.isActive = this.status === "active";
+  } else if (this.isModified("isActive") && !this.isModified("status")) {
+    this.status = this.isActive ? "active" : "released";
+  }
+  next();
+});
 
 export default mongoose.model("PhoneNumber", phoneNumberSchema);

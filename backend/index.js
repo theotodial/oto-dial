@@ -447,6 +447,10 @@ app.get("/api/health", (req, res) => {
   res.json({ success: true, status: "ok", time: new Date().toISOString() });
 });
 
+app.get("/api/debug/voice-hit", (_req, res) => {
+  return res.status(200).send("OK");
+});
+
 // Webhook info endpoint (public, for debugging)
 app.get("/api/webhook-info", (req, res) => {
   const backendUrl = process.env.BACKEND_URL || "YOUR_BACKEND_URL";
