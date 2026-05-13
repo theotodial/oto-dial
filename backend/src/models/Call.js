@@ -285,6 +285,9 @@ callSchema.index(
 
 callSchema.pre("save", function callWriteDiscipline(next) {
   if (!this.isModified("status")) return next();
+  // Hotfix: initial call creation is a trusted local write path and does not
+  // run through transition helpers yet.
+  if (this.isNew) return next();
   const source = this?.$locals?.transitionSource;
   const eventAt = this.lastProcessedEventAt;
   if (!source || !eventAt) {

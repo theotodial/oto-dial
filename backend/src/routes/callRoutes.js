@@ -388,6 +388,19 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       source: direction === "outbound" ? "webrtc" : source,
     });
 
+    console.log("[OUTBOUND DIAL DEBUG]", {
+      phase: "call_document_created",
+      callId: call?._id ? String(call._id) : null,
+      currentStatus: call?.status || null,
+      targetStatus: null,
+      accepted: Boolean(call?._id),
+      rejectionReason: call?._id ? null : "create_failed",
+      lockAcquired: null,
+      eventTimestamp: new Date().toISOString(),
+      eventType: "call_create",
+      transitionSource: "create_call_route",
+    });
+
     if (!call?._id) {
       console.error("[CALL FLOW] Call.create returned no _id");
       return res.status(500).json({

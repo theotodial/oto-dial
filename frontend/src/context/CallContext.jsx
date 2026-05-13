@@ -137,6 +137,13 @@ function callHasLiveRemoteAudio(call) {
   return false;
 }
 
+function logMediaPipeline(fields = {}) {
+  console.log('[MEDIA PIPELINE]', {
+    ...fields,
+    timestamp: new Date().toISOString(),
+  });
+}
+
 function stopTelnyxSdkRingbackEverywhere(client) {
   if (!client?.calls) return;
   try {
@@ -844,6 +851,21 @@ export const CallProvider = ({ children }) => {
       if (audioSource.remoteStream && remoteAudioRef.current) {
         if (remoteAudioRef.current.srcObject !== audioSource.remoteStream) {
           console.log('📱 Attaching remote audio stream (leg:', audioSource.id, ')');
+          logMediaPipeline({
+            phase: 'remote_stream_received',
+            callId: audioSource._dbCallId || null,
+            providerState: normalizeTelnyxCallState(getRawTelnyxCallState(audioSource)),
+            bridgeExecuted: null,
+            bridgeSuccess: null,
+            peerConnectionState: audioSource?.peer?.instance?.connectionState || null,
+            iceConnectionState: audioSource?.peer?.instance?.iceConnectionState || null,
+            remoteTracks:
+              typeof audioSource.remoteStream.getAudioTracks === 'function'
+                ? audioSource.remoteStream.getAudioTracks().length
+                : 0,
+            audioAttached: true,
+            telnyxCallControlId: audioSource?.callControlId || null,
+          });
           remoteAudioRef.current.srcObject = audioSource.remoteStream;
           
           // Set initial audio routing based on speaker state (use ref with safety)
@@ -1096,6 +1118,18 @@ export const CallProvider = ({ children }) => {
           setCallPhaseLabel(null);
           setCallState(CALL_STATES.ACTIVE);
           console.log('[CALL FLOW] STATE UPDATED → active (Telnyx)');
+          logMediaPipeline({
+            phase: 'active_state',
+            callId: audioSource._dbCallId || null,
+            providerState: state,
+            bridgeExecuted: null,
+            bridgeSuccess: null,
+            peerConnectionState: audioSource?.peer?.instance?.connectionState || null,
+            iceConnectionState: audioSource?.peer?.instance?.iceConnectionState || null,
+            remoteTracks: callHasLiveRemoteAudio(audioSource) ? 1 : 0,
+            audioAttached: Boolean(remoteAudioRef.current?.srcObject),
+            telnyxCallControlId: audioSource?.callControlId || null,
+          });
           stopTelnyxSdkRingbackEverywhere(telnyxClientRef.current);
 
           // Stop sounds safely

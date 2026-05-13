@@ -37,6 +37,13 @@ async function logLifecycle({
   }).catch(() => {});
 }
 
+function logOutboundDialDebug(fields = {}) {
+  console.log("[OUTBOUND DIAL DEBUG]", {
+    ...fields,
+    timestamp: new Date().toISOString(),
+  });
+}
+
 function normalizeApplyResult(result) {
   if (!result?.ok) {
     return {
@@ -62,14 +69,39 @@ export async function applyCallTransition({
   reason = null,
   details = {},
 }) {
+  const normalizedTargetStatus =
+    targetStatus == null ? null : normalizeCallStatus(targetStatus);
+  logOutboundDialDebug({
+    phase: "transition_enter",
+    callId: callId ? String(callId) : null,
+    targetStatus: normalizedTargetStatus,
+    accepted: null,
+    rejectionReason: null,
+    lockAcquired: null,
+    eventTimestamp: eventAt || null,
+    eventType: eventType || null,
+    transitionSource: source || null,
+  });
   const locked = await withCallWriteLock(callId, async () => {
     const call = await Call.findById(callId);
     if (!call) {
+      logOutboundDialDebug({
+        phase: "not_found",
+        callId: callId ? String(callId) : null,
+        currentStatus: null,
+        targetStatus: normalizedTargetStatus,
+        accepted: false,
+        rejectionReason: "not_found",
+        lockAcquired: true,
+        eventTimestamp: eventAt || null,
+        eventType: eventType || null,
+        transitionSource: source || null,
+      });
       return { ok: false, reason: "not_found" };
     }
 
     const from = normalizeCallStatus(call.status);
-    const to = targetStatus == null ? null : normalizeCallStatus(targetStatus);
+    const to = normalizedTargetStatus;
     const order = await acceptEventForCall({
       call,
       eventAt: eventAt || new Date(),
@@ -79,6 +111,18 @@ export async function applyCallTransition({
       callSessionId: call.telnyxCallSessionId || null,
     });
     if (!order.accepted) {
+      logOutboundDialDebug({
+        phase: "ordering_rejected",
+        callId: String(call._id),
+        currentStatus: from,
+        targetStatus: to,
+        accepted: false,
+        rejectionReason: order.reason,
+        lockAcquired: true,
+        eventTimestamp: eventAt || null,
+        eventType: eventType || null,
+        transitionSource: source || null,
+      });
       return { ok: false, reason: order.reason, call };
     }
 
@@ -168,7 +212,35 @@ export async function applyCallTransition({
       details: { source, eventType, reason: reason || null, ...details },
     });
 
+    logOutboundDialDebug({
+      phase: "transition_applied",
+      callId: String(call._id),
+      currentStatus: from,
+      targetStatus: to,
+      accepted: true,
+      rejectionReason: null,
+      lockAcquired: true,
+      eventTimestamp: eventAt || null,
+      eventType: eventType || null,
+      transitionSource: source || null,
+    });
+
     return { ok: true, call };
   });
-  return normalizeApplyResult(locked);
+  const out = normalizeApplyResult(locked);
+  if (!out.ok) {
+    logOutboundDialDebug({
+      phase: "transition_exit_rejected",
+      callId: callId ? String(callId) : null,
+      currentStatus: out.call?.status || null,
+      targetStatus: normalizedTargetStatus,
+      accepted: false,
+      rejectionReason: out.reason || null,
+      lockAcquired: out.reason === "call_write_lock_skipped" ? false : null,
+      eventTimestamp: eventAt || null,
+      eventType: eventType || null,
+      transitionSource: source || null,
+    });
+  }
+  return out;
 }

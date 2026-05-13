@@ -290,6 +290,13 @@ function logTelecomWebhook(fields = {}) {
   });
 }
 
+function logMediaDebug(fields = {}) {
+  console.log("[MEDIA DEBUG]", {
+    ...fields,
+    timestamp: new Date().toISOString(),
+  });
+}
+
 async function transitionCallStatus({
   call,
   toStatus,
@@ -606,16 +613,71 @@ router.post("/", async (req, res) => {
         apiKeyAns &&
         callControlId
       ) {
-        const parkedAns = await Call.findOne({
+        let parkedAns = await Call.findOne({
           webrtcParkPstnCallControlId: callControlId,
           webrtcParkBridgeAttempted: { $ne: true },
           telnyxCallControlId: { $exists: true, $nin: [null, ""] },
         });
-        if (parkedAns?.telnyxCallControlId) {
+        if (!parkedAns) {
+          // Hotfix: under load, answered can race before pstn control id lookup path catches up.
+          parkedAns = await findCallForTelnyxEvent({ callControlId, callPayload });
+          if (parkedAns?._id) {
+            await mergeTelnyxCallIdentifiers(parkedAns, {
+              callControlId,
+              callSessionId: callPayload.call_session_id,
+              occurredAtMs,
+            }).catch(() => {});
+            parkedAns = await Call.findById(parkedAns._id);
+          }
+        }
+
+        const shouldBridgeParked =
+          Boolean(parkedAns?.telnyxCallControlId) &&
+          Boolean(parkedAns?.webrtcParkPstnCallControlId) &&
+          parkedAns?.webrtcParkBridgeAttempted !== true &&
+          (callControlId === parkedAns.webrtcParkPstnCallControlId ||
+            callControlId === parkedAns.telnyxCallControlId);
+
+        logMediaDebug({
+          phase: "answered_event_received",
+          eventType: event,
+          callControlId,
+          callSessionId,
+          callId: parkedAns?._id ? String(parkedAns._id) : null,
+          bridgeCandidate: shouldBridgeParked,
+          mongoStatus: parkedAns?.status || null,
+          providerState: "answered",
+          bridgeExecuted: false,
+          bridgeSuccess: null,
+          telnyxCallControlId: parkedAns?.telnyxCallControlId || null,
+          pstnCallControlId: parkedAns?.webrtcParkPstnCallControlId || null,
+        });
+
+        if (shouldBridgeParked) {
+          const claim = await Call.findOneAndUpdate(
+            { _id: parkedAns._id, webrtcParkBridgeAttempted: { $ne: true } },
+            { $set: { webrtcParkBridgeAttempted: true, callBridgedAt: new Date() } },
+            { new: true }
+          );
+          if (!claim) {
+            logMediaDebug({
+              phase: "bridge_skipped_already_attempted",
+              eventType: event,
+              callControlId,
+              callSessionId,
+              callId: String(parkedAns._id),
+              bridgeExecuted: false,
+              bridgeSuccess: false,
+              reason: "already_attempted",
+              telnyxCallControlId: parkedAns.telnyxCallControlId,
+              pstnCallControlId: parkedAns.webrtcParkPstnCallControlId,
+            });
+            return res.sendStatus(200);
+          }
           try {
             const bridgeResponse = await bridgeParkedWebRtcToPstn({
               agentCallControlId: parkedAns.telnyxCallControlId,
-              pstnCallControlId: callControlId,
+              pstnCallControlId: parkedAns.webrtcParkPstnCallControlId,
               apiKey: apiKeyAns,
             });
             console.log("[BRIDGE RESPONSE]", bridgeResponse?.raw || bridgeResponse || null);
@@ -628,14 +690,38 @@ router.post("/", async (req, res) => {
               state: "bridge_sent",
               response: bridgeResponse?.raw || bridgeResponse || null,
             });
-            await Call.updateOne(
-              { _id: parkedAns._id },
-              { $set: { webrtcParkBridgeAttempted: true, callBridgedAt: new Date() } }
-            );
+            logMediaDebug({
+              phase: "bridge_executed",
+              eventType: event,
+              callControlId,
+              callSessionId,
+              callId: String(parkedAns._id),
+              bridgeExecuted: true,
+              bridgeSuccess: true,
+              providerState: "bridge_sent",
+              telnyxCallControlId: parkedAns.telnyxCallControlId,
+              pstnCallControlId: parkedAns.webrtcParkPstnCallControlId,
+            });
             console.log("[PARK OUTBOUND] Bridged WebRTC leg ↔ PSTN", {
               callId: String(parkedAns._id),
             });
           } catch (brErr) {
+            await Call.updateOne(
+              { _id: parkedAns._id },
+              { $set: { webrtcParkBridgeAttempted: false } }
+            ).catch(() => {});
+            logMediaDebug({
+              phase: "bridge_failed",
+              eventType: event,
+              callControlId,
+              callSessionId,
+              callId: String(parkedAns._id),
+              bridgeExecuted: true,
+              bridgeSuccess: false,
+              reason: brErr?.response?.data || brErr?.message || String(brErr),
+              telnyxCallControlId: parkedAns.telnyxCallControlId,
+              pstnCallControlId: parkedAns.webrtcParkPstnCallControlId,
+            });
             console.error(
               "[PARK OUTBOUND] bridge failed:",
               brErr?.response?.data || brErr?.message || brErr
