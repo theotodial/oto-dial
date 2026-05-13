@@ -3,9 +3,15 @@ import CallLifecycleEvent from "../../models/CallLifecycleEvent.js";
 import { emitAdminLiveCall } from "../../services/adminLiveEventsService.js";
 import { emitUserStateResyncRequired } from "../../events/smsEvents.js";
 import { emitAgentAlert } from "../shared/agentAlerts.js";
+import {
+  CALL_STATES,
+  ACTIVE_CALL_STATUSES,
+  canTransitionTo,
+  normalizeCallStatus,
+} from "../../utils/callStateMachine.js";
 
 const AGENT = "call-lifecycle-agent";
-const ACTIVE_STATES = ["queued", "initiated", "dialing", "ringing", "in-progress", "answered"];
+const ACTIVE_STATES = ACTIVE_CALL_STATUSES;
 
 export const callLifecycleAgent = {
   name: AGENT,
@@ -18,7 +24,7 @@ export const callLifecycleAgent = {
     const activeCutoff = new Date(now - Number(process.env.AGENT_CALL_ACTIVE_STALE_MS || 6 * 60 * 60 * 1000));
 
     const stuckCalls = await Call.find({
-      status: { $in: ["queued", "initiated", "dialing", "ringing"] },
+      status: { $in: [CALL_STATES.QUEUED, CALL_STATES.INITIATED, CALL_STATES.DIALING, CALL_STATES.RINGING] },
       updatedAt: { $lte: ringingCutoff },
     })
       .select("_id user status phoneNumber direction updatedAt")
@@ -26,11 +32,16 @@ export const callLifecycleAgent = {
 
     let cleaned = 0;
     for (const call of stuckCalls) {
+      const from = normalizeCallStatus(call.status);
+      const to = CALL_STATES.FAILED;
+      if (!canTransitionTo(from, to)) {
+        continue;
+      }
       const result = await Call.updateOne(
         { _id: call._id, status: call.status, updatedAt: { $lte: ringingCutoff } },
         {
           $set: {
-            status: "failed",
+            status: to,
             failReason: "agent_stale_call_cleanup",
             hangupCause: "agent_stale_call_cleanup",
             callEndedAt: new Date(),
@@ -45,7 +56,7 @@ export const callLifecycleAgent = {
           severity: "warning",
           event: "stuck_call_force_cleanup",
           previousState: call.status,
-          nextState: "failed",
+          nextState: to,
           action: "force_cleanup_stale_call",
           details: { updatedAt: call.updatedAt },
         });
@@ -54,7 +65,7 @@ export const callLifecycleAgent = {
           callId: call._id,
           destination: call.phoneNumber,
           direction: call.direction,
-          status: "failed",
+          status: to,
         }).catch(() => {});
         emitUserStateResyncRequired(call.user, {
           reason: "call_lifecycle_cleanup",

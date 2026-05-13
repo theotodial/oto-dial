@@ -150,7 +150,7 @@ router.get("/", requireAdmin, async (req, res) => {
           failed: {
             $sum: {
               $cond: [
-                { $in: ["$status", ["failed", "missed"]] },
+                { $in: ["$status", ["failed", "no-answer", "busy", "rejected", "canceled"]] },
                 1,
                 0
               ]

@@ -2,6 +2,7 @@ import SMS from "../../models/SMS.js";
 import Call from "../../models/Call.js";
 import Subscription from "../../models/Subscription.js";
 import { emitUserStateResyncRequired } from "../../events/smsEvents.js";
+import { ACTIVE_CALL_STATUSES } from "../../utils/callStateMachine.js";
 
 const AGENT = "live-state-sync-agent";
 
@@ -14,7 +15,7 @@ export const liveStateSyncAgent = {
     const cutoff = new Date(Date.now() - Number(process.env.AGENT_LIVE_SYNC_STALE_MS || 10 * 60 * 1000));
     const [recentSmsUsers, activeCallUsers, recentlyUpdatedSubs] = await Promise.all([
       SMS.distinct("user", { updatedAt: { $gte: cutoff } }),
-      Call.distinct("user", { status: { $in: ["queued", "initiated", "dialing", "ringing", "in-progress", "answered"] } }),
+      Call.distinct("user", { status: { $in: ACTIVE_CALL_STATUSES } }),
       Subscription.distinct("userId", { updatedAt: { $gte: cutoff } }),
     ]);
 

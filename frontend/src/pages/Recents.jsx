@@ -1943,13 +1943,18 @@ function Recents() {
                   chatMessages.map((item, idx) => {
                     if (item.type === 'call') {
                       const isOutbound = item.direction === 'outbound';
-                      const isMissed = (item.status || '') === 'missed';
-                      const isFailed = (item.status || '') === 'failed';
+                      const statusNorm = String(item.status || '').toLowerCase();
+                      const isMissed = statusNorm === 'missed' || statusNorm === 'no-answer';
+                      const isFailed =
+                        statusNorm === 'failed' ||
+                        statusNorm === 'busy' ||
+                        statusNorm === 'rejected' ||
+                        statusNorm === 'canceled';
                       const durationSeconds = item.duration || item.durationSeconds || 0;
                       const durationStr = formatDuration(durationSeconds);
                       const ts = item.timestamp || item.createdAt || item.created_at;
                       let callLabel = 'Voice call';
-                      if (isMissed) callLabel = 'Missed call'; else if (isFailed) callLabel = 'Failed call'; else if (isOutbound) callLabel = 'Outgoing call'; else callLabel = 'Incoming call';
+                      if (isMissed) callLabel = 'Missed call'; else if (statusNorm === 'busy') callLabel = 'Busy'; else if (statusNorm === 'rejected') callLabel = 'Rejected'; else if (statusNorm === 'canceled') callLabel = 'Canceled'; else if (isFailed) callLabel = 'Failed call'; else if (isOutbound) callLabel = 'Outgoing call'; else callLabel = 'Incoming call';
                       return (
                         <div key={`call-${item.id || idx}`} className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}>
                           <div
@@ -2362,14 +2367,21 @@ function Recents() {
                       // Handle calls - professional muted colors, date/time/duration
                       if (item.type === 'call') {
                         const isOutbound = item.direction === 'outbound';
-                        const callStatus = item.status || 'completed';
-                        const isMissed = callStatus === 'missed';
-                        const isFailed = callStatus === 'failed';
+                        const callStatus = String(item.status || 'completed').toLowerCase();
+                        const isMissed = callStatus === 'missed' || callStatus === 'no-answer';
+                        const isFailed =
+                          callStatus === 'failed' ||
+                          callStatus === 'busy' ||
+                          callStatus === 'rejected' ||
+                          callStatus === 'canceled';
                         const durationSeconds = item.duration || item.durationSeconds || 0;
                         const durationStr = formatDuration(durationSeconds);
                         const ts = item.timestamp || item.createdAt || item.created_at;
                         let callLabel = 'Voice call';
                         if (isMissed) callLabel = 'Missed call';
+                        else if (callStatus === 'busy') callLabel = 'Busy';
+                        else if (callStatus === 'rejected') callLabel = 'Rejected';
+                        else if (callStatus === 'canceled') callLabel = 'Canceled';
                         else if (isFailed) callLabel = 'Failed call';
                         else if (isOutbound) callLabel = 'Outgoing call';
                         else callLabel = 'Incoming call';

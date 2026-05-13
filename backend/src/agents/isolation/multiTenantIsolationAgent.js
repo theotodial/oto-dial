@@ -7,17 +7,21 @@ import { emitAgentAlert } from "../shared/agentAlerts.js";
 const AGENT = "multi-tenant-isolation-agent";
 
 async function upsertAlert({ severity, event, fingerprint, evidence, quarantineStatus = "open" }) {
+  const now = new Date();
   await IsolationSecurityAlert.findOneAndUpdate(
     { fingerprint },
     {
       $setOnInsert: {
         severity,
         event,
-        evidence,
         quarantineStatus,
-        firstSeenAt: new Date(),
+        firstSeenAt: now,
+        "evidence.first": evidence,
       },
-      $set: { lastSeenAt: new Date(), evidence },
+      $set: {
+        lastSeenAt: now,
+        "evidence.latest": evidence,
+      },
       $inc: { occurrences: 1 },
     },
     { upsert: true }

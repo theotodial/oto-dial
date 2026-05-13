@@ -496,7 +496,9 @@ router.get("/", requireAdmin, async (req, res) => {
     // ================================
     const outboundCalls = allCalls.filter(c => c.direction === "outbound");
     const inboundCalls = allCalls.filter(c => c.direction === "inbound");
-    const failedCalls = allCalls.filter(c => c.status === "failed" || c.status === "missed");
+    const failedCalls = allCalls.filter((c) =>
+      ["failed", "no-answer", "busy", "rejected", "canceled"].includes(c.status)
+    );
     
     const sentSms = allSms.filter(s => s.direction === "outbound");
     const receivedSms = allSms.filter(s => s.direction === "inbound");

@@ -1,4 +1,5 @@
 import Call from "../models/Call.js";
+import { CALL_STATES, canTransitionTo, normalizeCallStatus } from "../utils/callStateMachine.js";
 
 const TICK_MS = Number(process.env.CALL_HEARTBEAT_TICK_MS || 45000);
 const STALE_MS = Number(process.env.CALL_HEARTBEAT_STALE_MS || 120000);
@@ -24,6 +25,11 @@ export function startCallHeartbeatMonitor() {
         .lean();
 
       for (const v of victims) {
+        const from = normalizeCallStatus(v.status);
+        const to = CALL_STATES.FAILED;
+        if (!canTransitionTo(from, to)) {
+          continue;
+        }
         const res = await Call.updateOne(
           {
             _id: v._id,
@@ -32,7 +38,7 @@ export function startCallHeartbeatMonitor() {
           },
           {
             $set: {
-              status: "failed",
+              status: to,
               hangupCause: "server_heartbeat_timeout",
               failReason: "server_heartbeat_timeout",
               callEndedAt: new Date(),

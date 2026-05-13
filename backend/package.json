@@ -8,6 +8,7 @@
     "dev": "nodemon index.js",
     "start": "node index.js",
     "reconcile:subscriptions": "node scripts/runSubscriptionReconciliation.js",
+    "migrate:calls:missed-to-no-answer": "node scripts/migrateMissedCallsToNoAnswer.mjs",
     "test": "node --test"
   },
   "keywords": [],

@@ -123,7 +123,7 @@ router.get("/", requireAdmin, async (req, res) => {
     const outboundCalls = allCalls.filter(c => c.direction === "outbound");
     const inboundCalls = allCalls.filter(c => c.direction === "inbound");
     const failedCalls = allCalls.filter(c => 
-      c.status === "failed" || c.status === "missed"
+      ["failed", "no-answer", "busy", "rejected", "canceled"].includes(c.status)
     );
 
     // Calculate total call minutes (including ring time)

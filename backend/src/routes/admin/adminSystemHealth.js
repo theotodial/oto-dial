@@ -8,6 +8,7 @@ import Call from "../../models/Call.js";
 import { getAgentRuntimeSnapshot } from "../../agents/agentRuntime.js";
 import { getCampaignQueueHealth } from "../../services/campaignQueueService.js";
 import { getSmsQueueStats } from "../../services/smsQueueService.js";
+import { ACTIVE_CALL_STATUSES } from "../../utils/callStateMachine.js";
 
 const router = express.Router();
 
@@ -27,7 +28,7 @@ router.get("/", async (_req, res) => {
           .limit(20)
           .lean(),
         CallLifecycleEvent.find({}).sort({ timestamp: -1 }).limit(20).lean(),
-        Call.countDocuments({ status: { $in: ["queued", "initiated", "dialing", "ringing", "in-progress", "answered"] } }),
+        Call.countDocuments({ status: { $in: ACTIVE_CALL_STATUSES } }),
         getCampaignQueueHealth().catch((error) => ({ available: false, error: error?.message || "queue_unavailable" })),
       ]);
 

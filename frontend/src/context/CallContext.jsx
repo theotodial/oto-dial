@@ -762,7 +762,7 @@ export const CallProvider = ({ children }) => {
         if (!doc) return;
         const st = doc.status;
         if (
-          ['completed', 'failed', 'missed'].includes(st) &&
+          ['completed', 'failed', 'no-answer', 'busy', 'rejected', 'canceled'].includes(st) &&
           callStateRef.current !== CALL_STATES.IDLE
         ) {
           console.warn('[CALL FLOW] server reports terminal call; syncing UI', st);

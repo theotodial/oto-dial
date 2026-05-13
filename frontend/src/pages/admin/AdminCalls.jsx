@@ -23,6 +23,11 @@ function AdminCalls() {
     webhookEvents: [],
     failures: [],
     throttleEvents: [],
+    invalidTransitions: {
+      total: 0,
+      grouped: [],
+      events: [],
+    },
   });
   const [sipDebug, setSipDebug] = useState(null);
 
@@ -35,25 +40,39 @@ function AdminCalls() {
     const poll = async () => {
       try {
         const token = localStorage.getItem('adminToken');
-        const [liveResp, sipResp] = await Promise.all([
+        const [liveResp, sipResp, invalidResp] = await Promise.all([
           API.get('/api/admin/calls/debug/live', {
             headers: { Authorization: `Bearer ${token}` }
           }),
           API.get('/api/admin/calls/debug/sip-identities', {
             headers: { Authorization: `Bearer ${token}` }
+          }),
+          API.get('/api/admin/calls/debug/invalid-transitions?hours=24&limit=100', {
+            headers: { Authorization: `Bearer ${token}` }
           })
         ]);
         if (!mounted) return;
         if (liveResp.data?.success) {
-          setLiveDebug({
+          setLiveDebug((prev) => ({
+            ...prev,
             activeCalls: liveResp.data.activeCalls || [],
             webhookEvents: liveResp.data.webhookEvents || [],
             failures: liveResp.data.failures || [],
             throttleEvents: liveResp.data.throttleEvents || [],
-          });
+          }));
         }
         if (sipResp.data?.success) {
           setSipDebug(sipResp.data);
+        }
+        if (invalidResp.data?.success) {
+          setLiveDebug((prev) => ({
+            ...prev,
+            invalidTransitions: {
+              total: Number(invalidResp.data.total || 0),
+              grouped: Array.isArray(invalidResp.data.grouped) ? invalidResp.data.grouped : [],
+              events: Array.isArray(invalidResp.data.events) ? invalidResp.data.events : [],
+            },
+          }));
         }
       } catch (e) {
         // Keep panel best-effort; main calls table should stay usable.
@@ -247,9 +266,39 @@ function AdminCalls() {
                 <p className="text-gray-500 dark:text-gray-400">Loading SIP diagnostics...</p>
               )}
             </div>
+            <div className="border border-gray-200 dark:border-slate-700 rounded p-3 lg:col-span-4">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">Invalid State Transitions (24h)</h3>
+              <div className="text-gray-600 dark:text-gray-400 mb-2">
+                Total: {liveDebug.invalidTransitions?.total || 0}
+              </div>
+              {(liveDebug.invalidTransitions?.grouped || []).length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+                  {liveDebug.invalidTransitions.grouped.slice(0, 10).map((g) => (
+                    <div key={g.transition} className="bg-gray-50 dark:bg-slate-900 rounded p-2 flex items-center justify-between">
+                      <span className="font-mono text-[11px]">{g.transition}</span>
+                      <span className="font-semibold">{g.count}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500 dark:text-gray-400 mb-3">No invalid transitions observed in window</p>
+              )}
+              <div className="space-y-2 max-h-48 overflow-auto">
+                {(liveDebug.invalidTransitions?.events || []).slice(0, 20).map((ev) => (
+                  <div key={ev.id} className="bg-gray-50 dark:bg-slate-900 rounded p-2">
+                    <div className="font-mono text-[11px]">
+                      {(ev.previousState || "null")} -&gt; {(ev.nextState || "null")}
+                    </div>
+                    <div>call: {ev.callId || "—"} user: {ev.userId || "—"}</div>
+                    <div>source: {ev.details?.source || "—"} event: {ev.details?.webhookEvent || ev.action || "—"}</div>
+                    <div>{ev.timestamp ? new Date(ev.timestamp).toLocaleString() : "—"}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="mt-4 border border-gray-200 dark:border-slate-700 rounded p-3 text-xs">
-            <h3 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">Recent failed / missed</h3>
+            <h3 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">Recent failed / no-answer / busy / rejected</h3>
             <div className="space-y-2 max-h-40 overflow-auto">
               {(liveDebug.failures || []).length === 0 ? (
                 <p className="text-gray-500 dark:text-gray-400">None</p>
@@ -294,7 +343,10 @@ function AdminCalls() {
               <option value="">All Status</option>
               <option value="completed">Completed</option>
               <option value="failed">Failed</option>
-              <option value="missed">Missed</option>
+              <option value="no-answer">No answer</option>
+              <option value="busy">Busy</option>
+              <option value="rejected">Rejected</option>
+              <option value="canceled">Canceled</option>
             </select>
             <input
               type="date"
@@ -371,7 +423,7 @@ function AdminCalls() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
                           call.status === 'completed' ? 'bg-green-100 text-green-800' :
-                          call.status === 'failed' || call.status === 'missed' ? 'bg-red-100 text-red-800' :
+                          ['failed', 'no-answer', 'busy', 'rejected', 'canceled', 'missed'].includes(call.status) ? 'bg-red-100 text-red-800' :
                           'bg-yellow-100 text-yellow-800'
                         }`}>
                           {call.status}

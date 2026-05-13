@@ -16,8 +16,14 @@ import { emitAdminCallDebugEvent } from "../services/adminLiveEventsService.js";
 import { evaluateFraudEvent } from "../services/fraudDetectionService.js";
 import { enforceTelecomPolicy } from "../services/telecomPolicyService.js";
 import { enforceUsageRateLimit } from "../services/usageRateLimitService.js";
-import { TERMINAL_STATUSES } from "../utils/callStateMachine.js";
+import {
+  CALL_STATES,
+  canTransitionTo,
+  isTerminalStatus,
+  normalizeCallStatus,
+} from "../utils/callStateMachine.js";
 import { normalizeThreadPhone } from "../utils/smsThreadKey.js";
+import CallLifecycleEvent from "../models/CallLifecycleEvent.js";
 
 const router = express.Router();
 
@@ -33,6 +39,12 @@ function normalizeThreadDigits(phone) {
   return phone.replace(/\D/g, "");
 }
 
+function legacyCallStatusView(status) {
+  const normalized = normalizeCallStatus(status);
+  if (normalized === CALL_STATES.NO_ANSWER) return "missed";
+  return normalized || status || "completed";
+}
+
 function buildCallThreadCandidates(phone) {
   const raw = String(phone || "").trim();
   const digits = normalizeThreadDigits(raw);
@@ -46,6 +58,53 @@ function buildCallThreadCandidates(phone) {
     set.add(`+${digits}`);
   }
   return Array.from(set);
+}
+
+function logTelecomCallTransition({
+  callId,
+  providerCallId = null,
+  userId = null,
+  direction = null,
+  previousStatus = null,
+  nextStatus = null,
+  source = null,
+  reason = null,
+  accepted = true,
+}) {
+  console.log("[TELECOM CALL TRANSITION]", {
+    callId: callId ? String(callId) : null,
+    providerCallId: providerCallId || null,
+    userId: userId ? String(userId) : null,
+    direction: direction || null,
+    previousStatus: previousStatus || null,
+    nextStatus: nextStatus || null,
+    source: source || "call_routes",
+    reason: reason || null,
+    accepted,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+async function recordCallLifecycleTransition({
+  callId,
+  userId = null,
+  previousState = null,
+  nextState = null,
+  event = "state_transition",
+  action = "applied",
+  severity = "info",
+  details = {},
+}) {
+  await CallLifecycleEvent.create({
+    callId,
+    userId: userId || null,
+    severity,
+    event,
+    previousState,
+    nextState,
+    action,
+    details,
+  }).catch(() => {});
 }
 
 const skipSubscriptionForCallCreate =
@@ -426,18 +485,24 @@ router.get("/", async (req, res) => {
       
       // Classify call type
       let callType = 'outgoing';
+      const normalizedStatus = normalizeCallStatus(call.status);
       if (call.direction === 'inbound') {
-        if (call.status === 'missed') {
+        if (normalizedStatus === CALL_STATES.NO_ANSWER) {
           callType = 'missed';
-        } else if (call.status === 'completed' || call.status === 'answered') {
+        } else if (normalizedStatus === CALL_STATES.COMPLETED || normalizedStatus === CALL_STATES.ANSWERED) {
           callType = 'incoming';
         } else {
           callType = 'incoming';
         }
       } else {
-        if (call.status === 'completed' || call.status === 'answered') {
+        if (normalizedStatus === CALL_STATES.COMPLETED || normalizedStatus === CALL_STATES.ANSWERED) {
           callType = 'outgoing';
-        } else if (call.status === 'failed') {
+        } else if (
+          normalizedStatus === CALL_STATES.FAILED ||
+          normalizedStatus === CALL_STATES.BUSY ||
+          normalizedStatus === CALL_STATES.REJECTED ||
+          normalizedStatus === CALL_STATES.CANCELED
+        ) {
           callType = 'failed';
         } else {
           callType = 'outgoing';
@@ -454,7 +519,7 @@ router.get("/", async (req, res) => {
         durationFormatted,
         callType,
         // Ensure status is properly set
-        status: call.status || 'completed'
+        status: legacyCallStatusView(call.status)
       };
     });
     
@@ -520,30 +585,55 @@ router.patch("/:id", async (req, res) => {
 
     if (status != null && status !== "") {
       if (webrtcOutbound) {
-        if (TERMINAL_STATUSES.includes(call.status)) {
+        const current = normalizeCallStatus(call.status);
+        const requested = normalizeCallStatus(status);
+        if (!requested) {
+          return res.status(400).json({
+            success: false,
+            error: "Invalid status",
+          });
+        }
+        if (isTerminalStatus(current)) {
           return res.status(400).json({
             success: false,
             error: "Call already ended",
           });
         }
-        const allowed = [
-          "dialing",
-          "ringing",
-          "in-progress",
-          "completed",
-          "failed",
-        ];
-        if (!allowed.includes(status)) {
+        if (!canTransitionTo(current, requested)) {
+          await recordCallLifecycleTransition({
+            callId: call._id,
+            userId: call.user,
+            previousState: current,
+            nextState: requested,
+            event: "invalid_transition",
+            action: "rejected_by_state_machine",
+            severity: "warning",
+            details: {
+              source: "client_patch_webrtc",
+              reason: "invalid_transition",
+            },
+          });
+          logTelecomCallTransition({
+            callId: call._id,
+            providerCallId: call.telnyxCallControlId,
+            userId: call.user,
+            direction: call.direction,
+            previousStatus: current,
+            nextStatus: requested,
+            source: "client_patch_webrtc",
+            reason: "invalid_transition",
+            accepted: false,
+          });
           return res.status(400).json({
             success: false,
-            error: "Invalid status for WebRTC outbound",
+            error: `Invalid transition ${current} -> ${requested}`,
           });
         }
 
-        call.status = status;
+        call.status = requested;
         if (hangupCause != null && hangupCause !== "") {
           call.hangupCause = String(hangupCause);
-          call.failReason = status === "failed" ? String(hangupCause) : null;
+          call.failReason = requested === CALL_STATES.FAILED ? String(hangupCause) : null;
         }
         if (hangupCauseCode != null && hangupCauseCode !== "") {
           call.hangupCauseCode = String(hangupCauseCode);
@@ -554,13 +644,16 @@ router.patch("/:id", async (req, res) => {
         if (callStartedAt) {
           call.callStartedAt = new Date(callStartedAt);
         }
-        if (status === "ringing" && !call.callInitiatedAt) {
+        if (requested === CALL_STATES.RINGING && !call.callInitiatedAt) {
           call.callInitiatedAt = new Date();
         }
-        if (status === "in-progress") {
+        if (requested === CALL_STATES.ACTIVE || requested === CALL_STATES.ANSWERED) {
           call.callInitiatedAt = call.callInitiatedAt || new Date();
           if (!call.callStartedAt) {
             call.callStartedAt = new Date();
+          }
+          if (!call.callAnsweredAt) {
+            call.callAnsweredAt = call.callStartedAt;
           }
         }
         if (callEndedAt) {
@@ -570,7 +663,7 @@ router.patch("/:id", async (req, res) => {
           call.durationSeconds = Number(durationSeconds) || 0;
         }
 
-        if (status === "completed" || status === "failed") {
+        if (isTerminalStatus(requested)) {
           const ended = call.callEndedAt || new Date();
           call.callEndedAt = ended;
           const hadAnswered = Boolean(call.callStartedAt);
@@ -602,7 +695,7 @@ router.patch("/:id", async (req, res) => {
           } else {
             call.durationSeconds = 0;
           }
-          if (status === "failed" && !call.failReason) {
+          if (requested === CALL_STATES.FAILED && !call.failReason) {
             call.failReason = call.hangupCause || "call_connection_failed";
           }
 
@@ -621,7 +714,7 @@ router.patch("/:id", async (req, res) => {
                 direction: call.direction,
                 ringingSeconds: 0,
                 answeredSeconds:
-                  status === "completed" && call.callStartedAt
+                  requested === CALL_STATES.COMPLETED && call.callStartedAt
                     ? Math.max(
                         0,
                         Math.floor((ended - call.callStartedAt) / 1000)
@@ -630,7 +723,7 @@ router.patch("/:id", async (req, res) => {
                 billedSeconds: billable,
                 callStartTime: call.callInitiatedAt || call.callStartedAt,
                 callEndTime: ended,
-                callStatus: status,
+                callStatus: requested,
               });
             } catch (costErr) {
               console.warn(
@@ -649,6 +742,30 @@ router.patch("/:id", async (req, res) => {
         } else {
           await call.save();
         }
+
+        logTelecomCallTransition({
+          callId: call._id,
+          providerCallId: call.telnyxCallControlId,
+          userId: req.userId,
+          direction: call.direction,
+          previousStatus: current,
+          nextStatus: requested,
+          source: "client_patch_webrtc",
+          reason: "accepted",
+          accepted: true,
+        });
+        await recordCallLifecycleTransition({
+          callId: call._id,
+          userId: call.user,
+          previousState: current,
+          nextState: requested,
+          event: "state_transition",
+          action: "applied",
+          severity: "info",
+          details: {
+            source: "client_patch_webrtc",
+          },
+        });
 
         logCallFlow({
           userId: String(req.userId),
@@ -669,11 +786,13 @@ router.patch("/:id", async (req, res) => {
         return res.json({ success: true, call });
       }
 
+      const current = normalizeCallStatus(call.status);
+      const requested = normalizeCallStatus(status);
       if (
-        status === "failed" &&
-        ["queued", "initiated", "dialing", "ringing"].includes(call.status)
+        requested === CALL_STATES.FAILED &&
+        [CALL_STATES.QUEUED, CALL_STATES.INITIATED, CALL_STATES.DIALING, CALL_STATES.RINGING].includes(current)
       ) {
-        call.status = "failed";
+        call.status = CALL_STATES.FAILED;
         call.callEndedAt = call.callEndedAt || new Date();
         call.hangupCause = call.hangupCause || "client_abort";
         call.failReason = call.failReason || call.hangupCause || "call_connection_failed";
@@ -765,7 +884,15 @@ router.post("/:id/answer", requireActiveSubscription, async (req, res) => {
       }
     );
 
-    call.status = "in-progress";
+    const current = normalizeCallStatus(call.status);
+    const requested = CALL_STATES.ACTIVE;
+    if (!canTransitionTo(current, requested)) {
+      return res.status(409).json({
+        success: false,
+        error: `Invalid transition ${current} -> ${requested}`,
+      });
+    }
+    call.status = requested;
     call.callStartedAt = new Date();
     call.callAnsweredAt = call.callStartedAt;
     await call.save();
@@ -781,6 +908,29 @@ router.post("/:id/answer", requireActiveSubscription, async (req, res) => {
       response: response?.data || null,
     });
 
+    logTelecomCallTransition({
+      callId: call._id,
+      providerCallId: call.telnyxCallControlId,
+      userId: call.user,
+      direction: call.direction,
+      previousStatus: current,
+      nextStatus: requested,
+      source: "answer_api",
+      reason: "answer_command",
+      accepted: true,
+    });
+    await recordCallLifecycleTransition({
+      callId: call._id,
+      userId: call.user,
+      previousState: current,
+      nextState: requested,
+      event: "state_transition",
+      action: "applied",
+      severity: "info",
+      details: {
+        source: "answer_api",
+      },
+    });
     console.log(`[STATE TRANSITION] → in-progress (answer API) ${call._id}`);
 
     res.json({ 

@@ -34,7 +34,7 @@ router.get(
                   $cond: [
                     {
                       $or: [
-                        { $eq: ["$status", "missed"] },
+                        { $eq: ["$status", "no-answer"] },
                         { $eq: ["$status", "failed"] },
                         {
                           $and: [

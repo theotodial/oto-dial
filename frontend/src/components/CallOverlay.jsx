@@ -99,7 +99,7 @@ function CallOverlay() {
     if (callState.status === "in-progress") return "Connected";
     if (callState.status === "completed") return "Call ended";
     if (callState.status === "failed") return "Call failed";
-    if (callState.status === "missed") return "Missed call";
+    if (callState.status === "missed" || callState.status === "no-answer") return "Missed call";
     return "Connecting...";
   }, [callState.status, callState.direction]);
 

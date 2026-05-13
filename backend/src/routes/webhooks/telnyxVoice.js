@@ -14,7 +14,13 @@ import {
   findCallForTelnyxEvent,
   mergeTelnyxCallIdentifiers,
 } from "../../utils/telnyxWebhookCallResolver.js";
-import { TERMINAL_STATUSES, isTerminalStatus } from "../../utils/callStateMachine.js";
+import {
+  CALL_STATES,
+  canTransitionTo,
+  isTerminalStatus,
+  mapHangupToTerminalStatus,
+  normalizeCallStatus,
+} from "../../utils/callStateMachine.js";
 import {
   bridgeParkedWebRtcToPstn,
   dialPstnForParkedWebRtcLeg,
@@ -27,6 +33,7 @@ import {
   claimWebhookEvent,
   extractWebhookEnvelope,
 } from "../../agents/shared/webhookIdempotency.js";
+import CallLifecycleEvent from "../../models/CallLifecycleEvent.js";
 
 const router = express.Router();
 
@@ -105,38 +112,39 @@ async function handleInboundCall(payload = {}) {
     return;
   }
 
-  try {
-    await axios.post(
-      `https://api.telnyx.com/v2/calls/${callControlId}/actions/answer`,
-      {},
-      { headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` } }
-    );
-    console.log("✅ ANSWER SENT");
-  } catch (error) {
-    console.error("❌ ANSWER FAILED:", error?.response?.data || error?.message || error);
-  }
-
   const ownedNumber = await PhoneNumber.findOne({
-    phoneNumber: payload?.to,
-    isActive: true,
+    phoneNumber: { $in: [payload?.to, to].filter(Boolean) },
+    status: "active",
   }).lean();
   const resolvedUserId = ownedNumber?.userId || null;
 
   try {
-    await Call.create({
-      user: resolvedUserId || null,
-      from: payload?.from || null,
-      to: payload?.to || null,
-      phoneNumber: from || to || "unknown",
-      fromNumber: from || null,
-      toNumber: to || null,
-      direction: "inbound",
-      source: "voice_api",
-      status: "ringing",
-      telnyxCallControlId: callControlId,
-      telnyxCallSessionId: payload?.call_session_id || null,
-      callInitiatedAt: new Date(),
-    });
+    await Call.findOneAndUpdate(
+      { telnyxCallControlId: callControlId },
+      {
+        $setOnInsert: {
+          user: resolvedUserId || null,
+          phoneNumber: from || to || "unknown",
+          fromNumber: from || null,
+          toNumber: to || null,
+          direction: "inbound",
+          source: "voice_api",
+          status: "ringing",
+          telnyxCallControlId: callControlId,
+          telnyxCallSessionId: payload?.call_session_id || null,
+          callInitiatedAt: new Date(),
+        },
+        $set: {
+          user: resolvedUserId || null,
+          fromNumber: from || null,
+          toNumber: to || null,
+          phoneNumber: from || to || "unknown",
+          direction: "inbound",
+          source: "voice_api",
+        },
+      },
+      { upsert: true, new: true }
+    );
   } catch (error) {
     console.error(
       "❌ CALL RECORD CREATE FAILED:",
@@ -232,12 +240,137 @@ async function hangupTelnyxCallLeg(callControlId, apiKey) {
   }
 }
 
-function isOutboundWebRtcCall(doc) {
-  return (
-    doc &&
-    doc.direction === "outbound" &&
-    (doc.source === "webrtc" || doc.source == null || doc.source === "")
+function logTelecomWebhook(fields = {}) {
+  console.log("[TELECOM WEBHOOK]", {
+    ...fields,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+async function transitionCallStatus({
+  call,
+  toStatus,
+  event,
+  callControlId,
+  callSessionId,
+  callPayload,
+  extraSet = {},
+}) {
+  const from = normalizeCallStatus(call?.status);
+  const to = normalizeCallStatus(toStatus);
+  if (!call?._id || !to) return { ok: false, reason: "invalid_call_or_status", call };
+  if (isTerminalStatus(from)) {
+    await CallLifecycleEvent.create({
+      callId: call._id,
+      userId: call.user || null,
+      severity: "warning",
+      event: "invalid_transition",
+      previousState: from,
+      nextState: to,
+      action: "ignored_terminal_call",
+      details: {
+        source: "telnyx_voice_webhook",
+        webhookEvent: event,
+        callControlId: callControlId || null,
+        callSessionId: callSessionId || null,
+      },
+    }).catch(() => {});
+    logTelecomWebhook({
+      event,
+      outcome: "ignored_terminal",
+      callId: String(call._id),
+      callControlId,
+      callSessionId,
+      previousStatus: from,
+      nextStatus: to,
+    });
+    return { ok: false, reason: "terminal", call };
+  }
+  if (!canTransitionTo(from, to)) {
+    await CallLifecycleEvent.create({
+      callId: call._id,
+      userId: call.user || null,
+      severity: "warning",
+      event: "invalid_transition",
+      previousState: from,
+      nextState: to,
+      action: "rejected_by_state_machine",
+      details: {
+        source: "telnyx_voice_webhook",
+        webhookEvent: event,
+        callControlId: callControlId || null,
+        callSessionId: callSessionId || null,
+      },
+    }).catch(() => {});
+    logTelecomWebhook({
+      event,
+      outcome: "invalid_transition",
+      callId: String(call._id),
+      callControlId,
+      callSessionId,
+      previousStatus: from,
+      nextStatus: to,
+    });
+    return { ok: false, reason: "invalid_transition", call };
+  }
+  const set = { status: to, ...extraSet };
+  const updated = await Call.findOneAndUpdate(
+    { _id: call._id, status: call.status },
+    { $set: set },
+    { new: true }
   );
+  if (!updated) {
+    await CallLifecycleEvent.create({
+      callId: call._id,
+      userId: call.user || null,
+      severity: "info",
+      event: "transition_race_noop",
+      previousState: from,
+      nextState: to,
+      action: "noop",
+      details: {
+        source: "telnyx_voice_webhook",
+        webhookEvent: event,
+        callControlId: callControlId || null,
+        callSessionId: callSessionId || null,
+      },
+    }).catch(() => {});
+    logTelecomWebhook({
+      event,
+      outcome: "race_noop",
+      callId: String(call._id),
+      callControlId,
+      callSessionId,
+      previousStatus: from,
+      nextStatus: to,
+    });
+    return { ok: false, reason: "race_noop", call };
+  }
+  await CallLifecycleEvent.create({
+    callId: updated._id,
+    userId: updated.user || null,
+    severity: "info",
+    event: "state_transition",
+    previousState: from,
+    nextState: to,
+    action: "applied",
+    details: {
+      source: "telnyx_voice_webhook",
+      webhookEvent: event,
+      callControlId: callControlId || null,
+      callSessionId: callSessionId || null,
+    },
+  }).catch(() => {});
+  logTelecomWebhook({
+    event,
+    outcome: "transition_applied",
+    callId: String(call._id),
+    callControlId,
+    callSessionId,
+    previousStatus: from,
+    nextStatus: to,
+  });
+  return { ok: true, call: updated };
 }
 
 /**
@@ -476,38 +609,20 @@ router.post("/", async (req, res) => {
         });
         return res.sendStatus(200);
       }
-      if (isOutboundWebRtcCall(call)) {
-        console.log("[WEBHOOK SKIP] outbound WebRTC call.ringing (client SDK)", {
-          callId: String(call._id),
-        });
-        return res.sendStatus(200);
-      }
       await mergeTelnyxCallIdentifiers(call, {
         callControlId,
         callSessionId: callPayload.call_session_id,
         occurredAtMs,
       });
       const fresh = await Call.findById(call._id);
-      if (isTerminalStatus(fresh.status)) {
-        console.log("[WEBHOOK RECEIVED] call.ringing ignored (terminal)", {
-          callId: String(fresh._id),
-        });
-        return res.sendStatus(200);
-      }
-      const upd = await Call.updateOne(
-        { _id: fresh._id, status: "dialing" },
-        { $set: { status: "ringing" } }
-      );
-      if (upd.modifiedCount) {
-        console.log("[STATE TRANSITION] dialing → ringing", {
-          callId: String(fresh._id),
-        });
-      } else {
-        console.log("[WEBHOOK RECEIVED] call.ringing no-op", {
-          callId: String(fresh._id),
-          status: fresh.status,
-        });
-      }
+      await transitionCallStatus({
+        call: fresh,
+        toStatus: CALL_STATES.RINGING,
+        event,
+        callControlId,
+        callSessionId,
+        callPayload,
+      });
       return res.sendStatus(200);
     }
 
@@ -579,53 +694,46 @@ router.post("/", async (req, res) => {
         });
         return res.sendStatus(200);
       }
-      if (isOutboundWebRtcCall(call)) {
-        console.log(`[WEBHOOK SKIP] outbound WebRTC ${event} (client SDK)`, {
-          callId: String(call._id),
-        });
-        return res.sendStatus(200);
-      }
       await mergeTelnyxCallIdentifiers(call, {
         callControlId,
         callSessionId: callPayload.call_session_id,
         occurredAtMs,
       });
-      const fresh = await Call.findById(call._id);
-      if (isTerminalStatus(fresh.status)) {
-        console.log(`[WEBHOOK RECEIVED] ${event} ignored (terminal)`, {
-          callId: String(fresh._id),
+      let fresh = await Call.findById(call._id);
+      if (event === "call.answered") {
+        const answeredTs = fresh.callAnsweredAt || new Date();
+        const answeredRes = await transitionCallStatus({
+          call: fresh,
+          toStatus: CALL_STATES.ANSWERED,
+          event,
+          callControlId,
+          callSessionId,
+          callPayload,
+          extraSet: {
+            callAnsweredAt: answeredTs,
+            callStartedAt: fresh.callStartedAt || answeredTs,
+          },
         });
-        return res.sendStatus(200);
+        if (answeredRes.ok) {
+          fresh = answeredRes.call;
+        } else {
+          fresh = await Call.findById(call._id);
+        }
       }
-
-      const set = { status: "in-progress" };
-      if (!fresh.callStartedAt) {
-        set.callStartedAt = new Date();
-      }
-      if (!fresh.callAnsweredAt && event === "call.answered") {
-        set.callAnsweredAt = new Date();
-      }
-      if (!fresh.callBridgedAt && event === "call.bridged") {
-        set.callBridgedAt = new Date();
-      }
-      const updated = await Call.findOneAndUpdate(
-        {
-          _id: fresh._id,
-          status: { $in: ["queued", "initiated", "dialing", "ringing", "answered"] },
+      await transitionCallStatus({
+        call: fresh,
+        toStatus: CALL_STATES.ACTIVE,
+        event,
+        callControlId,
+        callSessionId,
+        callPayload,
+        extraSet: {
+          callStartedAt: fresh.callStartedAt || new Date(),
+          ...(event === "call.bridged" && !fresh.callBridgedAt
+            ? { callBridgedAt: new Date() }
+            : {}),
         },
-        { $set: set },
-        { new: true }
-      );
-      if (updated) {
-        console.log(`[STATE TRANSITION] → in-progress (${event})`, {
-          callId: String(updated._id),
-        });
-      } else {
-        console.log(`[WEBHOOK RECEIVED] ${event} no-op`, {
-          callId: String(fresh._id),
-          status: fresh.status,
-        });
-      }
+      });
       return res.sendStatus(200);
     }
 
@@ -641,13 +749,6 @@ router.post("/", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      if (isOutboundWebRtcCall(call)) {
-        console.log("[WEBHOOK SKIP] outbound WebRTC call.hangup (client SDK + PATCH)", {
-          callId: String(call._id),
-        });
-        return res.sendStatus(200);
-      }
-
       await mergeTelnyxCallIdentifiers(call, {
         callControlId,
         callSessionId: callPayload.call_session_id,
@@ -655,7 +756,7 @@ router.post("/", async (req, res) => {
       });
       call = await Call.findById(call._id);
 
-      if (TERMINAL_STATUSES.includes(call.status)) {
+      if (isTerminalStatus(call.status)) {
         console.log("[WEBHOOK RECEIVED] hangup ignored (already terminal)", {
           callId: String(call._id),
           status: call.status,
@@ -698,7 +799,12 @@ router.post("/", async (req, res) => {
       }
 
       const hangupCause = callPayload.hangup_cause || "unknown";
-      let finalStatus = "completed";
+      let finalStatus = mapHangupToTerminalStatus({
+        hangupCause,
+        hangupCauseCode: callPayload.hangup_cause_code,
+        callAnsweredAt: call.callAnsweredAt,
+        callStartedAt: call.callStartedAt,
+      });
       if (!call.callAnsweredAt) {
         console.warn("[CALL ANSWER CHECK] call.hangup received without prior call.answered", {
           callId: String(call._id),
@@ -717,18 +823,10 @@ router.post("/", async (req, res) => {
         });
       }
 
-      if (!call.callStartedAt) {
-        finalStatus = call.direction === "inbound" ? "missed" : "failed";
-        console.log(`[CALL ENDED] ${finalStatus} (never answered)`, {
-          callId: String(call._id),
-          billableSeconds,
-        });
-      } else {
-        console.log(`[CALL ENDED] completed`, {
-          callId: String(call._id),
-          billableSeconds,
-        });
-      }
+      console.log(`[CALL ENDED] ${finalStatus}`, {
+        callId: String(call._id),
+        billableSeconds,
+      });
 
       const ringingDuration =
         call.callStartedAt && call.callInitiatedAt
@@ -750,13 +848,36 @@ router.post("/", async (req, res) => {
       call.costPerSecond = costPerSecond;
       call.ringingDuration = ringingDuration;
       call.answeredDuration = answeredDuration;
+      const beforeTerminal = normalizeCallStatus(call.status);
+      if (!canTransitionTo(beforeTerminal, finalStatus)) {
+        logTelecomWebhook({
+          event,
+          outcome: "invalid_terminal_transition",
+          callId: String(call._id),
+          callControlId,
+          callSessionId,
+          previousStatus: beforeTerminal,
+          nextStatus: finalStatus,
+        });
+        return res.sendStatus(200);
+      }
       call.status = finalStatus;
       call.hangupCause = hangupCause;
-      call.failReason = finalStatus === "failed" ? hangupCause : null;
+      call.failReason =
+        finalStatus === CALL_STATES.FAILED ? hangupCause : null;
       call.telnyxCallId = callPayload.call_leg_id || callPayload.id || null;
       call.billedSeconds = billableSeconds;
 
       await call.save();
+      logTelecomWebhook({
+        event,
+        outcome: "terminal_reconciled",
+        callId: String(call._id),
+        callControlId,
+        callSessionId,
+        previousStatus: beforeTerminal,
+        nextStatus: finalStatus,
+      });
 
       emitAdminLiveCall({
         eventType: "ended",

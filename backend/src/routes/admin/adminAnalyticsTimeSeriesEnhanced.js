@@ -128,7 +128,7 @@ router.get("/", requireAdmin, async (req, res) => {
       } else if (call.durationSeconds) {
         dayData.callMinutes += call.durationSeconds / 60;
       }
-      if (call.status === "failed" || call.status === "missed") {
+      if (["failed", "no-answer", "busy", "rejected", "canceled"].includes(call.status)) {
         dayData.failedCalls += 1;
       }
     });

@@ -7,13 +7,15 @@ import {
   getRecentCallDebugEvents,
   getRecentThrottleEvents,
 } from "../../services/adminLiveEventsService.js";
+import { ACTIVE_CALL_STATUSES } from "../../utils/callStateMachine.js";
+import CallLifecycleEvent from "../../models/CallLifecycleEvent.js";
 
 const router = express.Router();
 
 router.get("/debug/live", requireAdmin, async (_req, res) => {
   try {
     const activeCalls = await Call.find({
-      status: { $in: ["queued", "initiated", "dialing", "ringing", "in-progress", "answered"] },
+      status: { $in: ACTIVE_CALL_STATUSES },
     })
       .populate("user", "email name")
       .sort({ updatedAt: -1 })
@@ -36,7 +38,7 @@ router.get("/debug/live", requireAdmin, async (_req, res) => {
     }));
 
     const recentFailures = await Call.find({
-      status: { $in: ["failed", "missed"] },
+      status: { $in: ["failed", "no-answer", "busy", "rejected", "canceled"] },
     })
       .sort({ updatedAt: -1 })
       .limit(25)
@@ -104,6 +106,55 @@ router.get("/debug/sip-identities", requireAdmin, async (_req, res) => {
   } catch (err) {
     console.error("Admin sip identities debug error:", err);
     res.status(500).json({ success: false, error: "Failed to fetch SIP identity report" });
+  }
+});
+
+router.get("/debug/invalid-transitions", requireAdmin, async (req, res) => {
+  try {
+    const limitRaw = Number.parseInt(req.query.limit, 10);
+    const hoursRaw = Number.parseInt(req.query.hours, 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 100;
+    const hours = Number.isFinite(hoursRaw) ? Math.min(Math.max(hoursRaw, 1), 168) : 24;
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+    const rows = await CallLifecycleEvent.find({
+      event: "invalid_transition",
+      timestamp: { $gte: since },
+    })
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .lean();
+
+    const byTransition = new Map();
+    for (const row of rows) {
+      const key = `${row.previousState || "null"}->${row.nextState || "null"}`;
+      byTransition.set(key, (byTransition.get(key) || 0) + 1);
+    }
+
+    res.json({
+      success: true,
+      since,
+      total: rows.length,
+      grouped: Array.from(byTransition.entries())
+        .map(([transition, count]) => ({ transition, count }))
+        .sort((a, b) => b.count - a.count),
+      events: rows.map((row) => ({
+        id: String(row._id),
+        callId: row.callId ? String(row.callId) : null,
+        userId: row.userId ? String(row.userId) : null,
+        previousState: row.previousState || null,
+        nextState: row.nextState || null,
+        action: row.action || null,
+        details: row.details || {},
+        timestamp: row.timestamp || row.createdAt || null,
+      })),
+    });
+  } catch (err) {
+    console.error("Admin invalid transition debug error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch invalid transition diagnostics",
+    });
   }
 });
 

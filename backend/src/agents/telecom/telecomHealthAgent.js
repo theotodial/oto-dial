@@ -6,6 +6,7 @@ import ProcessedWebhookEvent from "../../models/ProcessedWebhookEvent.js";
 import { getCampaignQueueHealth } from "../../services/campaignQueueService.js";
 import { getSmsQueueStats } from "../../services/smsQueueService.js";
 import { emitAgentAlert } from "../shared/agentAlerts.js";
+import { ACTIVE_CALL_STATUSES } from "../../utils/callStateMachine.js";
 
 const AGENT = "telecom-health-agent";
 const WINDOW_MS = Number(process.env.AGENT_TELECOM_WINDOW_MS || 60 * 60 * 1000);
@@ -75,12 +76,16 @@ export const telecomHealthAgent = {
       Number(calls["outbound:answered"] || 0) +
       Number(calls["outbound:in-progress"] || 0) +
       Number(calls["outbound:completed"] || 0);
-    const abandonedCalls = Number(calls["outbound:failed"] || 0) + Number(calls["outbound:missed"] || 0);
+    const abandonedCalls =
+      Number(calls["outbound:failed"] || 0) +
+      Number(calls["outbound:no-answer"] || 0) +
+      Number(calls["outbound:busy"] || 0) +
+      Number(calls["outbound:rejected"] || 0);
     const callConnectRate = outboundCalls ? (connectedCalls / outboundCalls) * 100 : 100;
     const abandonedRate = outboundCalls ? (abandonedCalls / outboundCalls) * 100 : 0;
 
     const activeCalls = await Call.countDocuments({
-      status: { $in: ["queued", "initiated", "dialing", "ringing", "in-progress", "answered"] },
+      status: { $in: ACTIVE_CALL_STATUSES },
     });
     const queueDepth =
       Number(smsQueue.depth || 0) +
