@@ -16,7 +16,6 @@ import {
 } from "../../utils/telnyxWebhookCallResolver.js";
 import {
   CALL_STATES,
-  canTransitionTo,
   isTerminalStatus,
   mapHangupToTerminalStatus,
   normalizeCallStatus,
@@ -33,7 +32,7 @@ import {
   claimWebhookEvent,
   extractWebhookEnvelope,
 } from "../../agents/shared/webhookIdempotency.js";
-import CallLifecycleEvent from "../../models/CallLifecycleEvent.js";
+import { applyCallTransition } from "../../services/callTransitionService.js";
 
 const router = express.Router();
 
@@ -112,18 +111,30 @@ async function handleInboundCall(payload = {}) {
     return;
   }
 
-  const ownedNumber = await PhoneNumber.findOne({
+  const ownedMatches = await PhoneNumber.find({
     phoneNumber: { $in: [payload?.to, to].filter(Boolean) },
     status: "active",
-  }).lean();
+  })
+    .select("_id userId phoneNumber")
+    .limit(2)
+    .lean();
+  const ownedNumber = ownedMatches.length === 1 ? ownedMatches[0] : null;
   const resolvedUserId = ownedNumber?.userId || null;
 
   try {
     await Call.findOneAndUpdate(
-      { telnyxCallControlId: callControlId },
+      {
+        telnyxCallControlId: callControlId,
+        $or: [
+          { user: { $exists: false } },
+          { user: null },
+          ...(resolvedUserId ? [{ user: resolvedUserId }] : []),
+        ],
+      },
       {
         $setOnInsert: {
           user: resolvedUserId || null,
+          ownedNumberId: ownedNumber?._id || null,
           phoneNumber: from || to || "unknown",
           fromNumber: from || null,
           toNumber: to || null,
@@ -135,16 +146,27 @@ async function handleInboundCall(payload = {}) {
           callInitiatedAt: new Date(),
         },
         $set: {
-          user: resolvedUserId || null,
+          ...(resolvedUserId ? { user: resolvedUserId } : {}),
           fromNumber: from || null,
           toNumber: to || null,
           phoneNumber: from || to || "unknown",
           direction: "inbound",
           source: "voice_api",
+          lastEventSource: "telnyx_voice_webhook",
+          lastEventType: "call.initiated",
+          lastProcessedEventAt: new Date(),
         },
       },
       { upsert: true, new: true }
-    );
+    ).catch(async (err) => {
+      if (err?.code === 11000) {
+        console.warn("[INBOUND] Duplicate provider control id detected (deduped)", {
+          callControlId,
+        });
+        return;
+      }
+      throw err;
+    });
   } catch (error) {
     console.error(
       "❌ CALL RECORD CREATE FAILED:",
@@ -156,7 +178,28 @@ async function handleInboundCall(payload = {}) {
     console.warn("[INBOUND] Owned number not found for inbound call", {
       to: payload?.to ?? null,
       call_control_id: callControlId,
+      matches: ownedMatches.length,
     });
+    const existing = await Call.findOne({ telnyxCallControlId: callControlId })
+      .select("_id status")
+      .lean();
+    if (existing?._id) {
+      await applyCallTransition({
+        callId: existing._id,
+        eventAt: new Date(),
+        source: "telnyx_voice_webhook",
+        eventType: "inbound_routing_error",
+        targetStatus: CALL_STATES.FAILED,
+        guard: { currentStatus: existing.status },
+        set: {
+          failReason: "routing-error",
+          hangupCause: "routing-error",
+          callEndedAt: new Date(),
+          orphanRootCause: "concurrency_race",
+        },
+        reason: "routing-error",
+      }).catch(() => {});
+    }
     try {
       await speakSafetyMessage(callControlId, "Please try again later");
     } catch (error) {
@@ -256,118 +299,41 @@ async function transitionCallStatus({
   callPayload,
   extraSet = {},
 }) {
-  const from = normalizeCallStatus(call?.status);
   const to = normalizeCallStatus(toStatus);
   if (!call?._id || !to) return { ok: false, reason: "invalid_call_or_status", call };
-  if (isTerminalStatus(from)) {
-    await CallLifecycleEvent.create({
-      callId: call._id,
-      userId: call.user || null,
-      severity: "warning",
-      event: "invalid_transition",
-      previousState: from,
-      nextState: to,
-      action: "ignored_terminal_call",
-      details: {
-        source: "telnyx_voice_webhook",
-        webhookEvent: event,
-        callControlId: callControlId || null,
-        callSessionId: callSessionId || null,
-      },
-    }).catch(() => {});
-    logTelecomWebhook({
-      event,
-      outcome: "ignored_terminal",
-      callId: String(call._id),
-      callControlId,
-      callSessionId,
-      previousStatus: from,
-      nextStatus: to,
-    });
-    return { ok: false, reason: "terminal", call };
-  }
-  if (!canTransitionTo(from, to)) {
-    await CallLifecycleEvent.create({
-      callId: call._id,
-      userId: call.user || null,
-      severity: "warning",
-      event: "invalid_transition",
-      previousState: from,
-      nextState: to,
-      action: "rejected_by_state_machine",
-      details: {
-        source: "telnyx_voice_webhook",
-        webhookEvent: event,
-        callControlId: callControlId || null,
-        callSessionId: callSessionId || null,
-      },
-    }).catch(() => {});
-    logTelecomWebhook({
-      event,
-      outcome: "invalid_transition",
-      callId: String(call._id),
-      callControlId,
-      callSessionId,
-      previousStatus: from,
-      nextStatus: to,
-    });
-    return { ok: false, reason: "invalid_transition", call };
-  }
-  const set = { status: to, ...extraSet };
-  const updated = await Call.findOneAndUpdate(
-    { _id: call._id, status: call.status },
-    { $set: set },
-    { new: true }
-  );
-  if (!updated) {
-    await CallLifecycleEvent.create({
-      callId: call._id,
-      userId: call.user || null,
-      severity: "info",
-      event: "transition_race_noop",
-      previousState: from,
-      nextState: to,
-      action: "noop",
-      details: {
-        source: "telnyx_voice_webhook",
-        webhookEvent: event,
-        callControlId: callControlId || null,
-        callSessionId: callSessionId || null,
-      },
-    }).catch(() => {});
-    logTelecomWebhook({
-      event,
-      outcome: "race_noop",
-      callId: String(call._id),
-      callControlId,
-      callSessionId,
-      previousStatus: from,
-      nextStatus: to,
-    });
-    return { ok: false, reason: "race_noop", call };
-  }
-  await CallLifecycleEvent.create({
-    callId: updated._id,
-    userId: updated.user || null,
-    severity: "info",
-    event: "state_transition",
-    previousState: from,
-    nextState: to,
-    action: "applied",
+  const result = await applyCallTransition({
+    callId: call._id,
+    eventAt: extraSet?.lastProcessedEventAt || call?.telnyxLastWebhookAt || new Date(),
+    source: "telnyx_voice_webhook",
+    eventType: event,
+    targetStatus: to,
+    guard: { currentStatus: call.status },
+    set: extraSet,
     details: {
-      source: "telnyx_voice_webhook",
-      webhookEvent: event,
       callControlId: callControlId || null,
       callSessionId: callSessionId || null,
     },
-  }).catch(() => {});
+  });
+  if (!result.ok) {
+    logTelecomWebhook({
+      event,
+      outcome: result.reason || "transition_rejected",
+      callId: String(call._id),
+      callControlId,
+      callSessionId,
+      previousStatus: call.status,
+      nextStatus: to,
+    });
+    return { ok: false, reason: result.reason, call };
+  }
+  const updated = result.call || null;
   logTelecomWebhook({
     event,
     outcome: "transition_applied",
     callId: String(call._id),
     callControlId,
     callSessionId,
-    previousStatus: from,
+    previousStatus: call.status,
     nextStatus: to,
   });
   return { ok: true, call: updated };
@@ -622,6 +588,9 @@ router.post("/", async (req, res) => {
         callControlId,
         callSessionId,
         callPayload,
+        extraSet: {
+          lastProcessedEventAt: new Date(occurredAtMs),
+        },
       });
       return res.sendStatus(200);
     }
@@ -712,6 +681,7 @@ router.post("/", async (req, res) => {
           extraSet: {
             callAnsweredAt: answeredTs,
             callStartedAt: fresh.callStartedAt || answeredTs,
+            lastProcessedEventAt: new Date(occurredAtMs),
           },
         });
         if (answeredRes.ok) {
@@ -729,6 +699,7 @@ router.post("/", async (req, res) => {
         callPayload,
         extraSet: {
           callStartedAt: fresh.callStartedAt || new Date(),
+          lastProcessedEventAt: new Date(occurredAtMs),
           ...(event === "call.bridged" && !fresh.callBridgedAt
             ? { callBridgedAt: new Date() }
             : {}),
@@ -841,18 +812,34 @@ router.post("/", async (req, res) => {
 
       const costPerSecond = billableSeconds > 0 ? cost / billableSeconds : 0;
 
-      call.callEndedAt = endedAt;
-      call.durationSeconds = durationSeconds;
-      call.billedMinutes = billableSeconds / 60;
-      call.cost = cost;
-      call.costPerSecond = costPerSecond;
-      call.ringingDuration = ringingDuration;
-      call.answeredDuration = answeredDuration;
       const beforeTerminal = normalizeCallStatus(call.status);
-      if (!canTransitionTo(beforeTerminal, finalStatus)) {
+      const terminalApply = await applyCallTransition({
+        callId: call._id,
+        eventAt: new Date(occurredAtMs),
+        source: "telnyx_voice_webhook",
+        eventType: event,
+        targetStatus: finalStatus,
+        guard: { currentStatus: call.status },
+        set: {
+          callEndedAt: endedAt,
+          durationSeconds,
+          billedMinutes: billableSeconds / 60,
+          billedSeconds: billableSeconds,
+          cost,
+          costPerSecond,
+          ringingDuration,
+          answeredDuration,
+          hangupCause,
+          failReason: finalStatus === CALL_STATES.FAILED ? hangupCause : null,
+          telnyxCallId: callPayload.call_leg_id || callPayload.id || null,
+        },
+        reason: "terminal_reconciled",
+        details: { callControlId, callSessionId },
+      });
+      if (!terminalApply.ok) {
         logTelecomWebhook({
           event,
-          outcome: "invalid_terminal_transition",
+          outcome: terminalApply.reason || "terminal_apply_rejected",
           callId: String(call._id),
           callControlId,
           callSessionId,
@@ -861,14 +848,7 @@ router.post("/", async (req, res) => {
         });
         return res.sendStatus(200);
       }
-      call.status = finalStatus;
-      call.hangupCause = hangupCause;
-      call.failReason =
-        finalStatus === CALL_STATES.FAILED ? hangupCause : null;
-      call.telnyxCallId = callPayload.call_leg_id || callPayload.id || null;
-      call.billedSeconds = billableSeconds;
-
-      await call.save();
+      call = terminalApply.call || call;
       logTelecomWebhook({
         event,
         outcome: "terminal_reconciled",
@@ -940,13 +920,31 @@ router.post("/", async (req, res) => {
           }
         } catch (costSyncErr) {
           console.error(`❌ Error syncing call cost:`, costSyncErr);
-          call.costPending = true;
-          call.costSyncError = costSyncErr.message;
-          await call.save();
+          await applyCallTransition({
+            callId: call._id,
+            eventAt: new Date(),
+            source: "telnyx_voice_webhook",
+            eventType: "cost_sync_error",
+            guard: { currentStatus: call.status },
+            set: {
+              costPending: true,
+              costSyncError: costSyncErr.message,
+            },
+            details: { callControlId, callSessionId },
+          });
         }
       } else {
-        call.costPending = true;
-        await call.save();
+        await applyCallTransition({
+          callId: call._id,
+          eventAt: new Date(),
+          source: "telnyx_voice_webhook",
+          eventType: "cost_pending",
+          guard: { currentStatus: call.status },
+          set: {
+            costPending: true,
+          },
+          details: { callControlId, callSessionId },
+        });
       }
 
       return res.sendStatus(200);

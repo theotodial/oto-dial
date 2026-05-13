@@ -31,7 +31,7 @@ function deleteMemory(key) {
   memoryCache.delete(key);
 }
 
-async function getRedisClient() {
+export async function getRedisClient() {
   const redisUrl = String(process.env.REDIS_URL || "").trim();
   if (!redisUrl) return null;
 

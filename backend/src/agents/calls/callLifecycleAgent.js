@@ -6,9 +6,8 @@ import { emitAgentAlert } from "../shared/agentAlerts.js";
 import {
   CALL_STATES,
   ACTIVE_CALL_STATUSES,
-  canTransitionTo,
-  normalizeCallStatus,
 } from "../../utils/callStateMachine.js";
+import { applyCallTransition } from "../../services/callTransitionService.js";
 
 const AGENT = "call-lifecycle-agent";
 const ACTIVE_STATES = ACTIVE_CALL_STATUSES;
@@ -27,28 +26,32 @@ export const callLifecycleAgent = {
       status: { $in: [CALL_STATES.QUEUED, CALL_STATES.INITIATED, CALL_STATES.DIALING, CALL_STATES.RINGING] },
       updatedAt: { $lte: ringingCutoff },
     })
-      .select("_id user status phoneNumber direction updatedAt")
+      .select("_id user status phoneNumber direction updatedAt telnyxCallControlId telnyxCallSessionId lastProcessedEventAt lastHeartbeatAt lastClientSyncAt")
       .limit(50);
 
     let cleaned = 0;
     for (const call of stuckCalls) {
-      const from = normalizeCallStatus(call.status);
-      const to = CALL_STATES.FAILED;
-      if (!canTransitionTo(from, to)) {
-        continue;
-      }
-      const result = await Call.updateOne(
-        { _id: call._id, status: call.status, updatedAt: { $lte: ringingCutoff } },
-        {
-          $set: {
-            status: to,
-            failReason: "agent_stale_call_cleanup",
-            hangupCause: "agent_stale_call_cleanup",
-            callEndedAt: new Date(),
-          },
-        }
-      );
-      if (result.modifiedCount) {
+      const eventAt = new Date();
+      const result = await applyCallTransition({
+        callId: call._id,
+        eventAt,
+        source: AGENT,
+        eventType: "stale_call_cleanup",
+        targetStatus: CALL_STATES.FAILED,
+        guard: { currentStatus: call.status, maxUpdatedAt: ringingCutoff },
+        set: {
+          failReason: "agent_stale_call_cleanup",
+          hangupCause: "agent_stale_call_cleanup",
+          callEndedAt: new Date(),
+          orphanRootCause: call.lastHeartbeatAt
+            ? "heartbeat_missing"
+            : call.lastClientSyncAt
+              ? "websocket_disconnect"
+              : "unknown",
+        },
+        reason: "agent_stale_call_cleanup",
+      });
+      if (result.ok) {
         cleaned += 1;
         await CallLifecycleEvent.create({
           callId: call._id,
@@ -56,7 +59,7 @@ export const callLifecycleAgent = {
           severity: "warning",
           event: "stuck_call_force_cleanup",
           previousState: call.status,
-          nextState: to,
+          nextState: CALL_STATES.FAILED,
           action: "force_cleanup_stale_call",
           details: { updatedAt: call.updatedAt },
         });

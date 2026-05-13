@@ -1809,7 +1809,7 @@ function Recents() {
                             <div className="absolute -bottom-0.5 -right-0.5 bg-indigo-500 rounded-full p-0.5 border border-white dark:border-slate-800">
                               <MessageIcon className="w-2.5 h-2.5 text-white" />
                             </div>
-                          ) : item.callType === 'missed' ? (
+                          ) : String(item.status || '').toLowerCase() === 'no-answer' ? (
                             <div className="absolute -bottom-0.5 -right-0.5 bg-rose-500 rounded-full p-0.5 border border-white dark:border-slate-800">
                               <PhoneMissedIcon className="w-2.5 h-2.5 text-white" />
                             </div>
@@ -1944,7 +1944,7 @@ function Recents() {
                     if (item.type === 'call') {
                       const isOutbound = item.direction === 'outbound';
                       const statusNorm = String(item.status || '').toLowerCase();
-                      const isMissed = statusNorm === 'missed' || statusNorm === 'no-answer';
+                      const isMissed = statusNorm === 'no-answer';
                       const isFailed =
                         statusNorm === 'failed' ||
                         statusNorm === 'busy' ||
@@ -2368,7 +2368,7 @@ function Recents() {
                       if (item.type === 'call') {
                         const isOutbound = item.direction === 'outbound';
                         const callStatus = String(item.status || 'completed').toLowerCase();
-                        const isMissed = callStatus === 'missed' || callStatus === 'no-answer';
+                        const isMissed = callStatus === 'no-answer';
                         const isFailed =
                           callStatus === 'failed' ||
                           callStatus === 'busy' ||
@@ -2590,7 +2590,7 @@ function Recents() {
                             <div className="absolute -bottom-0.5 -right-0.5 bg-indigo-500 rounded-full p-0.5 border border-white dark:border-slate-800">
                               <MessageIcon className="w-2.5 h-2.5 text-white" />
                             </div>
-                          ) : item.callType === 'missed' ? (
+                          ) : String(item.status || '').toLowerCase() === 'no-answer' ? (
                             <div className="absolute -bottom-0.5 -right-0.5 bg-rose-500 rounded-full p-0.5 border border-white dark:border-slate-800">
                               <PhoneMissedIcon className="w-2.5 h-2.5 text-white" />
                             </div>

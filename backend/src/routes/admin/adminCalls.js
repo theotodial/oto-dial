@@ -17,6 +17,9 @@ router.get("/debug/live", requireAdmin, async (_req, res) => {
     const activeCalls = await Call.find({
       status: { $in: ACTIVE_CALL_STATUSES },
     })
+      .select(
+        "_id user fromNumber toNumber status callAnsweredAt callStartedAt callBridgedAt failReason telnyxCallControlId telnyxCallSessionId lastEventType lastEventSource lastProcessedEventAt lastHeartbeatAt lastClientSyncAt telnyxLastWebhookAt orphanRootCause"
+      )
       .populate("user", "email name")
       .sort({ updatedAt: -1 })
       .limit(100)
@@ -35,6 +38,13 @@ router.get("/debug/live", requireAdmin, async (_req, res) => {
       failReason: call.failReason || null,
       telnyxCallControlId: call.telnyxCallControlId || null,
       telnyxCallSessionId: call.telnyxCallSessionId || null,
+      lastEventType: call.lastEventType || null,
+      lastEventSource: call.lastEventSource || null,
+      lastProcessedEventAt: call.lastProcessedEventAt || null,
+      lastHeartbeatAt: call.lastHeartbeatAt || null,
+      lastClientSyncAt: call.lastClientSyncAt || null,
+      lastProviderWebhookAt: call.telnyxLastWebhookAt || null,
+      orphanRootCause: call.orphanRootCause || null,
     }));
 
     const recentFailures = await Call.find({

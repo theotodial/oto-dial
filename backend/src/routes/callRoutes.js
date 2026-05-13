@@ -24,6 +24,7 @@ import {
 } from "../utils/callStateMachine.js";
 import { normalizeThreadPhone } from "../utils/smsThreadKey.js";
 import CallLifecycleEvent from "../models/CallLifecycleEvent.js";
+import { applyCallTransition } from "../services/callTransitionService.js";
 
 const router = express.Router();
 
@@ -39,9 +40,8 @@ function normalizeThreadDigits(phone) {
   return phone.replace(/\D/g, "");
 }
 
-function legacyCallStatusView(status) {
+function canonicalCallStatusView(status) {
   const normalized = normalizeCallStatus(status);
-  if (normalized === CALL_STATES.NO_ANSWER) return "missed";
   return normalized || status || "completed";
 }
 
@@ -488,7 +488,7 @@ router.get("/", async (req, res) => {
       const normalizedStatus = normalizeCallStatus(call.status);
       if (call.direction === 'inbound') {
         if (normalizedStatus === CALL_STATES.NO_ANSWER) {
-          callType = 'missed';
+          callType = 'incoming';
         } else if (normalizedStatus === CALL_STATES.COMPLETED || normalizedStatus === CALL_STATES.ANSWERED) {
           callType = 'incoming';
         } else {
@@ -519,7 +519,7 @@ router.get("/", async (req, res) => {
         durationFormatted,
         callType,
         // Ensure status is properly set
-        status: legacyCallStatusView(call.status)
+        status: canonicalCallStatusView(call.status)
       };
     });
     
@@ -582,6 +582,28 @@ router.patch("/:id", async (req, res) => {
     const webrtcOutbound =
       call.direction === "outbound" &&
       (call.source === "webrtc" || call.source == null);
+    const patchEventAt =
+      lastHeartbeatAt ||
+      callEndedAt ||
+      callStartedAt ||
+      new Date().toISOString();
+
+    if (isTerminalStatus(call.status)) {
+      await recordCallLifecycleTransition({
+        callId: call._id,
+        userId: call.user,
+        previousState: normalizeCallStatus(call.status),
+        nextState: normalizeCallStatus(status || call.status),
+        event: "invalid_transition",
+        action: "ignored_terminal_call",
+        severity: "warning",
+        details: { source: "client_patch_api" },
+      });
+      return res.status(409).json({
+        success: false,
+        error: "Call is already in a terminal state",
+      });
+    }
 
     if (status != null && status !== "") {
       if (webrtcOutbound) {
@@ -630,50 +652,50 @@ router.patch("/:id", async (req, res) => {
           });
         }
 
-        call.status = requested;
+        const set = {};
         if (hangupCause != null && hangupCause !== "") {
-          call.hangupCause = String(hangupCause);
-          call.failReason = requested === CALL_STATES.FAILED ? String(hangupCause) : null;
+          set.hangupCause = String(hangupCause);
+          set.failReason = requested === CALL_STATES.FAILED ? String(hangupCause) : null;
         }
         if (hangupCauseCode != null && hangupCauseCode !== "") {
-          call.hangupCauseCode = String(hangupCauseCode);
+          set.hangupCauseCode = String(hangupCauseCode);
         }
         if (lastHeartbeatAt) {
-          call.lastHeartbeatAt = new Date(lastHeartbeatAt);
+          set.lastHeartbeatAt = new Date(lastHeartbeatAt);
+          set.lastClientSyncAt = set.lastHeartbeatAt;
         }
         if (callStartedAt) {
-          call.callStartedAt = new Date(callStartedAt);
+          set.callStartedAt = new Date(callStartedAt);
         }
         if (requested === CALL_STATES.RINGING && !call.callInitiatedAt) {
-          call.callInitiatedAt = new Date();
+          set.callInitiatedAt = new Date();
         }
         if (requested === CALL_STATES.ACTIVE || requested === CALL_STATES.ANSWERED) {
-          call.callInitiatedAt = call.callInitiatedAt || new Date();
+          set.callInitiatedAt = call.callInitiatedAt || new Date();
           if (!call.callStartedAt) {
-            call.callStartedAt = new Date();
+            set.callStartedAt = new Date();
           }
           if (!call.callAnsweredAt) {
-            call.callAnsweredAt = call.callStartedAt;
+            set.callAnsweredAt = set.callStartedAt || call.callStartedAt || new Date();
           }
         }
         if (callEndedAt) {
-          call.callEndedAt = new Date(callEndedAt);
+          set.callEndedAt = new Date(callEndedAt);
         }
         if (durationSeconds !== undefined) {
-          call.durationSeconds = Number(durationSeconds) || 0;
+          set.durationSeconds = Number(durationSeconds) || 0;
         }
-
         if (isTerminalStatus(requested)) {
-          const ended = call.callEndedAt || new Date();
-          call.callEndedAt = ended;
-          const hadAnswered = Boolean(call.callStartedAt);
+          const ended = set.callEndedAt || call.callEndedAt || new Date();
+          set.callEndedAt = ended;
+          const hadAnswered = Boolean(set.callStartedAt || call.callStartedAt);
           let billable = Number(durationSeconds);
           if (!Number.isFinite(billable) || billable < 0) {
             billable = 0;
           }
 
           if (hadAnswered && billable <= 0) {
-            const answeredAt = call.callStartedAt || call.callInitiatedAt;
+            const answeredAt = set.callStartedAt || call.callStartedAt || set.callInitiatedAt || call.callInitiatedAt;
             if (answeredAt) {
               billable = Math.max(
                 1,
@@ -683,23 +705,39 @@ router.patch("/:id", async (req, res) => {
           }
 
           const rate = Number(process.env.CALL_RATE_PER_MINUTE || 0.0065);
-          call.billedSeconds = hadAnswered ? billable : 0;
-          call.billedMinutes = hadAnswered ? billable / 60 : 0;
-          call.cost = hadAnswered ? (billable / 60) * rate : 0;
-          call.costPerSecond =
-            hadAnswered && billable > 0 ? call.cost / billable : 0;
+          set.billedSeconds = hadAnswered ? billable : 0;
+          set.billedMinutes = hadAnswered ? billable / 60 : 0;
+          set.cost = hadAnswered ? (billable / 60) * rate : 0;
+          set.costPerSecond =
+            hadAnswered && billable > 0 ? set.cost / billable : 0;
           if (hadAnswered) {
-            call.durationSeconds = call.durationSeconds || billable;
+            set.durationSeconds = set.durationSeconds || call.durationSeconds || billable;
           } else if (durationSeconds !== undefined) {
-            call.durationSeconds = Number(durationSeconds) || 0;
+            set.durationSeconds = Number(durationSeconds) || 0;
           } else {
-            call.durationSeconds = 0;
+            set.durationSeconds = 0;
           }
-          if (requested === CALL_STATES.FAILED && !call.failReason) {
-            call.failReason = call.hangupCause || "call_connection_failed";
+          if (requested === CALL_STATES.FAILED && !set.failReason && !call.failReason) {
+            set.failReason = set.hangupCause || call.hangupCause || "call_connection_failed";
           }
 
-          await call.save();
+          const transitioned = await applyCallTransition({
+            callId: call._id,
+            eventAt: patchEventAt,
+            source: "client_patch_webrtc",
+            eventType: status || "heartbeat",
+            targetStatus: requested,
+            guard: { currentStatus: call.status },
+            set,
+            reason: "client_patch_webrtc",
+          });
+          if (!transitioned.ok) {
+            return res.status(409).json({
+              success: false,
+              error: transitioned.reason || "Transition rejected",
+            });
+          }
+          call = transitioned.call || call;
           if (hadAnswered && billable > 0) {
             await tryDeductVoiceUsageForCall(call, billable);
           }
@@ -740,7 +778,23 @@ router.patch("/:id", async (req, res) => {
             answered: hadAnswered,
           });
         } else {
-          await call.save();
+          const transitioned = await applyCallTransition({
+            callId: call._id,
+            eventAt: patchEventAt,
+            source: "client_patch_webrtc",
+            eventType: status || "heartbeat",
+            targetStatus: requested,
+            guard: { currentStatus: call.status },
+            set,
+            reason: "client_patch_webrtc",
+          });
+          if (!transitioned.ok) {
+            return res.status(409).json({
+              success: false,
+              error: transitioned.reason || "Transition rejected",
+            });
+          }
+          call = transitioned.call || call;
         }
 
         logTelecomCallTransition({
@@ -792,10 +846,27 @@ router.patch("/:id", async (req, res) => {
         requested === CALL_STATES.FAILED &&
         [CALL_STATES.QUEUED, CALL_STATES.INITIATED, CALL_STATES.DIALING, CALL_STATES.RINGING].includes(current)
       ) {
-        call.status = CALL_STATES.FAILED;
-        call.callEndedAt = call.callEndedAt || new Date();
-        call.hangupCause = call.hangupCause || "client_abort";
-        call.failReason = call.failReason || call.hangupCause || "call_connection_failed";
+        const transitioned = await applyCallTransition({
+          callId: call._id,
+          eventAt: patchEventAt,
+          source: "client_patch_api",
+          eventType: status || "client_abort",
+          targetStatus: CALL_STATES.FAILED,
+          guard: { currentStatus: call.status },
+          set: {
+            callEndedAt: call.callEndedAt || new Date(),
+            hangupCause: call.hangupCause || "client_abort",
+            failReason: call.failReason || call.hangupCause || "call_connection_failed",
+          },
+          reason: "client_abort",
+        });
+        if (!transitioned.ok) {
+          return res.status(409).json({
+            success: false,
+            error: transitioned.reason || "Transition rejected",
+          });
+        }
+        call = transitioned.call || call;
       } else {
         return res.status(400).json({
           success: false,
@@ -804,14 +875,35 @@ router.patch("/:id", async (req, res) => {
       }
     }
 
-    if (durationSeconds !== undefined) call.durationSeconds = durationSeconds;
-    if (callEndedAt) call.callEndedAt = new Date(callEndedAt);
-    if (callStartedAt) call.callStartedAt = new Date(callStartedAt);
+    const metadataSet = {};
+    if (durationSeconds !== undefined) metadataSet.durationSeconds = durationSeconds;
+    if (callEndedAt) metadataSet.callEndedAt = new Date(callEndedAt);
+    if (callStartedAt) metadataSet.callStartedAt = new Date(callStartedAt);
     if (telnyxCallControlId !== undefined) {
-      call.telnyxCallControlId = telnyxCallControlId || null;
+      metadataSet.telnyxCallControlId = telnyxCallControlId || null;
     }
-
-    await call.save();
+    if (lastHeartbeatAt) {
+      metadataSet.lastHeartbeatAt = new Date(lastHeartbeatAt);
+      metadataSet.lastClientSyncAt = metadataSet.lastHeartbeatAt;
+    }
+    if (Object.keys(metadataSet).length > 0) {
+      const metadataApply = await applyCallTransition({
+        callId: call._id,
+        eventAt: patchEventAt,
+        source: "client_patch_api",
+        eventType: status || "metadata_update",
+        guard: { currentStatus: call.status },
+        set: metadataSet,
+        reason: "metadata_update",
+      });
+      if (!metadataApply.ok) {
+        return res.status(409).json({
+          success: false,
+          error: metadataApply.reason || "Metadata update rejected",
+        });
+      }
+      call = metadataApply.call || call;
+    }
 
     console.log("[CALL UPDATED]", { callId: String(call._id) });
 
@@ -871,6 +963,22 @@ router.post("/:id/answer", requireActiveSubscription, async (req, res) => {
         error: "Call control ID not found"
       });
     }
+    if (isTerminalStatus(call.status)) {
+      await recordCallLifecycleTransition({
+        callId: call._id,
+        userId: call.user,
+        previousState: normalizeCallStatus(call.status),
+        nextState: CALL_STATES.ACTIVE,
+        event: "invalid_transition",
+        action: "ignored_terminal_call",
+        severity: "warning",
+        details: { source: "answer_api" },
+      });
+      return res.status(409).json({
+        success: false,
+        error: "Call is already in a terminal state",
+      });
+    }
 
     // Answer the call using Telnyx Call Control API
     const response = await axios.post(
@@ -892,10 +1000,26 @@ router.post("/:id/answer", requireActiveSubscription, async (req, res) => {
         error: `Invalid transition ${current} -> ${requested}`,
       });
     }
-    call.status = requested;
-    call.callStartedAt = new Date();
-    call.callAnsweredAt = call.callStartedAt;
-    await call.save();
+    const answerApply = await applyCallTransition({
+      callId: call._id,
+      eventAt: new Date().toISOString(),
+      source: "answer_api",
+      eventType: "answer_command",
+      targetStatus: requested,
+      guard: { currentStatus: call.status },
+      set: {
+        callStartedAt: call.callStartedAt || new Date(),
+        callAnsweredAt: call.callAnsweredAt || call.callStartedAt || new Date(),
+      },
+      reason: "answer_command",
+    });
+    if (!answerApply.ok) {
+      return res.status(409).json({
+        success: false,
+        error: answerApply.reason || "Answer transition rejected",
+      });
+    }
+    call = answerApply.call || call;
 
     console.log("[ANSWER RESPONSE]", response?.data || null);
     emitAdminCallDebugEvent({

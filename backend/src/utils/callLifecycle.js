@@ -1,4 +1,6 @@
 import Call from "../models/Call.js";
+import { CALL_STATES } from "./callStateMachine.js";
+import { applyCallTransition } from "../services/callTransitionService.js";
 
 /** Statuses that mean the user still has an in-flight call (blocks a second dial). */
 export const ACTIVE_CALL_STATUSES = [
@@ -36,15 +38,21 @@ export async function findRecentActiveCallForUser(userId) {
     STALE_EARLY_STATUSES.includes(existing.status) &&
     Date.now() - new Date(existing.updatedAt).getTime() > STALE_EARLY_STATUS_MS
   ) {
-    await Call.updateOne(
-      { _id: existing._id },
-      {
-        $set: {
-          status: "failed",
-          hangupCause: "stale_session_cleared_for_new_dial",
-        },
-      }
-    );
+    await applyCallTransition({
+      callId: existing._id,
+      eventAt: new Date(),
+      source: "call_lifecycle_util",
+      eventType: "stale_early_status_cleanup",
+      targetStatus: CALL_STATES.FAILED,
+      guard: { currentStatus: existing.status },
+      set: {
+        hangupCause: "stale_session_cleared_for_new_dial",
+        failReason: "stale_session_cleared_for_new_dial",
+        callEndedAt: new Date(),
+        orphanRootCause: "concurrency_race",
+      },
+      reason: "stale_session_cleared_for_new_dial",
+    });
     return null;
   }
 

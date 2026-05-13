@@ -46,6 +46,15 @@ const callSchema = new mongoose.Schema(
       ref: "User",
     },
 
+    /** Immutable number ownership for inbound routing correctness. */
+    ownedNumberId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PhoneNumber",
+      default: null,
+      immutable: true,
+      index: true,
+    },
+
     phoneNumber: {
       type: String,
       required: true
@@ -214,6 +223,45 @@ const callSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
+    /** Last accepted event timestamp regardless of source (ordering guard). */
+    lastProcessedEventAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    lastEventSource: {
+      type: String,
+      default: null,
+    },
+    lastEventType: {
+      type: String,
+      default: null,
+    },
+
+    /** Last client state sync (WebRTC PATCH / websocket path). */
+    lastClientSyncAt: {
+      type: Date,
+      default: null,
+    },
+
+    /** Last reconciliation pass and derived orphan reason classification. */
+    lastReconciliationAt: {
+      type: Date,
+      default: null,
+    },
+    orphanRootCause: {
+      type: String,
+      enum: [
+        "webhook_missing",
+        "provider_timeout",
+        "websocket_disconnect",
+        "heartbeat_missing",
+        "concurrency_race",
+        "unknown",
+      ],
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -225,6 +273,31 @@ callSchema.index({ user: 1, createdAt: -1 });
 callSchema.index({ user: 1, phoneNumber: 1, createdAt: -1 });
 callSchema.index({ user: 1, toNumber: 1, createdAt: -1 });
 callSchema.index({ user: 1, fromNumber: 1, createdAt: -1 });
+callSchema.index(
+  { telnyxCallControlId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      telnyxCallControlId: { $exists: true, $type: "string", $ne: "" },
+    },
+  }
+);
+
+callSchema.pre("save", function callWriteDiscipline(next) {
+  if (!this.isModified("status")) return next();
+  const source = this?.$locals?.transitionSource;
+  const eventAt = this.lastProcessedEventAt;
+  if (!source || !eventAt) {
+    console.warn("[CALL WRITE GUARD] ordering_enforcement_bypass_blocked", {
+      callId: this._id ? String(this._id) : null,
+      status: this.status,
+    });
+    const err = new Error("ordering_enforcement_bypass_blocked");
+    err.code = "ORDERING_ENFORCEMENT_BYPASS_BLOCKED";
+    return next(err);
+  }
+  return next();
+});
 callSchema.plugin(mongoPerformancePlugin, { label: "calls" });
 
 export default mongoose.model("Call", callSchema);

@@ -1,5 +1,6 @@
 import Call from "../models/Call.js";
-import { CALL_STATES, canTransitionTo, normalizeCallStatus } from "../utils/callStateMachine.js";
+import { CALL_STATES } from "../utils/callStateMachine.js";
+import { applyCallTransition } from "./callTransitionService.js";
 
 const TICK_MS = Number(process.env.CALL_HEARTBEAT_TICK_MS || 45000);
 const STALE_MS = Number(process.env.CALL_HEARTBEAT_STALE_MS || 120000);
@@ -20,32 +21,27 @@ export function startCallHeartbeatMonitor() {
         },
         lastHeartbeatAt: { $exists: true, $ne: null, $lte: cutoff },
       })
-        .select("_id status user")
+        .select("_id status user telnyxCallControlId telnyxCallSessionId lastProcessedEventAt")
         .limit(80)
         .lean();
 
       for (const v of victims) {
-        const from = normalizeCallStatus(v.status);
-        const to = CALL_STATES.FAILED;
-        if (!canTransitionTo(from, to)) {
-          continue;
-        }
-        const res = await Call.updateOne(
-          {
-            _id: v._id,
-            status: v.status,
-            lastHeartbeatAt: { $lte: cutoff },
+        const eventAt = new Date();
+        const result = await applyCallTransition({
+          callId: v._id,
+          eventAt,
+          source: "heartbeat_monitor",
+          eventType: "heartbeat_timeout",
+          targetStatus: CALL_STATES.FAILED,
+          guard: { currentStatus: v.status },
+          set: {
+            hangupCause: "server_heartbeat_timeout",
+            failReason: "server_heartbeat_timeout",
+            callEndedAt: new Date(),
           },
-          {
-            $set: {
-              status: to,
-              hangupCause: "server_heartbeat_timeout",
-              failReason: "server_heartbeat_timeout",
-              callEndedAt: new Date(),
-            },
-          }
-        );
-        if (res.modifiedCount) {
+          reason: "server_heartbeat_timeout",
+        });
+        if (result.ok) {
           console.log("[CALL FLOW]", {
             userId: v.user ? String(v.user) : null,
             state: "timeout",

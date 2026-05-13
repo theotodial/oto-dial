@@ -6,6 +6,7 @@ import { multiTenantIsolationAgent } from "./isolation/multiTenantIsolationAgent
 import { queueRecoveryAgent } from "./queue/queueRecoveryAgent.js";
 import { webhookIntegrityAgent } from "./webhooks/webhookIntegrityAgent.js";
 import { callLifecycleAgent } from "./calls/callLifecycleAgent.js";
+import { callGlobalReconciliationJob } from "./calls/callGlobalReconciliationJob.js";
 import { liveStateSyncAgent } from "./sync/liveStateSyncAgent.js";
 import { deploymentSafetyAgent } from "./deployment/deploymentSafetyAgent.js";
 import { agentLog, compactError } from "./shared/agentLogger.js";
@@ -18,6 +19,7 @@ const registeredAgents = [
   queueRecoveryAgent,
   webhookIntegrityAgent,
   callLifecycleAgent,
+  callGlobalReconciliationJob,
   liveStateSyncAgent,
   deploymentSafetyAgent,
 ];
