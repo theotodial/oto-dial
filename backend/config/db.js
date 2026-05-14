@@ -146,6 +146,11 @@ const connectDB = async () => {
           console.error(
             "[MongoDB] Could not resolve SRV to mongodb:// (no host list). Set MONGODB_URI_DIRECT to a standard mongodb:// string from Atlas."
           );
+          lastErr = new Error(
+            "MongoDB SRV resolution failed (Node SRV + PowerShell + nslookup + dns.resolveSrv + DoH all empty or DoH blocked). " +
+              "In Atlas: Database → Connect → Drivers → copy the **Standard connection string** and set MONGODB_URI_DIRECT in backend/.env. " +
+              "Or fix outbound DNS/HTTPS (DoH) for this machine."
+          );
         }
       } catch (dohErr) {
         console.error("[MongoDB] DNS-over-HTTPS resolution failed:", dohErr?.message || dohErr);
@@ -171,5 +176,39 @@ const connectDB = async () => {
 
   throw lastErr || new Error("MongoDB connection failed");
 };
+
+/**
+ * After heavy startup work (index builds, concurrent queries), the driver can briefly
+ * report disconnected while the pool recovers. Wait until `ping` succeeds so readiness
+ * checks do not false-negative and kill the process.
+ * @param {{ timeoutMs?: number, intervalMs?: number }} [opts]
+ */
+export async function waitForMongooseConnectionLive(opts = {}) {
+  const timeoutMs = Math.max(1000, Number(opts.timeoutMs || 20_000));
+  const intervalMs = Math.max(100, Number(opts.intervalMs || 250));
+  const start = Date.now();
+  let lastErr = null;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      if (mongoose.connection.readyState === 1 && mongoose.connection.db) {
+        await mongoose.connection.db.admin().command({ ping: 1 }, { maxTimeMS: 8000 });
+        return {
+          ok: true,
+          waitedMs: Date.now() - start,
+          readyState: mongoose.connection.readyState,
+        };
+      }
+    } catch (e) {
+      lastErr = e?.message || String(e);
+    }
+    await sleep(intervalMs);
+  }
+  return {
+    ok: false,
+    waitedMs: Date.now() - start,
+    lastError: lastErr,
+    readyState: mongoose.connection.readyState,
+  };
+}
 
 export default connectDB;

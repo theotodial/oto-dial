@@ -5,10 +5,12 @@
 
 import { execFile } from "child_process";
 import { promisify } from "util";
+import dns from "node:dns";
 import https from "node:https";
 import axios from "axios";
 
 const execFileAsync = promisify(execFile);
+const dnsResolveSrv = promisify(dns.resolveSrv);
 
 /** Prefer IPv4 — fixes some Windows / dual-stack "fetch failed" issues. */
 const ipv4HttpsAgent = new https.Agent({
@@ -68,31 +70,35 @@ function escapePsSingle(s) {
 async function resolveSrvPowerShell(srvName) {
   if (process.platform !== "win32") return null;
   const safe = escapePsSingle(srvName);
-  const cmd = `(Resolve-DnsName -Type SRV -Name '${safe}' -DnsOnly -ErrorAction SilentlyContinue | Select-Object NameTarget,Port,Priority,Weight | ConvertTo-Json -Compress)`;
-  try {
-    const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", cmd],
-      { timeout: 25_000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 }
-    );
-    const t = String(stdout || "").replace(/^\uFEFF/, "").trim();
-    if (!t || t === "null") return null;
-    const data = JSON.parse(t);
-    const arr = Array.isArray(data) ? data : [data];
-    const out = [];
-    for (const x of arr) {
-      if (!x?.NameTarget || x.Port == null) continue;
-      out.push({
-        priority: Number(x.Priority) || 0,
-        weight: Number(x.Weight) || 0,
-        port: Number(x.Port),
-        target: String(x.NameTarget).replace(/\.$/, ""),
-      });
+  for (const dnsOnly of [true, false]) {
+    const dnsFlag = dnsOnly ? "-DnsOnly " : "";
+    const cmd = `(Resolve-DnsName -Type SRV -Name '${safe}' ${dnsFlag}-ErrorAction SilentlyContinue | Select-Object NameTarget,Port,Priority,Weight | ConvertTo-Json -Compress)`;
+    try {
+      const { stdout } = await execFileAsync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+        { timeout: 25_000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 }
+      );
+      const t = String(stdout || "").replace(/^\uFEFF/, "").trim();
+      if (!t || t === "null") continue;
+      const data = JSON.parse(t);
+      const arr = Array.isArray(data) ? data : [data];
+      const out = [];
+      for (const x of arr) {
+        if (!x?.NameTarget || x.Port == null) continue;
+        out.push({
+          priority: Number(x.Priority) || 0,
+          weight: Number(x.Weight) || 0,
+          port: Number(x.Port),
+          target: String(x.NameTarget).replace(/\.$/, ""),
+        });
+      }
+      if (out.length) return out;
+    } catch {
+      /* try next mode */
     }
-    return out.length ? out : null;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 async function resolveTxtPowerShell(srvName) {
@@ -147,6 +153,28 @@ async function resolveSrvNslookup(srvName) {
   }
 }
 
+/** Node dns.resolveSrv — sometimes succeeds when mongoose querySrv fails on Windows. */
+async function resolveSrvNodeDnsApi(srvName) {
+  try {
+    const rows = await dnsResolveSrv(srvName);
+    if (!Array.isArray(rows) || !rows.length) return null;
+    const out = [];
+    for (const r of rows) {
+      const name = r.name || r.exchange;
+      if (!name || r.port == null) continue;
+      out.push({
+        priority: Number(r.priority) || 0,
+        weight: Number(r.weight) || 0,
+        port: Number(r.port),
+        target: String(name).replace(/\.$/, ""),
+      });
+    }
+    return out.length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseSrvDataLine(data) {
   const s = String(data || "").trim();
   const parts = s.split(/\s+/);
@@ -182,20 +210,29 @@ function safeDecodeParam(s) {
 async function resolveSrvRecords(srvName) {
   let list =
     (await resolveSrvPowerShell(srvName)) ||
-    (await resolveSrvNslookup(srvName));
+    (await resolveSrvNslookup(srvName)) ||
+    (await resolveSrvNodeDnsApi(srvName));
   if (list?.length) {
-    console.log(`[MongoDB] SRV resolved via Windows resolver (${list.length} host(s))`);
+    console.log(`[MongoDB] SRV resolved via local DNS helpers (${list.length} host(s))`);
     return list;
   }
-  const { Answer } = await fetchDnsJsonAxios(srvName, "SRV");
-  const srvRecords = [];
-  for (const a of Answer) {
-    if (a.type !== 33) continue;
-    const rec = parseSrvDataLine(a.data);
-    if (rec) srvRecords.push(rec);
-  }
-  if (srvRecords.length) {
-    console.log(`[MongoDB] SRV resolved via DNS-over-HTTPS (${srvRecords.length} host(s))`);
+  let srvRecords = [];
+  try {
+    const { Answer } = await fetchDnsJsonAxios(srvName, "SRV");
+    for (const a of Answer) {
+      if (a.type !== 33) continue;
+      const rec = parseSrvDataLine(a.data);
+      if (rec) srvRecords.push(rec);
+    }
+    if (srvRecords.length) {
+      console.log(`[MongoDB] SRV resolved via DNS-over-HTTPS (${srvRecords.length} host(s))`);
+    }
+  } catch (e) {
+    console.warn(
+      "[MongoDB] DNS-over-HTTPS SRV lookup failed (continuing without DoH):",
+      e?.message || String(e)
+    );
+    srvRecords = [];
   }
   return srvRecords;
 }
@@ -226,6 +263,15 @@ async function resolveTxtRecords(srvName) {
  * @returns {Promise<string|null>} mongodb://... or null
  */
 export async function convertMongoSrvToDirectUri(srvUri) {
+  try {
+    return await convertMongoSrvToDirectUriInner(srvUri);
+  } catch (e) {
+    console.warn("[MongoDB] SRV→direct conversion failed:", e?.message || String(e));
+    return null;
+  }
+}
+
+async function convertMongoSrvToDirectUriInner(srvUri) {
   if (!srvUri || typeof srvUri !== "string") return null;
   if (!srvUri.toLowerCase().startsWith("mongodb+srv://")) return null;
 
