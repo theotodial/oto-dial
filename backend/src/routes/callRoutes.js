@@ -157,7 +157,12 @@ async function persistFailedCallAttempt(req, fields, hangupCause) {
 }
 
 router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
+  const callCreateT0 = Date.now();
   try {
+    console.log("[CALL FLOW] POST /api/calls entry", {
+      userId: req.userId ? String(req.userId) : null,
+      at: new Date().toISOString(),
+    });
     if (req.user?.mode === "campaign") {
       return res.status(403).json({
         success: false,
@@ -467,6 +472,7 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       direction,
       status: call.status,
       to: normalizeCallPartyNumber(toNumber || phoneNumber),
+      routeMs: Date.now() - callCreateT0,
     });
     if (direction === "outbound") {
       const guardrails = await getUserProfitGuardrails(call.user);

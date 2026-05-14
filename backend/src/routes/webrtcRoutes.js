@@ -345,6 +345,7 @@ async function retrieveTelnyxConnection({ connectionId, headers }) {
  * Generates a JWT token for Telnyx WebRTC client authentication
  */
 router.get("/token", async (req, res) => {
+  const t0 = Date.now();
   try {
     if (req.user?.mode === "campaign") {
       return res.status(403).json({ error: "CALLING_DISABLED_FOR_PLAN" });
@@ -428,6 +429,7 @@ router.get("/token", async (req, res) => {
     // registered browsers.
     const ownedNumbers = await listOwnedNumbersForUser(req.userId);
 
+    console.log("[WebRTC token] ok", { userId: String(req.userId), ms: Date.now() - t0 });
     res.json({
       success: true,
       credentials: {
@@ -441,8 +443,12 @@ router.get("/token", async (req, res) => {
       }
     });
   } catch (err) {
-    console.error("WebRTC token error:", err);
-    res.status(500).json({ error: "Failed to generate WebRTC credentials" });
+    console.error("WebRTC token error:", err?.stack || err?.message || err);
+    const msg = String(err?.message || err || "token_failed").slice(0, 500);
+    res.status(500).json({
+      error: "Failed to generate WebRTC credentials",
+      detail: msg,
+    });
   }
 });
 
@@ -562,6 +568,13 @@ router.post("/verify-inbound-ownership", async (req, res) => {
  * body: { destinationNumber?: string, callerNumber?: string }
  */
 router.post("/repair-outbound", async (req, res) => {
+  const repairStarted = Date.now();
+  const rid = `${req.userId || "?"}-${repairStarted}`;
+  console.log("[WebRTC repair-outbound] start", {
+    rid,
+    userId: req.userId ? String(req.userId) : null,
+    bodyKeys: req.body && typeof req.body === "object" ? Object.keys(req.body) : [],
+  });
   try {
     if (!req.subscription || !(req.subscription.id || req.subscription._id)) {
       return res.status(403).json({ success: false, error: "No subscription found" });
@@ -987,10 +1000,16 @@ router.post("/repair-outbound", async (req, res) => {
       console.log("[WebRTC repair-outbound] actions:", result.actions);
     }
 
+    console.log("[WebRTC repair-outbound] ok", { rid, ms: Date.now() - repairStarted });
     return res.json(result);
   } catch (err) {
-    console.error("WebRTC repair-outbound error:", err);
-    return res.status(500).json({ success: false, error: "Failed to repair outbound calling" });
+    console.error("WebRTC repair-outbound error:", err?.stack || err?.message || err, { rid, ms: Date.now() - repairStarted });
+    const msg = String(err?.message || err || "repair_failed").slice(0, 500);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to repair outbound calling",
+      detail: msg,
+    });
   }
 });
 

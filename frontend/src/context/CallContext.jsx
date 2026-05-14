@@ -33,6 +33,9 @@ export const CALL_STATES = {
   ENDING: 'ending'
 };
 
+/** WebRTC token + repair-outbound chain many Telnyx REST calls — must exceed default axios caps. */
+const TELECOM_HTTP_TIMEOUT_MS = 120_000;
+
 /** Telnyx @telnyx/webrtc uses Direction.Inbound / Outbound and State as 0–11 */
 const TELNYX_STATE_NAMES = [
   'new',
@@ -1619,9 +1622,11 @@ export const CallProvider = ({ children }) => {
     initializationPromiseRef.current = (async () => {
       try {
         console.log('📱 Initializing Telnyx WebRTC client...');
-        
-        // Get credentials from backend
-        const response = await API.get('/api/webrtc/token');
+        const tokenT0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        const response = await API.get('/api/webrtc/token', { timeout: TELECOM_HTTP_TIMEOUT_MS });
+        const tokenMs =
+          (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tokenT0;
+        console.log('[CALL FLOW] GET /api/webrtc/token done', { ms: Math.round(tokenMs), httpStatus: response.status });
 
         const httpOk =
           typeof response.status === 'number' &&
@@ -1888,7 +1893,7 @@ export const CallProvider = ({ children }) => {
       payload,
     });
 
-    const response = await API.post('/api/calls', payload, { timeout: 90000 });
+    const response = await API.post('/api/calls', payload, { timeout: TELECOM_HTTP_TIMEOUT_MS });
 
     console.log('[CALL FLOW] Response from /api/calls', {
       status: response.status,
@@ -1969,7 +1974,9 @@ export const CallProvider = ({ children }) => {
     lastPhoneConfigFixAtRef.current = now;
 
     try {
-      const voiceResponse = await API.post("/api/numbers/fix-voice");
+      const voiceResponse = await API.post("/api/numbers/fix-voice", {}, {
+        timeout: TELECOM_HTTP_TIMEOUT_MS,
+      });
       if (voiceResponse?.error) {
         throw new Error(voiceResponse.error);
       }
@@ -1979,7 +1986,9 @@ export const CallProvider = ({ children }) => {
     } catch (voiceErr) {
       // Fallback to full repair path for environments that only expose fix-all.
       try {
-        const fullResponse = await API.post("/api/numbers/fix-all");
+        const fullResponse = await API.post("/api/numbers/fix-all", {}, {
+          timeout: TELECOM_HTTP_TIMEOUT_MS,
+        });
         if (fullResponse?.error) {
           throw new Error(fullResponse.error);
         }
@@ -2061,10 +2070,21 @@ export const CallProvider = ({ children }) => {
 
       let outboundRepairHadActions = false;
       try {
-        const repair = await API.post('/api/webrtc/repair-outbound', {
-          destinationNumber: destE164,
-          callerNumber: callerE164,
-          forceSyncCallerConnectionId: true,
+        const repairT0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        const repair = await API.post(
+          '/api/webrtc/repair-outbound',
+          {
+            destinationNumber: destE164,
+            callerNumber: callerE164,
+            forceSyncCallerConnectionId: true,
+          },
+          { timeout: TELECOM_HTTP_TIMEOUT_MS }
+        );
+        const repairMs =
+          (typeof performance !== 'undefined' ? performance.now() : Date.now()) - repairT0;
+        console.log('[CALL FLOW] POST /api/webrtc/repair-outbound done', {
+          ms: Math.round(repairMs),
+          httpStatus: repair.status,
         });
         const ok =
           typeof repair.status === 'number' &&

@@ -5,10 +5,11 @@ import axios from "axios";
 // In production: uses VITE_API_URL if set, otherwise relative URLs
 const baseURL = import.meta.env.VITE_API_URL || "";
 
-const REQUEST_TIMEOUT_MS = Math.min(
-  Math.max(Number.parseInt(import.meta.env.VITE_API_TIMEOUT_MS || "55000", 10), 5000),
-  120000
-);
+/** Parsed client timeout; never below `floorMs` so telecom paths (WebRTC token/repair) are not clipped at 5s. */
+const rawTimeout = Number.parseInt(String(import.meta.env.VITE_API_TIMEOUT_MS || "").trim(), 10);
+const parsedTimeout = Number.isFinite(rawTimeout) ? rawTimeout : 55_000;
+const floorMs = import.meta.env.DEV ? 5_000 : 45_000;
+const REQUEST_TIMEOUT_MS = Math.min(Math.max(parsedTimeout, floorMs), 120_000);
 
 const axiosInstance = axios.create({ baseURL, timeout: REQUEST_TIMEOUT_MS });
 const sameOriginAxios = axios.create({ baseURL: "", timeout: REQUEST_TIMEOUT_MS });
@@ -131,6 +132,16 @@ const safeRequest = async (requestFn) => {
         url
       );
     }
+    if (
+      error?.code === "ECONNABORTED" ||
+      String(error?.message || "").toLowerCase().includes("timeout")
+    ) {
+      console.error(tag + " (CLIENT TIMEOUT)", {
+        url,
+        timeoutMs: error?.config?.timeout ?? null,
+        code: error?.code,
+      });
+    }
     console.error(tag + ":", error.response?.data || error.message);
     console.error(tag + " Status:", error.response?.status);
     console.error(tag + " URL:", url);
@@ -139,7 +150,12 @@ const safeRequest = async (requestFn) => {
     // Include the actual response data if available for better error messages
     return {
       data: error.response?.data || null,
-      error: error.response?.data?.error || error.response?.data?.message || error.response?.data?.detail || error.message || 'API request failed',
+      error:
+        error.response?.data?.error ||
+        error.response?.data?.detail ||
+        error.response?.data?.message ||
+        error.message ||
+        "API request failed",
       status: error.response?.status || 500,
       response: error.response
     };
