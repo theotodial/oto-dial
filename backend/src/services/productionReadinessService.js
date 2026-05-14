@@ -388,10 +388,11 @@ export async function runProductionReadinessChecks(opts = {}) {
         ageSec > maxStaleSec &&
         softStatuses.has(String(row.status || ""));
       const missing = !row;
-      const hardDown = row && (row.status === "failed" || row.status === "stopped");
-      /** Stale / missing are ops signals; only failed+stopped should block cold start (readiness runs before agent runtime ticks). */
-      const startupBlocking = Boolean(hardDown);
-      const needsAttention = Boolean(missing || staleHeartbeat || hardDown);
+      const failed = row && row.status === "failed";
+      const stopped = row && row.status === "stopped";
+      /** Readiness runs before agent runtime: stale/missing/stopped rows are common; only `failed` should refuse to bind. */
+      const startupBlocking = Boolean(failed);
+      const needsAttention = Boolean(missing || staleHeartbeat || failed || stopped);
       agentDetails.criticalAgents.push({
         agent: name,
         status: row?.status || "missing",
