@@ -7,6 +7,7 @@ import {
   releaseUnusedCallReservationSerialized,
   finalizeEconomicTimelineForCall,
 } from "./economicSerializationService.js";
+import { allowOutboundCreditDebugBypass } from "../utils/outboundCreditDebugBypass.js";
 
 const ACTIVE_STATES = new Set(["answered", "in-progress"]);
 const TERMINAL_STATES = new Set([
@@ -21,6 +22,12 @@ const TERMINAL_STATES = new Set([
 export async function reserveCreditsForOutboundCall(call, options = {}) {
   if (!call?._id || !call?.user || call.direction !== "outbound") {
     return { ok: true, skipped: true };
+  }
+  if (allowOutboundCreditDebugBypass()) {
+    console.warn("[CALL DEBUG] CALL_DEBUG_ALLOW_OUTBOUND_WITHOUT_CREDITS — skipping reserveCreditsForOutboundCall", {
+      callId: String(call._id),
+    });
+    return { ok: true, skipped: true, debugBypass: true };
   }
   const result = await reserveCreditsForOutboundCallSerialized(call, options);
   const billing = result?.billing;
@@ -42,6 +49,12 @@ export async function reserveCreditsForOutboundCall(call, options = {}) {
 export async function chargeOutboundAttempt(call) {
   if (!call?._id || !call?.user || call.direction !== "outbound") {
     return { ok: true, skipped: true };
+  }
+  if (allowOutboundCreditDebugBypass()) {
+    console.warn("[CALL DEBUG] CALL_DEBUG_ALLOW_OUTBOUND_WITHOUT_CREDITS — skipping chargeOutboundAttempt", {
+      callId: String(call._id),
+    });
+    return { ok: true, skipped: true, debugBypass: true };
   }
   const key = `call:${String(call._id)}:attempt`;
   const result = await chargeOutboundAttemptSerialized(call);

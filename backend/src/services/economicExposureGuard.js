@@ -9,6 +9,7 @@ import {
   getReservationMultiplierFromGuardrails,
 } from "./profitGuardrailService.js";
 import { emitAdminThrottleEvent } from "./adminLiveEventsService.js";
+import { allowOutboundCreditDebugBypass } from "../utils/outboundCreditDebugBypass.js";
 
 function logExposure(event, details = {}) {
   console.log("[ECONOMIC EXPOSURE]", { event, ...details, t: new Date().toISOString() });
@@ -59,6 +60,20 @@ export async function computeOutboundReservationHold(userId, reservationMultipli
  */
 export async function assertOutboundCreditExposureForNewCall(userId, reservationMultiplierOpt) {
   const { hold } = await computeOutboundReservationHold(userId, reservationMultiplierOpt);
+  if (allowOutboundCreditDebugBypass()) {
+    console.warn("[CALL DEBUG] CALL_DEBUG_ALLOW_OUTBOUND_WITHOUT_CREDITS — skipping projected-credit exposure guard", {
+      userId: String(userId),
+      hold,
+    });
+    return {
+      ok: true,
+      code: null,
+      hold,
+      projection: null,
+      projectedAfterNewReserve: null,
+      additionalReservation: hold,
+    };
+  }
   const result = await evaluateOutboundCreditExposure(userId, { additionalReservation: hold });
   if (!result.ok) {
     logExposure("reject_outbound", {
