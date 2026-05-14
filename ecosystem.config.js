@@ -6,6 +6,7 @@ module.exports = {
       script: 'index.js',
       instances: 1,
       exec_mode: 'fork',
+      // Optional: add BUILD_VERSION for /api/health (e.g. from CI: BUILD_VERSION=$(git rev-parse --short HEAD))
       env: {
         NODE_ENV: 'production',
         PORT: 5000

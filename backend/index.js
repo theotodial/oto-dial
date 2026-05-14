@@ -3,6 +3,7 @@ import "./loadEnv.js";
 
 import express from "express";
 import cors from "cors";
+import mongoose from "mongoose";
 import http from "http";
 import passport from "passport";
 import path from "path";
@@ -10,7 +11,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { Server as SocketIOServer } from "socket.io";
 
-import connectDB from "./config/db.js";
+import connectDB, { waitForMongooseConnectionLive } from "./config/db.js";
 import { getTelnyx } from "./config/telnyx.js";
 import { validateEnv } from "./src/utils/envValidator.js";
 import { applySafeModeOperationalDefaults, getDeploymentMode } from "./src/services/deploymentModeService.js";
@@ -24,6 +25,7 @@ import {
   startPerformanceTelemetryService,
 } from "./src/services/performanceTelemetryService.js";
 import { flushTelemetryBuffersNow } from "./src/services/telemetryBufferService.js";
+import { getRedisClient } from "./src/services/cache.service.js";
 import { startWorkerHeartbeatPublisher } from "./src/services/workerHeartbeatService.js";
 import {
   registerSmsOutboundProcessor,
@@ -249,6 +251,18 @@ getTelnyx();
 // MIDDLEWARE
 // ========================
 app.use(cors({ origin: true, credentials: true }));
+
+if (String(process.env.HTTP_REQUEST_LOG || "").trim() === "1") {
+  app.use((req, res, next) => {
+    const t0 = Date.now();
+    res.on("finish", () => {
+      const ms = Date.now() - t0;
+      console.log(`[http] ${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`);
+    });
+    next();
+  });
+}
+
 app.use(passport.initialize());
 
 // Stripe webhook must be raw
@@ -462,9 +476,44 @@ app.use("/api/admin", authenticateUser, requireAdmin, adminRoutes);
 // ========================
 // HEALTH
 // ========================
-app.get("/api/health", (req, res) => {
-  res.json({ success: true, status: "ok", time: new Date().toISOString() });
-});
+async function handleApiHealth(req, res) {
+  if (req.method === "HEAD") {
+    return res.status(200).end();
+  }
+
+  const mongoOk = mongoose.connection.readyState === 1;
+  let redisOk = false;
+  if (String(process.env.REDIS_URL || "").trim()) {
+    try {
+      const client = await getRedisClient();
+      if (client?.isOpen) {
+        await Promise.race([
+          client.ping(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("redis_ping_timeout")), 1500)),
+        ]);
+        redisOk = true;
+      }
+    } catch {
+      redisOk = false;
+    }
+  }
+
+  const payload = {
+    status: mongoOk ? "ok" : "degraded",
+    redis: redisOk,
+    mongodb: mongoOk,
+    uptime: process.uptime(),
+    time: new Date().toISOString(),
+    success: true,
+    build: String(process.env.BUILD_VERSION || process.env.GIT_SHA || "").trim() || undefined,
+  };
+  if (!payload.build) delete payload.build;
+
+  return res.status(200).json(payload);
+}
+
+app.get("/api/health", handleApiHealth);
+app.head("/api/health", handleApiHealth);
 
 app.get("/api/debug/voice-hit", (_req, res) => {
   return res.status(200).send("OK");
@@ -600,6 +649,20 @@ async function startServer() {
       console.error("⚠️ Performance index sync failed:", indexErr.message);
     }
 
+    const mongoLive = await waitForMongooseConnectionLive({
+      timeoutMs: Math.max(5000, Number(process.env.MONGO_POST_INDEX_READY_MS || 25_000)),
+    });
+    if (!mongoLive.ok) {
+      console.error(
+        "⚠️ Mongo not responsive after index sync (pool may be warming). Readiness may be unreliable.",
+        mongoLive
+      );
+    }
+
+    const enforceReadinessExit =
+      String(process.env.ENFORCE_STARTUP_READINESS || "").trim() === "1" ||
+      String(process.env.NODE_ENV || "").toLowerCase() === "production";
+
     try {
       const readiness = await runProductionReadinessChecks({ fullIndexAudit: true });
       if (readiness.overall === "critical" && String(process.env.ALLOW_UNSAFE_STARTUP || "").trim() !== "1") {
@@ -608,14 +671,21 @@ async function startServer() {
           message: "Production readiness checks reported CRITICAL; refusing to bind HTTP port.",
           hint: "Set ALLOW_UNSAFE_STARTUP=1 only for a controlled emergency start.",
           readiness,
+          enforceReadinessExit,
         };
         console.error(JSON.stringify(payload, null, 2));
         telecomOperationalLog("[STARTUP CHECK]", { blocked: true, ...payload });
-        process.exit(1);
+        if (enforceReadinessExit) {
+          process.exit(1);
+        } else {
+          console.error(
+            "⚠️ Startup readiness CRITICAL but NODE_ENV is not production — continuing so local dev does not crash. Set NODE_ENV=production on real deploys or ENFORCE_STARTUP_READINESS=1 to block."
+          );
+        }
       }
     } catch (readinessErr) {
       console.error("❌ Production readiness checks failed:", readinessErr?.message || readinessErr);
-      if (String(process.env.ALLOW_UNSAFE_STARTUP || "").trim() !== "1") {
+      if (String(process.env.ALLOW_UNSAFE_STARTUP || "").trim() !== "1" && enforceReadinessExit) {
         process.exit(1);
       }
     }

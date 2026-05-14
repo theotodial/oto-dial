@@ -3,9 +3,10 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  // Base path for production
+  // Base path for production (same-origin behind Nginx at https://otodial.com/)
   base: '/',
   build: {
+    outDir: 'dist',
     assetsDir: 'assets',
     sourcemap: false,
     rollupOptions: {
