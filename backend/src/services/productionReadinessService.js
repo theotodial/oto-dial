@@ -378,26 +378,42 @@ export async function runProductionReadinessChecks(opts = {}) {
       .catch(() => []);
     const now = Date.now();
     const maxStaleSec = Number(process.env.READINESS_AGENT_HEARTBEAT_MAX_SEC || 1200);
+    const softStatuses = new Set(["healthy", "running", "degraded", "starting"]);
     for (const name of CRITICAL_AGENTS) {
       const row = agents.find((a) => a.agent === name) || null;
       const ageSec = row?.heartbeatAt ? Math.floor((now - new Date(row.heartbeatAt).getTime()) / 1000) : null;
-      const unhealthy = !row || row.status === "failed" || row.status === "stopped" || (ageSec != null && ageSec > maxStaleSec);
+      const staleHeartbeat =
+        row &&
+        ageSec != null &&
+        ageSec > maxStaleSec &&
+        softStatuses.has(String(row.status || ""));
+      const missing = !row;
+      const hardDown = row && (row.status === "failed" || row.status === "stopped");
+      /** Stale / missing are ops signals; only failed+stopped should block cold start (readiness runs before agent runtime ticks). */
+      const startupBlocking = Boolean(hardDown);
+      const needsAttention = Boolean(missing || staleHeartbeat || hardDown);
       agentDetails.criticalAgents.push({
         agent: name,
         status: row?.status || "missing",
         heartbeatAgeSec: ageSec,
         lastRunAt: row?.lastRunAt || null,
         lastError: row?.lastError || null,
-        unhealthy,
+        staleHeartbeat: Boolean(staleHeartbeat),
+        missing,
+        unhealthy: needsAttention,
+        startupBlocking,
       });
-      if (unhealthy) {
+      if (needsAttention) {
         agentDetails.oldestCriticalHeartbeatAgeSec =
           ageSec == null ? agentDetails.oldestCriticalHeartbeatAgeSec : Math.max(agentDetails.oldestCriticalHeartbeatAgeSec || 0, ageSec);
       }
     }
-    if (agentDetails.criticalAgents.some((a) => a.unhealthy)) {
+    if (agentDetails.criticalAgents.some((a) => a.startupBlocking)) {
       sections.agents.status = maxSeverity(sections.agents.status, isProd ? "critical" : "warning");
       overall = maxSeverity(overall, sections.agents.status);
+    } else if (agentDetails.criticalAgents.some((a) => a.unhealthy)) {
+      sections.agents.status = maxSeverity(sections.agents.status, "warning");
+      overall = maxSeverity(overall, "warning");
     }
   }
 
