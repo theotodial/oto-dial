@@ -2,6 +2,27 @@
 
 When **curl on the VPS returns HTTP 200** but **browsers on the public internet time out**, the app stack (PM2, Mongo, Redis, Nginx) is usually fine. The failure is almost always **before TCP reaches Nginx**: DNS, IPv6, firewalls, or Cloudflare.
 
+## HTTP 502 from Nginx on `/api/*` (frontend HTML still works)
+
+Nginx returns **502** when it cannot get a valid response from the **Node upstream** (`proxy_pass`). Typical causes:
+
+1. **Nothing listening on the upstream port** — Node not bound yet (slow Mongo startup before `listen`), crashed, or wrong `PORT` in `.env` vs Nginx (e.g. app on `10000`, Nginx still points at `5000`).
+2. **`HOST=127.0.0.1` mismatch** — rare; Nginx `127.0.0.1` matches. If Node listened **only** on a different interface, fix `HOST` / firewall.
+3. **PM2 `cwd` / script** — process not actually running `backend/index.js` from the deploy tree (use repo `ecosystem.config.js` with absolute `cwd` / `env_file`).
+
+**Checks on the VPS:**
+
+```bash
+curl -sS -i http://127.0.0.1:5000/api/health | head -20
+ss -tlnp | grep 5000
+pm2 describe oto-dial-backend
+pm2 logs oto-dial-backend --lines 80
+sudo tail -50 /var/log/nginx/error.log
+```
+
+- **`GET /api/health`** returns **`{"status":"ok"}`** with **no database** (liveness for proxies).
+- **`GET /api/health/status`** includes Mongo/Redis detail for operators.
+
 ## Most likely root causes (in order)
 
 1. **Cloud / VPS firewall (security group)** — ports **80** and **443** open to `0.0.0.0/0` (and `::/0` if you use IPv6). SSH being open does not imply 443 is open.

@@ -1,6 +1,19 @@
 // Env must load before any route/service reads process.env (see loadEnv.js — dotenv + multi-path .env).
 import "./loadEnv.js";
 
+process.on("uncaughtException", (err) => {
+  console.error("[fatal] uncaughtException:", err?.stack || err?.message || err);
+  if (String(process.env.EXIT_ON_UNCAUGHT || "").trim() === "1") {
+    process.exit(1);
+  }
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[fatal] unhandledRejection:", reason);
+  if (String(process.env.EXIT_ON_UNHANDLED_REJECTION || "").trim() === "1") {
+    process.exit(1);
+  }
+});
+
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
@@ -135,7 +148,19 @@ startPerformanceTelemetryService();
 startWorkerHeartbeatPublisher();
 registerSmsOutboundProcessor(processOutboundQueueJob);
 startSmsOutboundQueueWorker();
-const PORT = process.env.PORT || 5000;
+
+function resolveListenPort() {
+  const raw = process.env.PORT;
+  const n = Number.parseInt(String(raw != null && String(raw).trim() !== "" ? raw : "5000"), 10);
+  if (!Number.isFinite(n) || n < 1 || n > 65535) {
+    console.warn(`[http] Invalid PORT="${raw}" — falling back to 5000`);
+    return 5000;
+  }
+  return n;
+}
+
+const PORT = resolveListenPort();
+const HOST = String(process.env.HOST ?? "0.0.0.0").trim() || "0.0.0.0";
 const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || "25mb";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -225,6 +250,14 @@ function findExistingUploadFile(relativePath) {
 // Trust proxy for accurate IP addresses
 app.set('trust proxy', true);
 
+// Liveness for reverse proxies (nginx) — no DB/Redis; must stay fast and never throw.
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+app.head("/api/health", (_req, res) => {
+  res.status(200).end();
+});
+
 // ========================
 // BOOT LOGS
 // ========================
@@ -243,6 +276,7 @@ console.log("🌐 APP_URL:", process.env.APP_URL || "(not set)");
 logResendConfigAtStartup();
 const uri = process.env.MONGODB_URI;
 console.log("MONGODB_URI =", uri ? uri.replace(/:[^:@]+@/, ":****@") : "❌ missing");
+console.log("[http] configured bind", JSON.stringify({ HOST, PORT, nodeEnv: process.env.NODE_ENV || null }));
 
 // Init Telnyx
 getTelnyx();
@@ -474,9 +508,9 @@ app.use("/api/affiliate", affiliateRoutes);
 app.use("/api/admin", authenticateUser, requireAdmin, adminRoutes);
 
 // ========================
-// HEALTH
+// HEALTH (detailed — after Mongo warms up)
 // ========================
-async function handleApiHealth(req, res) {
+async function handleApiHealthStatus(req, res) {
   if (req.method === "HEAD") {
     return res.status(200).end();
   }
@@ -512,8 +546,8 @@ async function handleApiHealth(req, res) {
   return res.status(200).json(payload);
 }
 
-app.get("/api/health", handleApiHealth);
-app.head("/api/health", handleApiHealth);
+app.get("/api/health/status", handleApiHealthStatus);
+app.head("/api/health/status", handleApiHealthStatus);
 
 app.get("/api/debug/voice-hit", (_req, res) => {
   return res.status(200).send("OK");
@@ -640,9 +674,57 @@ async function ensurePerformanceIndexes() {
 }
 
 async function startServer() {
+  const bindHttpOnce = () =>
+    new Promise((resolve, reject) => {
+      const onFail = (err) => {
+        server.off("error", onFail);
+        reject(err);
+      };
+      server.once("error", onFail);
+      server.listen(PORT, HOST, () => {
+        server.off("error", onFail);
+        server.on("error", (e) => {
+          console.error("[http] server error after bind:", e?.message || e);
+        });
+        resolve();
+      });
+    });
+
   try {
-    await connectDB();
-    console.log("✅ Database connected");
+    await bindHttpOnce();
+    const addr = server.address();
+    console.log(
+      `[http] listening ${JSON.stringify({
+        host: HOST,
+        port: PORT,
+        address: addr,
+        nodeEnv: process.env.NODE_ENV || null,
+        pid: process.pid,
+      })}`
+    );
+  } catch (bindErr) {
+    console.error("❌ HTTP bind failed — nginx will return 502 until this is fixed:", bindErr?.message || bindErr);
+    process.exit(1);
+  }
+
+  const mongoConnectLoop = async () => {
+    const pauseMs = Math.max(3000, Number(process.env.MONGO_RETRY_AFTER_FAIL_MS || 15_000));
+    for (;;) {
+      try {
+        await connectDB();
+        console.log("✅ Database connected");
+        return;
+      } catch (e) {
+        console.error(
+          `[mongo] connect failed (${e?.message || e}) — retrying in ${pauseMs}ms (HTTP already listening; /api/health stays ok)`
+        );
+        await new Promise((r) => setTimeout(r, pauseMs));
+      }
+    }
+  };
+
+  try {
+    await mongoConnectLoop();
     try {
       await ensurePerformanceIndexes();
     } catch (indexErr) {
@@ -668,8 +750,9 @@ async function startServer() {
       if (readiness.overall === "critical" && String(process.env.ALLOW_UNSAFE_STARTUP || "").trim() !== "1") {
         const payload = {
           level: "critical",
-          message: "Production readiness checks reported CRITICAL; refusing to bind HTTP port.",
-          hint: "Set ALLOW_UNSAFE_STARTUP=1 only for a controlled emergency start.",
+          message:
+            "Production readiness checks reported CRITICAL (HTTP is already listening — exiting only if enforceReadinessExit).",
+          hint: "Set ALLOW_UNSAFE_STARTUP=1 only for a controlled emergency run.",
           readiness,
           enforceReadinessExit,
         };
@@ -762,12 +845,12 @@ async function startServer() {
       console.error("⚠️ OTO Agents task queue failed to start:", otoAgentErr.message);
     }
 
-    server.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-    });
+    console.log("[startup] background services initialized after HTTP bind");
   } catch (err) {
-    console.error("❌ Failed to start server:", err);
-    process.exit(1);
+    console.error("❌ Failed to complete post-bind startup:", err);
+    if (String(process.env.EXIT_ON_POST_BIND_INIT_FAIL || "").trim() === "1") {
+      process.exit(1);
+    }
   }
 }
 

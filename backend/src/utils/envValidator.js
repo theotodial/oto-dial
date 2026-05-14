@@ -48,6 +48,9 @@ const optionalEnvVars = {
   SUBSCRIPTION_RECONCILIATION_SYNC_MAX_PAGES: '6',
   SUBSCRIPTION_RECONCILIATION_AUTO_REPAIR: 'true',
   REQUEST_BODY_LIMIT: '25mb',
+  HOST: '',
+  MONGO_RETRY_AFTER_FAIL_MS: '',
+  EXIT_ON_POST_BIND_INIT_FAIL: '',
   // Do NOT put human-readable descriptions here — validateEnv assigns these to process.env when unset.
   RESEND_API_KEY: '',
   RESEND_FROM: '',
