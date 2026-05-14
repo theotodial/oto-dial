@@ -20,6 +20,7 @@ import ProfitEvent from "../models/ProfitEvent.js";
 import { CRITICAL_AGENTS } from "./distributedAgentCoordinator.js";
 import { telecomOperationalLog } from "../utils/telecomOperationalLog.js";
 import { getDeploymentMode } from "./deploymentModeService.js";
+import { waitForMongooseConnectionLive } from "../../config/db.js";
 
 const SEVERITY_ORDER = { healthy: 0, warning: 1, critical: 2 };
 
@@ -94,8 +95,12 @@ export async function runProductionReadinessChecks(opts = {}) {
   let overall = "healthy";
 
   // ---------- A. DATABASE ----------
+  const mongoWaitMs = Math.max(2000, Number(process.env.READINESS_MONGO_WAIT_MS || 18_000));
+  const mongoWarmup = await waitForMongooseConnectionLive({ timeoutMs: mongoWaitMs });
+
   const dbDetails = {
     mongoReadyState: mongoose.connection.readyState,
+    mongoWarmup,
     redisConfigured: Boolean(String(process.env.REDIS_URL || "").trim()),
     redisPingOk: null,
     journalCreditLedgerAccessible: null,
@@ -106,7 +111,7 @@ export async function runProductionReadinessChecks(opts = {}) {
     transactionsSupported: null,
   };
 
-  if (mongoose.connection.readyState !== 1) {
+  if (!mongoWarmup.ok) {
     dbDetails.mongoConnected = false;
     sections.database.status = "critical";
     overall = maxSeverity(overall, "critical");
