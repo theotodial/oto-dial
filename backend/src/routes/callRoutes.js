@@ -158,8 +158,10 @@ async function persistFailedCallAttempt(req, fields, hangupCause) {
 
 router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
   const callCreateT0 = Date.now();
+  const execTraceHeader = String(req.get("x-oto-exec-trace") || "").trim() || null;
   try {
     console.log("[CALL FLOW] POST /api/calls entry", {
+      execTraceHeader,
       userId: req.userId ? String(req.userId) : null,
       at: new Date().toISOString(),
     });

@@ -36,6 +36,29 @@ export const CALL_STATES = {
 /** WebRTC token + repair-outbound chain many Telnyx REST calls — must exceed default axios caps. */
 const TELECOM_HTTP_TIMEOUT_MS = 120_000;
 
+/** Browser-console correlation (pair with backend logs via x-oto-exec-trace). */
+function execTrace(traceId, stage, fields = {}) {
+  try {
+    console.log(
+      '[EXEC TRACE]',
+      JSON.stringify({
+        traceId,
+        stage,
+        t: new Date().toISOString(),
+        ...fields,
+      })
+    );
+  } catch {
+    console.log('[EXEC TRACE]', traceId, stage, fields);
+  }
+}
+
+function traceHeaders(traceId) {
+  return traceId && typeof traceId === 'string'
+    ? { headers: { 'x-oto-exec-trace': traceId } }
+    : {};
+}
+
 /** Telnyx @telnyx/webrtc uses Direction.Inbound / Outbound and State as 0–11 */
 const TELNYX_STATE_NAMES = [
   'new',
@@ -504,6 +527,12 @@ export const CallProvider = ({ children }) => {
   useEffect(() => {
     isInitializingRef.current = isInitializing;
   }, [isInitializing]);
+
+  /** Keep ref aligned with SDK reality immediately — do not rely only on useEffect after telnyx.ready. */
+  const syncClientReady = useCallback((next) => {
+    isClientReadyRef.current = next;
+    setIsClientReady(next);
+  }, []);
 
   // Request notification permission on mount
   useEffect(() => {
@@ -1603,16 +1632,26 @@ export const CallProvider = ({ children }) => {
   }, [handleIncomingCallEvent]);
 
   // Initialize Telnyx WebRTC client
-  const initializeClient = useCallback(async () => {
+  const initializeClient = useCallback(async (traceIdOpt) => {
+    const traceId =
+      typeof traceIdOpt === 'string' && traceIdOpt.trim()
+        ? traceIdOpt.trim()
+        : `webrtc-init-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
     // Prevent multiple initializations
     if (initializationPromiseRef.current) {
       console.log('📱 Already initializing, waiting...');
+      execTrace(traceId, 'initializeClient:await_existing_promise', {});
       return initializationPromiseRef.current;
     }
 
     // If already connected and ready, return true (use refs)
     if (telnyxClientRef.current && isClientReadyRef.current && isInitializedRef.current) {
       console.log('📱 Client already ready');
+      execTrace(traceId, 'initializeClient:early_return_already_ready', {
+        refReady: true,
+        hasClient: true,
+      });
       return true;
     }
 
@@ -1621,12 +1660,27 @@ export const CallProvider = ({ children }) => {
     
     initializationPromiseRef.current = (async () => {
       try {
+        execTrace(traceId, 'initializeClient:fetch_token:before', {
+          baseURL: import.meta.env.VITE_API_URL || '(same-origin)',
+        });
         console.log('📱 Initializing Telnyx WebRTC client...');
         const tokenT0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        const response = await API.get('/api/webrtc/token', { timeout: TELECOM_HTTP_TIMEOUT_MS });
+        const response = await API.get('/api/webrtc/token', {
+          timeout: TELECOM_HTTP_TIMEOUT_MS,
+          ...traceHeaders(traceId),
+        });
         const tokenMs =
           (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tokenT0;
         console.log('[CALL FLOW] GET /api/webrtc/token done', { ms: Math.round(tokenMs), httpStatus: response.status });
+        execTrace(traceId, 'initializeClient:fetch_token:after', {
+          ms: Math.round(tokenMs),
+          httpStatus: response.status,
+          err: response.error || null,
+          hasCreds: !!(response.data?.credentials && response.data.credentials.sipUsername),
+          hasLoginTokenField: !!response.data?.credentials?.loginToken,
+          hasSipPasswordField: !!response.data?.credentials?.sipPassword,
+          viteSipPasswordEnv: !!String(import.meta.env.VITE_TELNYX_SIP_PASSWORD || '').trim(),
+        });
 
         const httpOk =
           typeof response.status === 'number' &&
@@ -1639,6 +1693,7 @@ export const CallProvider = ({ children }) => {
             response.data?.error ||
             `WebRTC token request failed (${response.status})`;
           console.error('[WEBRTC TOKEN] HTTP error:', msg, response);
+          execTrace(traceId, 'initializeClient:token_http_fail', { msg });
           setError(msg);
           setIsInitializing(false);
           return false;
@@ -1646,6 +1701,9 @@ export const CallProvider = ({ children }) => {
 
         if (response.error && !response.data?.credentials) {
           console.error('Failed to get WebRTC credentials:', response.error);
+          execTrace(traceId, 'initializeClient:token_response_error_shape', {
+            error: response.error,
+          });
           setError(response.error);
           setIsInitializing(false);
           return false;
@@ -1654,6 +1712,7 @@ export const CallProvider = ({ children }) => {
         const creds = response.data?.credentials;
         if (!creds || !creds.sipUsername) {
           console.error('Invalid credentials received', response.data);
+          execTrace(traceId, 'initializeClient:invalid_creds', {});
           setError('Invalid calling credentials');
           setIsInitializing(false);
           return false;
@@ -1671,12 +1730,16 @@ export const CallProvider = ({ children }) => {
             'Missing WebRTC auth: set TELNYX_SIP_PASSWORD or VITE_TELNYX_SIP_PASSWORD, or enable server JWT (telephony credential)'
           );
           setError('Calling password not configured');
-          setIsClientReady(false);
+          execTrace(traceId, 'initializeClient:missing_password_and_jwt', {});
+          syncClientReady(false);
           setIsInitializing(false);
           isInitializedRef.current = false;
           return false;
         }
 
+        execTrace(traceId, 'initializeClient:auth_mode', {
+          mode: loginToken ? 'login_token' : 'sip_password',
+        });
         console.log(
           loginToken
             ? '📱 Creating TelnyxRTC client with login_token (JWT)'
@@ -1716,6 +1779,7 @@ export const CallProvider = ({ children }) => {
         // Promise to wait for ready
         const readyPromise = new Promise((resolve, reject) => {
           const timeout = setTimeout(() => {
+            execTrace(traceId, 'initializeClient:ready_timeout_45s', {});
             reject(new Error('Connection timeout - please check your credentials'));
           }, 45000);
 
@@ -1723,7 +1787,8 @@ export const CallProvider = ({ children }) => {
             clearTimeout(timeout);
             console.log('[TELNYX READY]');
             console.log('✅ Telnyx WebRTC client ready!');
-            setIsClientReady(true);
+            execTrace(traceId, 'initializeClient:telnyx.ready', {});
+            syncClientReady(true);
             setError(null);
             setIsInitializing(false);
             isInitializedRef.current = true;
@@ -1733,8 +1798,12 @@ export const CallProvider = ({ children }) => {
           client.on('telnyx.error', (err) => {
             clearTimeout(timeout);
             console.error('❌ Telnyx error:', err);
+            execTrace(traceId, 'initializeClient:telnyx.error', {
+              message: err?.message,
+              stack: err?.stack,
+            });
             setError(err.message || 'Connection error');
-            setIsClientReady(false);
+            syncClientReady(false);
             setIsInitializing(false);
             reject(err);
           });
@@ -1752,7 +1821,8 @@ export const CallProvider = ({ children }) => {
             callControlId: currentCallRef.current?.callControlId || null,
             currentStatus: callStateRef.current,
           });
-          setIsClientReady(false);
+          execTrace(traceId, 'initializeClient:telnyx.socket.close', {});
+          syncClientReady(false);
           isInitializedRef.current = false;
 
           // Never start a second full init while user is placing or on a call — it disconnect()s the client.
@@ -1782,6 +1852,7 @@ export const CallProvider = ({ children }) => {
         // Monitor connection health
         client.on('telnyx.socket.open', () => {
           console.log('📱 Telnyx socket opened - connection active');
+          execTrace(traceId, 'initializeClient:telnyx.socket.open', {});
           telecomStructuredLog('[WS FLOW]', {
             sourcePath: 'CallContext.jsx:telnyx.socket.open',
             eventType: 'telnyx_socket_open',
@@ -1791,6 +1862,37 @@ export const CallProvider = ({ children }) => {
             userId: null,
             callControlId: currentCallRef.current?.callControlId || null,
             currentStatus: callStateRef.current,
+          });
+        });
+
+        client.on('telnyx.socket.error', (socketErr) => {
+          console.error('📱 Telnyx socket error:', socketErr);
+          execTrace(traceId, 'initializeClient:telnyx.socket.error', {
+            detail: socketErr?.message || String(socketErr),
+          });
+          telecomStructuredLog('[WS FLOW]', {
+            sourcePath: 'CallContext.jsx:telnyx.socket.error',
+            eventType: 'telnyx_socket_error',
+            callId: outboundCallRecordIdRef.current
+              ? String(outboundCallRecordIdRef.current)
+              : null,
+            userId: null,
+            callControlId: currentCallRef.current?.callControlId || null,
+            currentStatus: callStateRef.current,
+          });
+        });
+
+        client.on('telnyx.rtc.mediaError', (mediaErr) => {
+          console.error('📱 Telnyx rtc.mediaError:', mediaErr);
+          execTrace(traceId, 'initializeClient:telnyx.rtc.mediaError', {
+            detail: mediaErr?.message || String(mediaErr),
+          });
+        });
+
+        client.on('telnyx.rtc.peerConnectionFailureError', (pcErr) => {
+          console.error('📱 Telnyx peerConnectionFailureError:', pcErr);
+          execTrace(traceId, 'initializeClient:telnyx.rtc.peerConnectionFailureError', {
+            detail: pcErr?.message || String(pcErr),
           });
         });
 
@@ -1847,12 +1949,21 @@ export const CallProvider = ({ children }) => {
         console.log('📱 Connecting to Telnyx...');
         console.log('📱 SIP Username:', creds.sipUsername);
         console.log('📱 Connection ID:', creds.connectionId);
-        
+
+        execTrace(traceId, 'initializeClient:connect:before', {});
         await client.connect();
-        
+        execTrace(traceId, 'initializeClient:connect:after_await', {
+          clientConnectedFlag: client.connected,
+        });
+
         // Wait for ready
         await readyPromise;
-        
+
+        execTrace(traceId, 'initializeClient:readyPromise:resolved', {
+          refReady: isClientReadyRef.current,
+          isInitialized: isInitializedRef.current,
+        });
+
         console.log('✅ Telnyx client connected and ready');
         console.log('✅ Client is now listening for incoming calls');
         console.log('✅ Make sure your phone number has connection_id set to:', creds.connectionId);
@@ -1865,9 +1976,14 @@ export const CallProvider = ({ children }) => {
         return true;
       } catch (err) {
         console.error('Failed to initialize Telnyx client:', err);
+        execTrace(traceId, 'initializeClient:catch', {
+          message: err?.message,
+          stack: err?.stack,
+        });
         setError(err.message || 'Failed to connect to calling service');
         setIsInitializing(false);
-        setIsClientReady(false);
+        syncClientReady(false);
+        isInitializedRef.current = false;
         return false;
       } finally {
         initializationPromiseRef.current = null;
@@ -1875,10 +1991,16 @@ export const CallProvider = ({ children }) => {
     })();
 
     return initializationPromiseRef.current;
-  }, []);
+  }, [syncClientReady]);
 
   // Save call record to database
-  const saveCallRecord = useCallback(async (toNumber, fromNumber, direction = 'outbound', status = 'initiated') => {
+  const saveCallRecord = useCallback(async (
+    toNumber,
+    fromNumber,
+    direction = 'outbound',
+    status = 'initiated',
+    execTraceId = null
+  ) => {
     const payload = {
       phoneNumber: toNumber,
       fromNumber: fromNumber,
@@ -1893,7 +2015,10 @@ export const CallProvider = ({ children }) => {
       payload,
     });
 
-    const response = await API.post('/api/calls', payload, { timeout: TELECOM_HTTP_TIMEOUT_MS });
+    const response = await API.post('/api/calls', payload, {
+      timeout: TELECOM_HTTP_TIMEOUT_MS,
+      ...traceHeaders(execTraceId),
+    });
 
     console.log('[CALL FLOW] Response from /api/calls', {
       status: response.status,
@@ -2008,8 +2133,22 @@ export const CallProvider = ({ children }) => {
 
   // Make outbound call
   const makeCall = useCallback(async (destinationNumber, callerIdNumber) => {
-    console.log('[CALL FLOW] CALL BUTTON / makeCall', { destinationNumber, callerIdNumber });
-    console.log('📱 Current state:', { isClientReady, hasClient: !!telnyxClientRef.current, callState: callStateRef.current });
+    const traceId = `dial-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    execTrace(traceId, 'makeCall:entry', {
+      destinationNumber,
+      callerIdNumber,
+      refReady: isClientReadyRef.current,
+      hasClient: !!telnyxClientRef.current,
+      callUiState: callStateRef.current,
+      viteApiUrl: import.meta.env.VITE_API_URL || '(empty,same-origin)',
+    });
+    console.log('[CALL FLOW] CALL BUTTON / makeCall', { traceId, destinationNumber, callerIdNumber });
+    console.log('📱 Current state:', {
+      isClientReadyState: isClientReady,
+      refReady: isClientReadyRef.current,
+      hasClient: !!telnyxClientRef.current,
+      callState: callStateRef.current,
+    });
 
     try {
       setError(null);
@@ -2054,7 +2193,13 @@ export const CallProvider = ({ children }) => {
         '[CALL FLOW] Persisting call in DB before Telnyx (POST /api/calls next)'
       );
 
-      const saved = await saveCallRecord(destE164, callerE164, 'outbound', 'initiated');
+      execTrace(traceId, 'makeCall:before_saveCallRecord', {});
+      const saved = await saveCallRecord(destE164, callerE164, 'outbound', 'initiated', traceId);
+      execTrace(traceId, 'makeCall:after_saveCallRecord', {
+        ok: saved.ok,
+        callId: saved.callId || null,
+        err: saved.error || null,
+      });
       if (!saved.ok) {
         outboundDialActiveRef.current = false;
         setError(saved.error || 'Could not start call');
@@ -2070,6 +2215,7 @@ export const CallProvider = ({ children }) => {
 
       let outboundRepairHadActions = false;
       try {
+        execTrace(traceId, 'makeCall:before_repair_outbound', {});
         const repairT0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
         const repair = await API.post(
           '/api/webrtc/repair-outbound',
@@ -2078,13 +2224,18 @@ export const CallProvider = ({ children }) => {
             callerNumber: callerE164,
             forceSyncCallerConnectionId: true,
           },
-          { timeout: TELECOM_HTTP_TIMEOUT_MS }
+          { timeout: TELECOM_HTTP_TIMEOUT_MS, ...traceHeaders(traceId) }
         );
         const repairMs =
           (typeof performance !== 'undefined' ? performance.now() : Date.now()) - repairT0;
         console.log('[CALL FLOW] POST /api/webrtc/repair-outbound done', {
           ms: Math.round(repairMs),
           httpStatus: repair.status,
+        });
+        execTrace(traceId, 'makeCall:after_repair_outbound', {
+          ms: Math.round(repairMs),
+          httpStatus: repair.status,
+          apiError: repair.error || null,
         });
         const ok =
           typeof repair.status === 'number' &&
@@ -2145,11 +2296,11 @@ export const CallProvider = ({ children }) => {
           console.warn('[CALL FLOW] WebRTC disconnect before reconnect:', e);
         }
         telnyxClientRef.current = null;
-        setIsClientReady(false);
-        isClientReadyRef.current = false;
+        syncClientReady(false);
         isInitializedRef.current = false;
         initializationPromiseRef.current = null;
-        const reinit = await initializeClient();
+        execTrace(traceId, 'makeCall:tollfree_reinit:before_initializeClient', {});
+        const reinit = await initializeClient(traceId);
         if (!reinit) {
           throw new Error(
             'Could not reconnect calling service after route repair. Refresh the page or try again.'
@@ -2161,8 +2312,17 @@ export const CallProvider = ({ children }) => {
       // Initialize client if needed (after DB row exists — avoids “nothing in DB” when SIP fails)
       if (!telnyxClientRef.current || !isClientReadyRef.current) {
         console.log('📱 Client not ready, initializing...');
-        const initialized = await initializeClient();
+        execTrace(traceId, 'makeCall:before_initializeClient_on_demand', {
+          hasClient: !!telnyxClientRef.current,
+          refReady: isClientReadyRef.current,
+        });
+        const initialized = await initializeClient(traceId);
         console.log('📱 Initialization result:', initialized);
+        execTrace(traceId, 'makeCall:after_initializeClient_on_demand', {
+          initialized,
+          refReady: isClientReadyRef.current,
+          hasClient: !!telnyxClientRef.current,
+        });
         if (!initialized) {
           throw new Error('Failed to connect to calling service. Please try again.');
         }
@@ -2170,13 +2330,17 @@ export const CallProvider = ({ children }) => {
       }
 
       if (!telnyxClientRef.current) {
+        execTrace(traceId, 'makeCall:guard_fail_no_client_ref', {});
         throw new Error('Calling service not available');
       }
       if (!isClientReadyRef.current) {
+        execTrace(traceId, 'makeCall:guard_fail_not_ready_ref', {});
         throw new Error('Telnyx client not ready');
       }
 
+      execTrace(traceId, 'makeCall:before_getUserMedia', {});
       const micOk = await ensureMicrophonePermission();
+      execTrace(traceId, 'makeCall:after_getUserMedia', { micOk });
       if (!micOk) {
         throw new Error(
           'Microphone is required to place a call. Allow access and try again.'
@@ -2193,6 +2357,17 @@ export const CallProvider = ({ children }) => {
           console.warn('[CALL FLOW] clientState (park outbound) encode failed:', e);
         }
       }
+
+      execTrace(traceId, 'makeCall:before_SDK_newCall', {
+        destinationNumber: destE164,
+        callerNumber: callerE164,
+        hasParkClientState: !!parkClientState,
+        sdkCallsKeys:
+          telnyxClientRef.current?.calls &&
+          typeof telnyxClientRef.current.calls === 'object'
+            ? Object.keys(telnyxClientRef.current.calls).length
+            : null,
+      });
 
       // Per-call onNotification: first handler on call id so UI updates even if session handler misses
       const call = telnyxClientRef.current.newCall({
@@ -2222,8 +2397,13 @@ export const CallProvider = ({ children }) => {
       });
 
       console.log('[CALL FLOW] WebRTC newCall returned:', !!call);
+      execTrace(traceId, 'makeCall:after_SDK_newCall', {
+        hasCall: !!call,
+        legId: call?.id ?? null,
+      });
 
       if (!call) {
+        execTrace(traceId, 'makeCall:newCall_returned_null', { callRecordId: callRecordId || null });
         outboundDialActiveRef.current = false;
         setError('Failed to create call');
         setCallState(CALL_STATES.IDLE);
@@ -2356,10 +2536,19 @@ export const CallProvider = ({ children }) => {
       }, 320);
 
       handleCallStateChangeRef.current(call);
+      execTrace(traceId, 'makeCall:success_return_true', {
+        legId: call.id,
+        dbCallId: callRecordId || null,
+      });
       return true;
     } catch (err) {
       console.error('[CALL ERROR FRONTEND] makeCall', err?.response || err);
       console.error('📱 Failed to make call:', err);
+      execTrace(traceId, 'makeCall:catch', {
+        message: err?.message,
+        stack: err?.stack,
+        name: err?.name,
+      });
       const recordIdToFail = outboundCallRecordIdRef.current;
       outboundDialActiveRef.current = false;
       outboundDialStartedAtRef.current = 0;

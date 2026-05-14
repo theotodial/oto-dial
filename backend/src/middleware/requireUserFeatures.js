@@ -2,18 +2,33 @@ import { featuresMatchMiddleware } from "../utils/userFeatures.js";
 
 export function requireVoiceEnabled(req, res, next) {
   if (req.user?.mode === "campaign") {
+    console.warn("[EXEC TRACE BACKEND] requireVoiceEnabled BLOCK", {
+      path: req.originalUrl || req.url,
+      code: "CALLING_DISABLED_FOR_PLAN",
+      userId: req.userId ? String(req.userId) : null,
+    });
     return res.status(403).json({
       error: "CALLING_DISABLED_FOR_PLAN",
       code: "CALLING_DISABLED_FOR_PLAN",
     });
   }
   if (req.subscription?.voiceCallsEnabled === false) {
+    console.warn("[EXEC TRACE BACKEND] requireVoiceEnabled BLOCK", {
+      path: req.originalUrl || req.url,
+      code: "VOICE_PLAN_BLOCKED",
+      userId: req.userId ? String(req.userId) : null,
+    });
     return res.status(403).json({
       error: "Voice is not included on your current plan",
       code: "VOICE_PLAN_BLOCKED",
     });
   }
   if (!featuresMatchMiddleware(req.user, "voice")) {
+    console.warn("[EXEC TRACE BACKEND] requireVoiceEnabled BLOCK", {
+      path: req.originalUrl || req.url,
+      code: "VOICE_DISABLED",
+      userId: req.userId ? String(req.userId) : null,
+    });
     return res.status(403).json({
       error: "Voice is not enabled for this account",
       code: "VOICE_DISABLED",

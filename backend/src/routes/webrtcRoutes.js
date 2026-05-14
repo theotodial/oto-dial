@@ -346,7 +346,12 @@ async function retrieveTelnyxConnection({ connectionId, headers }) {
  */
 router.get("/token", async (req, res) => {
   const t0 = Date.now();
+  const execTraceHeader = String(req.get("x-oto-exec-trace") || "").trim() || null;
   try {
+    console.log("[EXEC TRACE BACKEND] GET /api/webrtc/token entry", {
+      execTraceHeader,
+      userId: req.userId ? String(req.userId) : null,
+    });
     if (req.user?.mode === "campaign") {
       return res.status(403).json({ error: "CALLING_DISABLED_FOR_PLAN" });
     }
@@ -570,8 +575,10 @@ router.post("/verify-inbound-ownership", async (req, res) => {
 router.post("/repair-outbound", async (req, res) => {
   const repairStarted = Date.now();
   const rid = `${req.userId || "?"}-${repairStarted}`;
+  const execTraceHeader = String(req.get("x-oto-exec-trace") || "").trim() || null;
   console.log("[WebRTC repair-outbound] start", {
     rid,
+    execTraceHeader,
     userId: req.userId ? String(req.userId) : null,
     bodyKeys: req.body && typeof req.body === "object" ? Object.keys(req.body) : [],
   });
@@ -1000,7 +1007,11 @@ router.post("/repair-outbound", async (req, res) => {
       console.log("[WebRTC repair-outbound] actions:", result.actions);
     }
 
-    console.log("[WebRTC repair-outbound] ok", { rid, ms: Date.now() - repairStarted });
+    console.log("[WebRTC repair-outbound] ok", {
+      rid,
+      execTraceHeader,
+      ms: Date.now() - repairStarted,
+    });
     return res.json(result);
   } catch (err) {
     console.error("WebRTC repair-outbound error:", err?.stack || err?.message || err, { rid, ms: Date.now() - repairStarted });
