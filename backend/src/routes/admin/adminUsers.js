@@ -8,6 +8,7 @@ import Call from "../../models/Call.js";
 import SMS from "../../models/SMS.js";
 import TelnyxCost from "../../models/TelnyxCost.js";
 import CustomPackage from "../../models/CustomPackage.js";
+import CreditLedger from "../../models/CreditLedger.js";
 import { getActiveAddonAmounts } from "../../services/subscriptionAddonCreditService.js";
 import {
   clearAdminUsersCache,
@@ -331,6 +332,10 @@ router.get(
             status: 1,
             isEmailVerified: 1,
             createdAt: 1,
+            remainingCredits: 1,
+            totalCreditsUsed: 1,
+            reservedCredits: 1,
+            lifetimeCreditsPurchased: 1,
             subscription: { $arrayElemAt: ["$subscription", 0] },
             customPackage: { $arrayElemAt: ["$customPackage", 0] }
           }
@@ -375,6 +380,12 @@ router.get(
           usage: {
             minutesUsed: Number(user.subscription?.usage?.minutesUsed || 0) / 60,
             smsUsed: Number(user.subscription?.usage?.smsUsed || 0),
+          },
+          credits: {
+            remainingCredits: Number(user.remainingCredits || 0),
+            totalCreditsUsed: Number(user.totalCreditsUsed || 0),
+            reservedCredits: Number(user.reservedCredits || 0),
+            lifetimeCreditsPurchased: Number(user.lifetimeCreditsPurchased || 0),
           },
           subscriptionStatus: effectiveSubscription?.status || "none",
           subscriptionPlan: effectiveSubscription?.planName || "none",
@@ -429,7 +440,7 @@ router.get(
         return res.status(404).json({ error: "User not found" });
       }
 
-      const [phoneNumbers, costs] = await Promise.all([
+      const [phoneNumbers, costs, creditCosts] = await Promise.all([
         PhoneNumber.find({ userId: user._id })
           .select("phoneNumber status monthlyCost carrierGroup country regionInformation")
           .lean(),
@@ -444,11 +455,29 @@ router.get(
             }
           }
         ]),
+        CreditLedger.aggregate([
+          { $match: { user: user._id } },
+          {
+            $group: {
+              _id: "$type",
+              totalAmount: { $sum: "$amount" },
+              count: { $sum: 1 },
+            },
+          },
+        ]),
       ]);
 
       const callCostGroup = costs.find((c) => c._id === "call") || {};
       const smsCostGroup = costs.find((c) => c._id === "sms") || {};
       const numberCostGroup = costs.find((c) => c._id === "number") || {};
+      const totalCreditsGranted = creditCosts
+        .filter((row) => Number(row.totalAmount || 0) > 0)
+        .reduce((sum, row) => sum + Number(row.totalAmount || 0), 0);
+      const totalCreditsConsumed = Math.abs(
+        creditCosts
+          .filter((row) => Number(row.totalAmount || 0) < 0)
+          .reduce((sum, row) => sum + Number(row.totalAmount || 0), 0)
+      );
       const primaryNumber = phoneNumbers[0] || {};
       const usage = buildUsageSummary(effectiveSubscription);
 
@@ -496,7 +525,11 @@ router.get(
           totalTelnyxCost:
             (callCostGroup.totalCost || 0) +
             (smsCostGroup.totalCost || 0) +
-            (numberCostGroup.totalCost || 0)
+            (numberCostGroup.totalCost || 0),
+          credits: {
+            totalGranted: Math.round(totalCreditsGranted),
+            totalConsumed: Math.round(totalCreditsConsumed),
+          },
         },
       });
     } catch (err) {

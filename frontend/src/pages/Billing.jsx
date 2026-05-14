@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import API from '../api';
+import { fetchProjectedBalance } from '../services/projectedCreditService';
 import { trackSubscription } from '../utils/analytics';
 import PlanFeatureBullet from '../components/PlanFeatureBullet';
 import {
@@ -32,6 +33,7 @@ function Billing() {
   const [currentSubscription, setCurrentSubscription] = useState(null);
   const [buyingAddonId, setBuyingAddonId] = useState(null);
   const [showPaymentIssueCta, setShowPaymentIssueCta] = useState(false);
+  const [projectedAvailableCredits, setProjectedAvailableCredits] = useState(null);
 
   const isMountedRef = useRef(true);
   const [searchParams] = useSearchParams();
@@ -193,7 +195,7 @@ function Billing() {
           description: 'Perfect for individuals and small teams',
           features: getPlanFeatureBullets({
             name: 'Basic Plan',
-            limits: { minutesTotal: 1500, smsTotal: 100 },
+            limits: { creditsTotal: 1500, minutesTotal: 1500, smsTotal: 100 },
           }),
           popular: false,
           available: true,
@@ -206,7 +208,7 @@ function Billing() {
           description: 'For growing businesses and power users',
           features: getPlanFeatureBullets({
             name: 'Super Plan',
-            limits: { minutesTotal: 2500, smsTotal: 200 },
+            limits: { creditsTotal: 2500, minutesTotal: 2500, smsTotal: 200 },
           }),
           popular: false,
           available: true,
@@ -266,6 +268,31 @@ function Billing() {
       setLoading(false);
     }
   };
+
+  const refreshProjectedCredits = useCallback(async () => {
+    if (!isMountedRef.current || !isAuthenticated) return;
+    try {
+      const res = await fetchProjectedBalance();
+      if (!isMountedRef.current) return;
+      if (res.ok && Number.isFinite(Number(res.data?.projectedAvailableCredits))) {
+        setProjectedAvailableCredits(Number(res.data.projectedAvailableCredits));
+      } else {
+        setProjectedAvailableCredits(null);
+      }
+    } catch {
+      if (isMountedRef.current) setProjectedAvailableCredits(null);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setProjectedAvailableCredits(null);
+      return;
+    }
+    refreshProjectedCredits();
+    const id = setInterval(refreshProjectedCredits, 15000);
+    return () => clearInterval(id);
+  }, [isAuthenticated, currentSubscription?.active, currentSubscription?._id, refreshProjectedCredits]);
 
   /**
    * 🔴 ONLY LOGIC CHANGE IS HERE
@@ -417,6 +444,23 @@ function Billing() {
             <h1 className="text-base font-semibold text-gray-900 dark:text-white truncate">
               Select your subscription
             </h1>
+            {currentSubscription && isAuthenticated && (() => {
+              const legacyAll = Boolean(
+                currentSubscription.isUnlimited || currentSubscription.displayUnlimited
+              );
+              const uMin =
+                currentSubscription.unlimitedMinutesDisplay ?? legacyAll;
+              if (uMin || projectedAvailableCredits == null) return null;
+              return (
+                <p
+                  className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300"
+                  title="Includes active call reservations and realtime usage."
+                >
+                  Available credits:{' '}
+                  <span className="font-semibold">{Math.round(projectedAvailableCredits)}</span>
+                </p>
+              );
+            })()}
           </div>
         </div>
 
@@ -442,8 +486,8 @@ function Billing() {
                 const uSms =
                   currentSubscription.unlimitedSmsDisplay ?? legacyAll;
                 const minPart = uMin
-                  ? "∞ minutes"
-                  : `${(Number(usage?.minutesRemaining ?? currentSubscription.minutesRemaining ?? 0)).toFixed(1)} minutes`;
+                  ? "∞ credits"
+                  : `${Math.round(Number(usage?.creditsRemaining ?? usage?.minutesRemaining ?? currentSubscription.creditsRemaining ?? currentSubscription.minutesRemaining ?? 0))} credits`;
                 const smsPart = uSms
                   ? "∞ SMS"
                   : `${Number(usage?.smsRemaining ?? currentSubscription.smsRemaining ?? 0)} SMS`;
@@ -455,6 +499,15 @@ function Billing() {
                 <span className="block mt-0.5">
                         {`${minPart} • ${smsPart} remaining`}
                 </span>
+                {!uMin && projectedAvailableCredits != null && (
+                  <span
+                    className="block mt-1 text-emerald-700/90 dark:text-emerald-300/90"
+                    title="Includes active call reservations and realtime usage."
+                  >
+                    Available credits (realtime):{' '}
+                    <span className="font-semibold">{Math.round(projectedAvailableCredits)}</span>
+                  </span>
+                )}
               </div>
                 );
               })()
@@ -658,8 +711,7 @@ function Billing() {
                       ✓
                     </span>
                     <span>
-                      <span className="font-medium">Predictable monthly pricing.</span> No
-                      per-minute surprises—know exactly how many minutes and SMS you get.
+                      <span className="font-medium">Predictable monthly pricing.</span> Telecom credits keep billing transparent for calls and SMS.
                     </span>
                   </li>
                   <li className="flex gap-3">
@@ -684,9 +736,9 @@ function Billing() {
               </div>
 
               <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl border border-emerald-100 dark:border-emerald-800 p-5 text-sm text-emerald-900 dark:text-emerald-100">
-                <p className="font-semibold mb-1">Need more minutes or SMS?</p>
+                <p className="font-semibold mb-1">Need more telecom credits?</p>
                 <p className="text-xs opacity-80 mb-3">
-                  When you hit your monthly limits, you can top up with add-ons. Each add-on lasts 30
+                  When you hit your monthly limits, you can top up with credit packs. Each add-on lasts 30
                   days from purchase and is applied on top of your current subscription.
                 </p>
 
@@ -704,8 +756,10 @@ function Billing() {
                         className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-900 dark:text-emerald-50 text-xs font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         <span>
-                          {addon.type === 'minutes'
-                            ? `${addon.quantity.toLocaleString()} extra minutes`
+                          {addon.type === 'credits'
+                            ? `${addon.quantity.toLocaleString()} extra telecom credits`
+                            : addon.type === 'minutes'
+                            ? `${addon.quantity.toLocaleString()} legacy minutes`
                             : `${addon.quantity.toLocaleString()} extra SMS`}
                           <span className="block text-[10px] text-emerald-800/80 dark:text-emerald-100/80">
                             Expires 30 days after purchase
@@ -733,7 +787,7 @@ function Billing() {
 
                 {addonPlans.length > 0 && isAuthenticated && !hasActiveSubscription && (
                   <p className="mt-2 text-[11px] opacity-80">
-                    Activate a subscription above to purchase add-ons for extra minutes and SMS.
+                    Activate a subscription above to purchase telecom credit add-ons.
                   </p>
                 )}
               </div>

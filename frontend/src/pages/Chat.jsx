@@ -71,7 +71,7 @@ function Chat() {
   const isManuallyEnabled = Boolean(
     subscription?.isManuallyEnabled ??
       (Number(subscription?.limits?.smsTotal ?? 0) > 0 ||
-        Number(subscription?.limits?.minutesTotal ?? 0) > 0)
+        Number(subscription?.limits?.creditsTotal ?? subscription?.limits?.minutesTotal ?? 0) > 0)
   );
   const subscriptionUsable = billingUiActive || isManuallyEnabled;
   const suspiciousActivityText =

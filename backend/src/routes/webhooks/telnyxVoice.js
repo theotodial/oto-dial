@@ -33,28 +33,21 @@ import {
   extractWebhookEnvelope,
 } from "../../agents/shared/webhookIdempotency.js";
 import { applyCallTransition } from "../../services/callTransitionService.js";
+import { telecomStructuredLog } from "../../utils/telecomStructuredLog.js";
+import { resolveInboundOwner } from "../../utils/inboundOwnership.js";
+import {
+  billConnectedDurationIntervals,
+  releaseUnusedCallReservation,
+} from "../../services/callCreditBillingService.js";
+import { recordTelecomEventSequence } from "../../services/telecomSequenceService.js";
+import { persistWebhookLatencySample } from "../../services/webhookLatencyService.js";
+import { recordWebhookReceived, bumpRedisWebhookClusterCounter } from "../../services/telecomBackpressureService.js";
+import {
+  recordWebhookBurstSample,
+  shouldSuppressNonCriticalWebhookWork,
+} from "../../services/webhookBurstProtectionService.js";
 
 const router = express.Router();
-
-const telnyxVoiceDedupIds = globalThis.__otoTelnyxVoiceDedupIds || [];
-const telnyxVoiceDedupSet = globalThis.__otoTelnyxVoiceDedupSet || new Set();
-if (!globalThis.__otoTelnyxVoiceDedupIds) {
-  globalThis.__otoTelnyxVoiceDedupIds = telnyxVoiceDedupIds;
-  globalThis.__otoTelnyxVoiceDedupSet = telnyxVoiceDedupSet;
-}
-
-function rememberTelnyxVoiceEventId(id) {
-  if (id == null || id === "") return false;
-  const s = String(id);
-  if (telnyxVoiceDedupSet.has(s)) return true;
-  telnyxVoiceDedupSet.add(s);
-  telnyxVoiceDedupIds.push(s);
-  while (telnyxVoiceDedupIds.length > 8000) {
-    const old = telnyxVoiceDedupIds.shift();
-    telnyxVoiceDedupSet.delete(old);
-  }
-  return false;
-}
 
 const HANDLED_EVENTS = new Set([
   "call.initiated",
@@ -67,6 +60,17 @@ const HANDLED_EVENTS = new Set([
 ]);
 
 const TELNYX_VOICE_API = "https://api.telnyx.com/v2";
+
+function trackVoiceWebhookUserSignals(call, callControlId, callSessionId) {
+  if (!call?.user) return;
+  recordUserTelecomSignal(call.user, { webhookHits: 1 });
+  recordWebhookBurstSample({
+    provider: "telnyx:voice",
+    userId: String(call.user),
+    callKey: callControlId || callSessionId || "_",
+    duplicate: false,
+  });
+}
 
 async function speakSafetyMessage(callControlId, message) {
   if (!callControlId || !message) return;
@@ -94,7 +98,7 @@ function isInboundInitiatedPayload(payload = {}) {
   return payload?.to !== payload?.from;
 }
 
-async function handleInboundCall(payload = {}) {
+async function handleInboundCall(payload = {}, { telnyxEventId = null } = {}) {
   const callControlId = payload?.call_control_id;
   const from = normalizeCallPartyNumber(payload?.from);
   const to = normalizeCallPartyNumber(payload?.to);
@@ -111,62 +115,119 @@ async function handleInboundCall(payload = {}) {
     return;
   }
 
-  const ownedMatches = await PhoneNumber.find({
-    phoneNumber: { $in: [payload?.to, to].filter(Boolean) },
-    status: "active",
-  })
-    .select("_id userId phoneNumber")
-    .limit(2)
-    .lean();
-  const ownedNumber = ownedMatches.length === 1 ? ownedMatches[0] : null;
-  const resolvedUserId = ownedNumber?.userId || null;
+  // SECURITY-CRITICAL: strict, no-fallback ownership resolution. Any ambiguity
+  // (zero or multiple owners) MUST short-circuit BEFORE the call row is bound.
+  const ownership = await resolveInboundOwner({
+    rawCalledNumber: payload?.to ?? to ?? null,
+    callControlId,
+    telnyxEventId,
+  });
+  const ownedNumber = ownership.ok ? ownership.ownedNumber : null;
+  const resolvedUserId = ownership.ok ? ownership.resolvedUserId : null;
+
+  telecomStructuredLog("[INBOUND ROUTING]", {
+    sourcePath: "telnyxVoice.js:handleInboundCall",
+    eventType: "inbound_ownership_resolution",
+    callControlId,
+    callSessionId: payload?.call_session_id || null,
+    telnyxEventId,
+    rawCalled: payload?.to ?? null,
+    canonicalCalled: ownership.canonical ?? null,
+    rawCaller: payload?.from ?? null,
+    matchedOwnerUserId: resolvedUserId,
+    ownedNumberId: ownedNumber?._id ? String(ownedNumber._id) : null,
+    matchCount: ownership.matchCount ?? 0,
+    accepted: ownership.ok === true,
+    rejectionReason: ownership.ok ? null : ownership.reason || "unknown",
+  });
 
   try {
-    await Call.findOneAndUpdate(
-      {
-        telnyxCallControlId: callControlId,
-        $or: [
-          { user: { $exists: false } },
-          { user: null },
-          ...(resolvedUserId ? [{ user: resolvedUserId }] : []),
-        ],
-      },
-      {
-        $setOnInsert: {
-          user: resolvedUserId || null,
-          ownedNumberId: ownedNumber?._id || null,
-          phoneNumber: from || to || "unknown",
-          fromNumber: from || null,
-          toNumber: to || null,
-          direction: "inbound",
-          source: "voice_api",
-          status: "ringing",
+    if (resolvedUserId) {
+      await Call.findOneAndUpdate(
+        {
           telnyxCallControlId: callControlId,
-          telnyxCallSessionId: payload?.call_session_id || null,
-          callInitiatedAt: new Date(),
+          $or: [
+            { user: { $exists: false } },
+            { user: null },
+            { user: resolvedUserId },
+          ],
         },
-        $set: {
-          ...(resolvedUserId ? { user: resolvedUserId } : {}),
-          fromNumber: from || null,
-          toNumber: to || null,
-          phoneNumber: from || to || "unknown",
-          direction: "inbound",
-          source: "voice_api",
-          lastEventSource: "telnyx_voice_webhook",
-          lastEventType: "call.initiated",
-          lastProcessedEventAt: new Date(),
+        {
+          $setOnInsert: {
+            user: resolvedUserId,
+            ownedNumberId: ownedNumber?._id || null,
+            phoneNumber: from || to || "unknown",
+            fromNumber: from || null,
+            toNumber: to || null,
+            direction: "inbound",
+            source: "voice_api",
+            status: "ringing",
+            telnyxCallControlId: callControlId,
+            telnyxCallSessionId: payload?.call_session_id || null,
+            callInitiatedAt: new Date(),
+          },
+          $set: {
+            fromNumber: from || null,
+            toNumber: to || null,
+            phoneNumber: from || to || "unknown",
+            direction: "inbound",
+            source: "voice_api",
+            lastEventSource: "telnyx_voice_webhook",
+            lastEventType: "call.initiated",
+            lastProcessedEventAt: new Date(),
+          },
         },
-      },
-      { upsert: true, new: true }
-    ).catch(async (err) => {
-      if (err?.code === 11000) {
-        console.warn("[INBOUND] Duplicate provider control id detected (deduped)", {
-          callControlId,
-        });
-        return;
-      }
-      throw err;
-    });
+        { upsert: true, new: true }
+      ).catch(async (err) => {
+        if (err?.code === 11000) {
+          console.warn("[INBOUND] Duplicate provider control id detected (deduped)", {
+            callControlId,
+          });
+          return;
+        }
+        throw err;
+      });
+    } else {
+      // Unowned / ambiguous inbound: still record a row WITHOUT a `user` so it
+      // can be marked FAILED below. Never speculatively bind a tenant to it.
+      await Call.findOneAndUpdate(
+        { telnyxCallControlId: callControlId },
+        {
+          $setOnInsert: {
+            user: null,
+            ownedNumberId: null,
+            phoneNumber: from || to || "unknown",
+            fromNumber: from || null,
+            toNumber: to || null,
+            direction: "inbound",
+            source: "voice_api",
+            status: "ringing",
+            telnyxCallControlId: callControlId,
+            telnyxCallSessionId: payload?.call_session_id || null,
+            callInitiatedAt: new Date(),
+          },
+          $set: {
+            fromNumber: from || null,
+            toNumber: to || null,
+            phoneNumber: from || to || "unknown",
+            direction: "inbound",
+            source: "voice_api",
+            lastEventSource: "telnyx_voice_webhook",
+            lastEventType: "call.initiated",
+            lastProcessedEventAt: new Date(),
+          },
+        },
+        { upsert: true, new: true }
+      ).catch(async (err) => {
+        if (err?.code === 11000) {
+          console.warn("[INBOUND] Duplicate provider control id detected (deduped)", {
+            callControlId,
+          });
+          return;
+        }
+        throw err;
+      });
+    }
   } catch (error) {
     console.error(
       "❌ CALL RECORD CREATE FAILED:",
@@ -174,11 +235,13 @@ async function handleInboundCall(payload = {}) {
     );
   }
 
-  if (!ownedNumber?.userId) {
-    console.warn("[INBOUND] Owned number not found for inbound call", {
+  if (!ownership.ok) {
+    console.warn("[TENANT SECURITY] inbound call rejected", {
+      reason: ownership.reason,
       to: payload?.to ?? null,
+      canonical: ownership.canonical ?? null,
       call_control_id: callControlId,
-      matches: ownedMatches.length,
+      matches: ownership.matchCount ?? 0,
     });
     const existing = await Call.findOne({ telnyxCallControlId: callControlId })
       .select("_id status")
@@ -192,13 +255,21 @@ async function handleInboundCall(payload = {}) {
         targetStatus: CALL_STATES.FAILED,
         guard: { currentStatus: existing.status },
         set: {
-          failReason: "routing-error",
+          failReason: `routing-error:${ownership.reason || "unknown"}`,
           hangupCause: "routing-error",
           callEndedAt: new Date(),
           orphanRootCause: "concurrency_race",
         },
         reason: "routing-error",
       }).catch(() => {});
+    }
+    try {
+      await hangupTelnyxCallLeg(callControlId, process.env.TELNYX_API_KEY?.trim());
+    } catch (error) {
+      console.error(
+        "❌ HANGUP FOR REJECTED INBOUND FAILED:",
+        error?.response?.data || error?.message || error
+      );
     }
     try {
       await speakSafetyMessage(callControlId, "Please try again later");
@@ -284,16 +355,16 @@ async function hangupTelnyxCallLeg(callControlId, apiKey) {
 }
 
 function logTelecomWebhook(fields = {}) {
-  console.log("[TELECOM WEBHOOK]", {
+  telecomStructuredLog("[WEBHOOK FLOW]", {
+    sourcePath: "telnyxVoice.js:logTelecomWebhook",
     ...fields,
-    timestamp: new Date().toISOString(),
   });
 }
 
 function logMediaDebug(fields = {}) {
-  console.log("[MEDIA DEBUG]", {
+  telecomStructuredLog("[MEDIA FLOW]", {
+    sourcePath: "telnyxVoice.js:logMediaDebug",
     ...fields,
-    timestamp: new Date().toISOString(),
   });
 }
 
@@ -326,7 +397,10 @@ async function transitionCallStatus({
       event,
       outcome: result.reason || "transition_rejected",
       callId: String(call._id),
+      userId: call.user ? String(call.user) : null,
       callControlId,
+      currentStatus: call.status,
+      eventType: event,
       callSessionId,
       previousStatus: call.status,
       nextStatus: to,
@@ -338,7 +412,10 @@ async function transitionCallStatus({
     event,
     outcome: "transition_applied",
     callId: String(call._id),
+    userId: call.user ? String(call.user) : null,
     callControlId,
+    currentStatus: call.status,
+    eventType: event,
     callSessionId,
     previousStatus: call.status,
     nextStatus: to,
@@ -353,8 +430,10 @@ async function transitionCallStatus({
 router.post("/", async (req, res) => {
   try {
     console.log("🚨 VOICE WEBHOOK HIT");
-    console.log("🚨 FULL BODY:", JSON.stringify(req.body, null, 2));
-    console.log("[VOICE RAW]", JSON.stringify(req.body, null, 2));
+    if (!shouldSuppressNonCriticalWebhookWork("debug_log")) {
+      console.log("🚨 FULL BODY:", JSON.stringify(req.body, null, 2));
+      console.log("[VOICE RAW]", JSON.stringify(req.body, null, 2));
+    }
 
     const rawStrOnly = JSON.stringify(req.body ?? {}, null, 2);
     console.log(
@@ -396,7 +475,9 @@ router.post("/", async (req, res) => {
     if (eventType === "call.initiated") {
       const isInbound = isInboundInitiatedPayload(payload);
       if (isInbound) {
-        await handleInboundCall(payload);
+        await handleInboundCall(payload, {
+          telnyxEventId: req.body?.data?.id || null,
+        });
         return res.sendStatus(200);
       }
     }
@@ -423,13 +504,60 @@ router.post("/", async (req, res) => {
       payload: extractWebhookEnvelope(req.body).payload,
     });
     if (claim.duplicate) {
-      console.log("[WEBHOOK DEDUP] duplicate Telnyx voice event", telnyxEventId, event);
+      recordWebhookReceived(true);
+      bumpRedisWebhookClusterCounter();
+      recordWebhookBurstSample({
+        provider: "telnyx:voice",
+        userId: null,
+        callKey: callControlId || callSessionId || "_",
+        duplicate: true,
+      });
+      telecomStructuredLog("[WEBHOOK FLOW]", {
+        sourcePath: "telnyxVoice.js:claimWebhookEvent",
+        callId: null,
+        userId: null,
+        callControlId,
+        currentStatus: null,
+        eventType: "webhook_duplicate_claim",
+        telnyxEventId,
+        providerEventType: event,
+      });
       return res.sendStatus(200);
     }
-    if (rememberTelnyxVoiceEventId(telnyxEventId)) {
-      console.log("[WEBHOOK DEDUP] duplicate Telnyx voice event", telnyxEventId, event);
-      return res.sendStatus(200);
-    }
+
+    recordWebhookReceived(false);
+    bumpRedisWebhookClusterCounter();
+    recordWebhookBurstSample({
+      provider: "telnyx:voice",
+      userId: null,
+      callKey: callControlId || callSessionId || "_",
+      duplicate: false,
+    });
+
+    const receiveAt = new Date();
+    void recordTelecomEventSequence({
+      callId: null,
+      provider: "telnyx",
+      providerEventId: telnyxEventId,
+      providerTimestamp: new Date(occurredAtMs),
+      receivedAt: receiveAt,
+      eventType: event,
+      source: "telnyx_voice_webhook",
+      orderingAccepted: true,
+      orderingReason: "webhook_claimed",
+      currentCallStatus: null,
+      nextCallStatus: null,
+      duplicate: false,
+      metadata: { callControlId, callSessionId },
+    }).catch(() => {});
+    void persistWebhookLatencySample({
+      provider: "telnyx",
+      providerEventId: telnyxEventId,
+      eventType: event,
+      providerTimestamp: new Date(occurredAtMs),
+      receiveTimestamp: receiveAt,
+      processStart: new Date(),
+    }).catch(() => {});
 
     if (!callControlId && !callSessionId) {
       console.warn(
@@ -566,7 +694,7 @@ router.post("/", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      await handleInboundCall(callPayload);
+      await handleInboundCall(callPayload, { telnyxEventId });
       return res.sendStatus(200);
     }
 
@@ -582,6 +710,7 @@ router.post("/", async (req, res) => {
         });
         return res.sendStatus(200);
       }
+      trackVoiceWebhookUserSignals(call, callControlId, callSessionId);
       await mergeTelnyxCallIdentifiers(call, {
         callControlId,
         callSessionId: callPayload.call_session_id,
@@ -613,10 +742,14 @@ router.post("/", async (req, res) => {
         apiKeyAns &&
         callControlId
       ) {
+        // SECURITY: bridge lookups MUST require an owner (`user`) on the
+        // candidate row. A row with `user: null` is a routing-error placeholder
+        // (see handleInboundCall) and may not be bridged into any tenant.
         let parkedAns = await Call.findOne({
           webrtcParkPstnCallControlId: callControlId,
           webrtcParkBridgeAttempted: { $ne: true },
           telnyxCallControlId: { $exists: true, $nin: [null, ""] },
+          user: { $exists: true, $ne: null },
         });
         if (!parkedAns) {
           // Hotfix: under load, answered can race before pstn control id lookup path catches up.
@@ -630,13 +763,31 @@ router.post("/", async (req, res) => {
             parkedAns = await Call.findById(parkedAns._id);
           }
         }
+        if (parkedAns?._id) {
+          trackVoiceWebhookUserSignals(parkedAns, callControlId, callSessionId);
+        }
 
         const shouldBridgeParked =
           Boolean(parkedAns?.telnyxCallControlId) &&
           Boolean(parkedAns?.webrtcParkPstnCallControlId) &&
+          Boolean(parkedAns?.user) &&
           parkedAns?.webrtcParkBridgeAttempted !== true &&
           (callControlId === parkedAns.webrtcParkPstnCallControlId ||
             callControlId === parkedAns.telnyxCallControlId);
+
+        if (parkedAns?._id && !parkedAns?.user) {
+          telecomStructuredLog("[CALL OWNERSHIP]", {
+            sourcePath: "telnyxVoice.js:parked_outbound_bridge",
+            eventType: "bridge_blocked_unowned_call_row",
+            severity: "critical",
+            callId: String(parkedAns._id),
+            callControlId,
+            callSessionId,
+            pstnCallControlId: parkedAns.webrtcParkPstnCallControlId || null,
+            accepted: false,
+            rejectionReason: "call_row_missing_user_owner",
+          });
+        }
 
         logMediaDebug({
           phase: "answered_event_received",
@@ -644,6 +795,8 @@ router.post("/", async (req, res) => {
           callControlId,
           callSessionId,
           callId: parkedAns?._id ? String(parkedAns._id) : null,
+          userId: parkedAns?.user ? String(parkedAns.user) : null,
+          currentStatus: parkedAns?.status || null,
           bridgeCandidate: shouldBridgeParked,
           mongoStatus: parkedAns?.status || null,
           providerState: "answered",
@@ -660,12 +813,15 @@ router.post("/", async (req, res) => {
             { new: true }
           );
           if (!claim) {
-            logMediaDebug({
+            telecomStructuredLog("[BRIDGE FLOW]", {
+              sourcePath: "telnyxVoice.js:parked_outbound_bridge",
               phase: "bridge_skipped_already_attempted",
               eventType: event,
               callControlId,
               callSessionId,
               callId: String(parkedAns._id),
+              userId: parkedAns.user ? String(parkedAns.user) : null,
+              currentStatus: parkedAns.status || null,
               bridgeExecuted: false,
               bridgeSuccess: false,
               reason: "already_attempted",
@@ -690,12 +846,15 @@ router.post("/", async (req, res) => {
               state: "bridge_sent",
               response: bridgeResponse?.raw || bridgeResponse || null,
             });
-            logMediaDebug({
+            telecomStructuredLog("[BRIDGE FLOW]", {
+              sourcePath: "telnyxVoice.js:parked_outbound_bridge",
               phase: "bridge_executed",
               eventType: event,
               callControlId,
               callSessionId,
               callId: String(parkedAns._id),
+              userId: parkedAns.user ? String(parkedAns.user) : null,
+              currentStatus: parkedAns.status || null,
               bridgeExecuted: true,
               bridgeSuccess: true,
               providerState: "bridge_sent",
@@ -710,17 +869,28 @@ router.post("/", async (req, res) => {
               { _id: parkedAns._id },
               { $set: { webrtcParkBridgeAttempted: false } }
             ).catch(() => {});
-            logMediaDebug({
+            telecomStructuredLog("[BRIDGE FLOW]", {
+              sourcePath: "telnyxVoice.js:parked_outbound_bridge",
               phase: "bridge_failed",
               eventType: event,
               callControlId,
               callSessionId,
               callId: String(parkedAns._id),
+              userId: parkedAns.user ? String(parkedAns.user) : null,
+              currentStatus: parkedAns.status || null,
               bridgeExecuted: true,
               bridgeSuccess: false,
               reason: brErr?.response?.data || brErr?.message || String(brErr),
               telnyxCallControlId: parkedAns.telnyxCallControlId,
               pstnCallControlId: parkedAns.webrtcParkPstnCallControlId,
+            });
+            emitAdminCallDebugEvent({
+              eventType: "media.bridge_failed",
+              callId: String(parkedAns._id),
+              callControlId: parkedAns.telnyxCallControlId,
+              callSessionId: parkedAns.telnyxCallSessionId || null,
+              state: "bridge_failed",
+              reason: String(brErr?.message || brErr || "bridge_failed").slice(0, 500),
             });
             console.error(
               "[PARK OUTBOUND] bridge failed:",
@@ -749,6 +919,7 @@ router.post("/", async (req, res) => {
         });
         return res.sendStatus(200);
       }
+      trackVoiceWebhookUserSignals(call, callControlId, callSessionId);
       await mergeTelnyxCallIdentifiers(call, {
         callControlId,
         callSessionId: callPayload.call_session_id,
@@ -791,6 +962,14 @@ router.post("/", async (req, res) => {
             : {}),
         },
       });
+      try {
+        const latest = await Call.findById(call._id).select(
+          "_id user status direction callAnsweredAt callStartedAt durationCreditsCharged attemptChargedAt creditReservationHeld"
+        );
+        await billConnectedDurationIntervals(latest);
+      } catch (billingErr) {
+        console.warn("[VOICE BILLING] duration charge step failed:", billingErr?.message || billingErr);
+      }
       return res.sendStatus(200);
     }
 
@@ -805,6 +984,8 @@ router.post("/", async (req, res) => {
         });
         return res.sendStatus(200);
       }
+
+      trackVoiceWebhookUserSignals(call, callControlId, callSessionId);
 
       await mergeTelnyxCallIdentifiers(call, {
         callControlId,
@@ -1031,6 +1212,12 @@ router.post("/", async (req, res) => {
           },
           details: { callControlId, callSessionId },
         });
+      }
+
+      try {
+        await releaseUnusedCallReservation(call);
+      } catch (releaseErr) {
+        console.warn("[VOICE BILLING] reservation release failed:", releaseErr?.message || releaseErr);
       }
 
       return res.sendStatus(200);

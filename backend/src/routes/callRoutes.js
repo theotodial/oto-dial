@@ -25,13 +25,22 @@ import {
 import { normalizeThreadPhone } from "../utils/smsThreadKey.js";
 import CallLifecycleEvent from "../models/CallLifecycleEvent.js";
 import { applyCallTransition } from "../services/callTransitionService.js";
+import { telecomStructuredLog } from "../utils/telecomStructuredLog.js";
+import {
+  reserveCreditsForOutboundCall,
+  chargeOutboundAttempt,
+  releaseUnusedCallReservation,
+} from "../services/callCreditBillingService.js";
+import { applyOutboundProfitThrottle, getUserProfitGuardrails } from "../services/profitGuardrailService.js";
+import { assertOutboundCreditExposureForNewCall } from "../services/economicExposureGuard.js";
 
 const router = express.Router();
 
 function logCallFlow(fields) {
-  console.log("[CALL FLOW]", {
+  telecomStructuredLog("[CALL FLOW]", {
+    sourcePath: "callRoutes.js:logCallFlow",
+    eventType: fields.eventType || "call_flow",
     ...fields,
-    timestamp: new Date().toISOString(),
   });
 }
 
@@ -189,6 +198,9 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
         ? req.body.status
         : "initiated";
 
+    // Outbound user calls always normalize to source "webrtc" here; POST /api/calls is the only
+    // app path that creates Call documents. Multi-call credit exposure runs for every outbound
+    // create (below) before Call.create, using projected balance + reservation hold.
     const source =
       req.body.source === "voice_api" && direction === "inbound"
         ? "voice_api"
@@ -206,7 +218,9 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       });
     }
 
+    let profitGuardrails = null;
     if (direction === "outbound" && source === "webrtc") {
+      profitGuardrails = await applyOutboundProfitThrottle({ userId: req.userId });
       const rateLimit = enforceUsageRateLimit({ userId: req.userId, channel: "call" });
       if (!rateLimit.allowed) {
         return res.status(429).json({
@@ -370,8 +384,44 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
         error: "Call already in progress",
       });
     }
+    if (
+      direction === "outbound" &&
+      Number.isFinite(Number(profitGuardrails?.maxConcurrentCalls)) &&
+      Number(profitGuardrails.maxConcurrentCalls) > 0
+    ) {
+        const activeCount = await Call.countDocuments({
+          user: req.userId,
+          status: { $in: ["queued", "initiated", "dialing", "ringing", "answered", "in-progress"] },
+        });
+        if (activeCount >= Number(profitGuardrails.maxConcurrentCalls)) {
+          return res.status(429).json({
+            success: false,
+            error: "Outbound concurrency temporarily reduced by telecom risk controls.",
+            code: "OUTBOUND_CONCURRENCY_REDUCED",
+          });
+        }
+    }
 
+    // All outbound directions hit this guard (not only WebRTC-shaped bodies); profit multiplier
+    // is null only if the outbound preflight block above did not run — currently unreachable for outbound.
     if (direction === "outbound") {
+      const exposure = await assertOutboundCreditExposureForNewCall(
+        req.userId,
+        profitGuardrails?.reservationMultiplier
+      );
+      if (!exposure.ok) {
+        await persistFailedCallAttempt(
+          req,
+          { phoneNumber, fromNumber, toNumber },
+          exposure.code || "INSUFFICIENT_PROJECTED_CREDITS"
+        );
+        return res.status(403).json({
+          success: false,
+          error:
+            "Insufficient credits given active calls and reservations (projected balance).",
+          code: exposure.code || "INSUFFICIENT_PROJECTED_CREDITS",
+        });
+      }
       console.log("[OUTBOUND CALL]", {
         from: normalizeCallPartyNumber(fromNumber) || fromNumber,
         to: normalizeCallPartyNumber(toNumber || phoneNumber) || toNumber || phoneNumber,
@@ -388,15 +438,17 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       source: direction === "outbound" ? "webrtc" : source,
     });
 
-    console.log("[OUTBOUND DIAL DEBUG]", {
+    telecomStructuredLog("[CALL FLOW]", {
+      sourcePath: "callRoutes.js:POST /",
       phase: "call_document_created",
       callId: call?._id ? String(call._id) : null,
+      userId: String(req.userId),
+      callControlId: call?.telnyxCallControlId || null,
       currentStatus: call?.status || null,
       targetStatus: null,
       accepted: Boolean(call?._id),
       rejectionReason: call?._id ? null : "create_failed",
       lockAcquired: null,
-      eventTimestamp: new Date().toISOString(),
       eventType: "call_create",
       transitionSource: "create_call_route",
     });
@@ -416,6 +468,30 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       status: call.status,
       to: normalizeCallPartyNumber(toNumber || phoneNumber),
     });
+    if (direction === "outbound") {
+      const guardrails = await getUserProfitGuardrails(call.user);
+      const reserve = await reserveCreditsForOutboundCall(call, {
+        reservationMultiplier: guardrails?.reservationMultiplier,
+      });
+      if (!reserve?.ok) {
+        await Call.deleteOne({ _id: call._id }).catch(() => {});
+        return res.status(403).json({
+          success: false,
+          error: "Insufficient telecom credits to reserve outbound attempt.",
+          code: "INSUFFICIENT_CREDITS",
+        });
+      }
+      const attempt = await chargeOutboundAttempt(call);
+      if (!attempt?.ok) {
+        await releaseUnusedCallReservation(call).catch(() => {});
+        await Call.deleteOne({ _id: call._id }).catch(() => {});
+        return res.status(403).json({
+          success: false,
+          error: "Insufficient telecom credits for outbound attempt charge.",
+          code: "INSUFFICIENT_CREDITS",
+        });
+      }
+    }
 
     logCallFlow({
       userId: String(req.userId),

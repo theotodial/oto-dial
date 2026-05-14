@@ -10,6 +10,12 @@ import {
   isUnlimitedSubscription
 } from "../services/unlimitedUsageService.js";
 import { isParkOutboundEnabled } from "../services/telnyxParkedOutboundService.js";
+import {
+  listOwnedNumbersForUser,
+  normalizeInboundNumberStrict,
+  verifyCalledNumberBelongsToUser,
+} from "../utils/inboundOwnership.js";
+import { telecomStructuredLog } from "../utils/telecomStructuredLog.js";
 
 const router = express.Router();
 const TELNYX_API_BASE_URL = "https://api.telnyx.com/v2";
@@ -416,7 +422,12 @@ router.get("/token", async (req, res) => {
       );
     }
 
-    // Return credentials for the client to use
+    // SECURITY: client must authoritatively know which numbers it owns so it
+    // can reject SIP INVITEs delivered for another tenant's PSTN number.
+    // Shared SIP credentials would otherwise let Telnyx fork inbound to all
+    // registered browsers.
+    const ownedNumbers = await listOwnedNumbersForUser(req.userId);
+
     res.json({
       success: true,
       credentials: {
@@ -425,7 +436,8 @@ router.get("/token", async (req, res) => {
         ...(loginToken ? { loginToken } : {}),
         connectionId,
         callerIdNumber,
-        userId: req.userId.toString()
+        userId: req.userId.toString(),
+        ownedNumbers,
       }
     });
   } catch (err) {
@@ -479,6 +491,66 @@ router.get("/status", async (req, res) => {
   } catch (err) {
     console.error("WebRTC status error:", err);
     res.status(500).json({ error: "Failed to get WebRTC status" });
+  }
+});
+
+/**
+ * POST /api/webrtc/verify-inbound-ownership
+ *
+ * SECURITY-CRITICAL: server-of-record check that the called-party number on an
+ * inbound SIP INVITE actually belongs to the authenticated user. The browser
+ * MUST call this before presenting an incoming-call UI and MUST auto-hangup if
+ * the response is not `{ ok: true, ownsNumber: true }`.
+ *
+ * Body: { calledNumber: string, callerNumber?: string, callControlId?: string }
+ *
+ * This endpoint is intentionally cheap and does NOT mutate state — it can be
+ * called from the inbound INVITE path on every ring with no rate-limit risk.
+ */
+router.post("/verify-inbound-ownership", async (req, res) => {
+  try {
+    const calledNumberRaw = String(req.body?.calledNumber || "").trim();
+    const callerNumberRaw = String(req.body?.callerNumber || "").trim();
+    const callControlId = String(req.body?.callControlId || "").trim() || null;
+    if (!calledNumberRaw) {
+      return res.status(400).json({
+        ok: false,
+        ownsNumber: false,
+        error: "calledNumber required",
+      });
+    }
+
+    const verdict = await verifyCalledNumberBelongsToUser({
+      userId: req.userId,
+      calledNumber: calledNumberRaw,
+    });
+
+    telecomStructuredLog("[TENANT SECURITY]", {
+      sourcePath: "webrtcRoutes.js:/verify-inbound-ownership",
+      eventType: "inbound_ownership_verified",
+      userId: String(req.userId),
+      callControlId,
+      canonicalCalled: verdict.canonical || normalizeInboundNumberStrict(calledNumberRaw),
+      callerNumber: callerNumberRaw || null,
+      accepted: verdict.ok === true,
+      rejectionReason: verdict.ok ? null : verdict.reason || "unknown",
+      ownerUserId: verdict.ownerUserId || null,
+    });
+
+    return res.json({
+      ok: verdict.ok === true,
+      ownsNumber: verdict.ok === true,
+      reason: verdict.ok ? null : verdict.reason || "unknown",
+      canonical: verdict.canonical || null,
+    });
+  } catch (err) {
+    console.error("[TENANT SECURITY] verify-inbound-ownership error:", err);
+    // Fail closed: never tell the client "owned" on error.
+    return res.status(500).json({
+      ok: false,
+      ownsNumber: false,
+      error: "verification_failed",
+    });
   }
 });
 

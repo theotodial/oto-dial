@@ -205,19 +205,23 @@ function SubscriptionDetails() {
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Usage Limits</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Minutes</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Credits</p>
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {Number(subscription?.limits?.minutesTotal ?? subscription?.totalMinutes ?? 0)}
+                  {Number(subscription?.limits?.creditsTotal ?? subscription?.totalCredits ?? subscription?.limits?.minutesTotal ?? 0)}
                 </p>
               </div>
               <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Remaining Minutes</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Remaining Credits</p>
                 <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
                   {(subscription?.unlimitedMinutesDisplay ?? subscription?.isUnlimited)
                     ? '∞'
-                    : parseFloat(
-                        usage?.minutesRemaining ?? subscription?.minutesRemaining ?? 0
-                      ).toFixed(2)}
+                    : Number(
+                        usage?.creditsRemaining ??
+                          usage?.minutesRemaining ??
+                          subscription?.creditsRemaining ??
+                          subscription?.minutesRemaining ??
+                          0
+                      )}
                 </p>
               </div>
               <div>
@@ -240,10 +244,10 @@ function SubscriptionDetails() {
           {/* Add-on showcase */}
           <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl shadow-lg border border-emerald-100 dark:border-emerald-800 p-6">
             <h2 className="text-xl font-semibold text-emerald-900 dark:text-emerald-100 mb-2">
-              Need more minutes or SMS?
+              Need more telecom credits?
             </h2>
             <p className="text-sm text-emerald-800/90 dark:text-emerald-100/80 mb-3">
-              If you’re running close to your plan limits, you can purchase add-ons for extra minutes and
+              If you’re running close to your plan limits, you can purchase add-ons for extra telecom credits and
               SMS. Add-ons are applied on top of your current subscription and last for 30 days from
               purchase.
             </p>

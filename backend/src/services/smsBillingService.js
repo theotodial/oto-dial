@@ -5,6 +5,8 @@ import Subscription from "../models/Subscription.js";
 import { getCanonicalUsage } from "./usage/getCanonicalUsage.js";
 import { computeSmsCreditsUsed } from "./usageComputationService.js";
 import { isUnlimitedSubscription } from "./unlimitedUsageService.js";
+import { applyBillingEvent } from "./billingEnforcementGateway.js";
+import { CREDIT_RULES } from "../config/creditConfig.js";
 
 /** GSM 03.38 default alphabet (single septet each), excluding extension escape table. */
 const GSM_BASIC_CHARS = new Set(
@@ -370,6 +372,32 @@ export async function applySmsDeduction(userId, messageId, message, options = {}
         messageId: String(oid),
         source: options.source ?? undefined,
       });
+      if (direction === "outbound") {
+        const ledgerResult = await applyBillingEvent({
+          userId: uid,
+          amount: -CREDIT_RULES.smsOutboundCharge,
+          type: "sms_charge",
+          reason: "outbound_sms_send",
+          smsId: oid,
+          direction,
+          metadata: {
+            smsParts: actualParts,
+            billedParts,
+            previousSmsQuotaCharge: billedParts,
+          },
+          idempotencyKey: `sms:${String(oid)}:charge`,
+          allowNegative: false,
+          sourceService: "smsBillingService.finalizeAfterSuccess",
+        });
+        if (!ledgerResult?.ok && ledgerResult?.code === "INSUFFICIENT_CREDITS") {
+          console.warn("[smsBilling] insufficient credits for sms ledger charge", {
+            userId: String(uid),
+            messageId: String(oid),
+          });
+        } else if (!ledgerResult?.ok) {
+          console.warn("[smsBilling] ledger charge rejected", ledgerResult);
+        }
+      }
       try {
         const { emitSmsUsageUpdated, emitSmsUpdated } = await import("../events/smsEvents.js");
         await emitSmsUsageUpdated(uid, oid);

@@ -3,6 +3,21 @@ import { TelnyxRTC } from '@telnyx/webrtc';
 import API from '../api';
 import soundManager from '../utils/sounds';
 import { useWakeLock } from '../hooks/useWakeLock';
+import { telecomStructuredLog } from '../utils/telecomStructuredLog.js';
+import {
+  checkCalledNumberAgainstOwnedList,
+  extractCalledNumberFromIncomingCall,
+  logTenantSecurityClient,
+  normalizeInboundNumberStrict,
+  rejectIncomingCallSafely,
+  verifyInboundOwnershipServer,
+} from '../utils/inboundOwnership.js';
+import {
+  fetchCanonicalCallSnapshot,
+  logParity,
+  markAuthoritativeAccepted,
+  shouldAcceptAuthoritativePayload,
+} from '../services/callStateParityService';
 
 const CallContext = createContext(null);
 
@@ -138,9 +153,12 @@ function callHasLiveRemoteAudio(call) {
 }
 
 function logMediaPipeline(fields = {}) {
-  console.log('[MEDIA PIPELINE]', {
+  telecomStructuredLog('[MEDIA FLOW]', {
+    sourcePath: 'CallContext.jsx:logMediaPipeline',
+    userId: null,
+    callControlId: fields.telnyxCallControlId ?? null,
+    currentStatus: fields.currentUiCallState ?? null,
     ...fields,
-    timestamp: new Date().toISOString(),
   });
 }
 
@@ -444,10 +462,15 @@ export const CallProvider = ({ children }) => {
   const outboundRingbackStartedRef = useRef(false);
   /** DB row id for this outbound session — copy onto any adopted Telnyx leg */
   const outboundCallRecordIdRef = useRef(null);
+  const authoritativeBackendSeqRef = useRef(0);
   /** `newCall()` return value — often not the leg that actually rings PSTN */
   const outboundNewCallLegRef = useRef(null);
   /** call.id -> Date.now() when first seen during this outbound session */
   const outboundLegArrivalMsRef = useRef({});
+  /** One-shot delayed media attach per DB call id (park/bridge race) */
+  const outboundMediaRetryOnceRef = useRef(new Set());
+  /** Remove if call ends before user gesture (autoplay unlock) */
+  const audioUnlockHandlerRef = useRef(null);
   /** User tapped hang up / reject — do not "hand off" to another leg */
   const userEndedFullCallRef = useRef(false);
   const handledIncomingCallIdsRef = useRef(new Set());
@@ -693,6 +716,11 @@ export const CallProvider = ({ children }) => {
 
       // Clean up audio
       try {
+        if (audioUnlockHandlerRef.current) {
+          document.removeEventListener('pointerdown', audioUnlockHandlerRef.current);
+          audioUnlockHandlerRef.current = null;
+        }
+        outboundMediaRetryOnceRef.current.clear();
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = null;
         }
@@ -854,6 +882,7 @@ export const CallProvider = ({ children }) => {
           logMediaPipeline({
             phase: 'remote_stream_received',
             callId: audioSource._dbCallId || null,
+            currentUiCallState: callStateRef.current,
             providerState: normalizeTelnyxCallState(getRawTelnyxCallState(audioSource)),
             bridgeExecuted: null,
             bridgeSuccess: null,
@@ -890,7 +919,12 @@ export const CallProvider = ({ children }) => {
             const name = String(e?.name || "");
             if (name === "NotAllowedError" || name === "AbortError") {
               setError("Audio playback was blocked by the browser. Tap the call screen once to enable audio.");
+              if (audioUnlockHandlerRef.current) {
+                document.removeEventListener('pointerdown', audioUnlockHandlerRef.current);
+                audioUnlockHandlerRef.current = null;
+              }
               const unlockAudioOnce = () => {
+                audioUnlockHandlerRef.current = null;
                 try {
                   if (remoteAudioRef.current?.srcObject) {
                     remoteAudioRef.current.play().catch(() => {});
@@ -899,6 +933,7 @@ export const CallProvider = ({ children }) => {
                   /* ignore */
                 }
               };
+              audioUnlockHandlerRef.current = unlockAudioOnce;
               document.addEventListener("pointerdown", unlockAudioOnce, { once: true });
             }
           });
@@ -1121,6 +1156,7 @@ export const CallProvider = ({ children }) => {
           logMediaPipeline({
             phase: 'active_state',
             callId: audioSource._dbCallId || null,
+            currentUiCallState: CALL_STATES.ACTIVE,
             providerState: state,
             bridgeExecuted: null,
             bridgeSuccess: null,
@@ -1131,6 +1167,61 @@ export const CallProvider = ({ children }) => {
             telnyxCallControlId: audioSource?.callControlId || null,
           });
           stopTelnyxSdkRingbackEverywhere(telnyxClientRef.current);
+
+          {
+            const dbId = audioSource._dbCallId;
+            const liveRemoteNow = callHasLiveRemoteAudio(audioSource);
+            if (outboundDialActiveRef.current && dbId && !liveRemoteNow) {
+              const key = String(dbId);
+              if (!outboundMediaRetryOnceRef.current.has(key)) {
+                outboundMediaRetryOnceRef.current.add(key);
+                window.setTimeout(() => {
+                  if (!outboundDialActiveRef.current) return;
+                  if (String(outboundCallRecordIdRef.current || '') !== key) return;
+                  try {
+                    const rtcClient = telnyxClientRef.current;
+                    const legs = Object.values(rtcClient?.calls || {}).filter(
+                      (c) => c && !isTelnyxTerminalCall(c)
+                    );
+                    const withMedia = legs.filter(callHasLiveRemoteAudio);
+                    const best =
+                      pickBestOutboundLeg(withMedia, outboundLegArrivalMsRef.current) ||
+                      withMedia[0];
+                    if (!best?.remoteStream || !remoteAudioRef.current) {
+                      telecomStructuredLog('[MEDIA FLOW]', {
+                        sourcePath: 'CallContext.jsx:outbound_media_retry',
+                        eventType: 'outbound_media_retry_miss',
+                        callId: key,
+                        userId: null,
+                        callControlId: best?.callControlId || null,
+                        currentStatus: callStateRef.current,
+                        phase: 'retry_no_stream',
+                      });
+                      return;
+                    }
+                    if (remoteAudioRef.current.srcObject !== best.remoteStream) {
+                      remoteAudioRef.current.srcObject = best.remoteStream;
+                      remoteAudioRef.current
+                        .play()
+                        .catch(() => {});
+                      telecomStructuredLog('[WEBRTC FLOW]', {
+                        sourcePath: 'CallContext.jsx:outbound_media_retry',
+                        eventType: 'outbound_media_retry_attach',
+                        callId: key,
+                        userId: null,
+                        callControlId: best.callControlId || null,
+                        currentStatus: callStateRef.current,
+                        peerConnectionState: best?.peer?.instance?.connectionState || null,
+                        iceConnectionState: best?.peer?.instance?.iceConnectionState || null,
+                      });
+                    }
+                  } catch (_) {
+                    /* ignore */
+                  }
+                }, 400);
+              }
+            }
+          }
 
           // Stop sounds safely
           try {
@@ -1290,6 +1381,126 @@ export const CallProvider = ({ children }) => {
       console.log('📱 Incoming call already being handled, ignoring duplicate');
       return;
     }
+
+    // ============================================================
+    // TENANT ISOLATION GATE
+    // ------------------------------------------------------------
+    // All browsers in this deployment share a single set of SIP
+    // credentials, so Telnyx will fork inbound INVITEs to every
+    // registered client (including clients owned by OTHER tenants).
+    // Before we even consider presenting an incoming-call UI, we
+    // MUST confirm that the called-party number on this INVITE is
+    // actually owned by the authenticated user. Failure is closed.
+    // ============================================================
+    const destinationNumber = extractCalledNumberFromIncomingCall(call);
+    const canonicalDestination = normalizeInboundNumberStrict(destinationNumber);
+    // Read from the ref — `handleIncomingCallEvent` is intentionally a stable
+    // useCallback with empty deps, so we cannot rely on the React state copy.
+    const credsSnapshot = latestWebrtcCredsRef.current;
+    const ownedNumbers = Array.isArray(credsSnapshot?.ownedNumbers)
+      ? credsSnapshot.ownedNumbers
+      : [];
+    const ownershipCheck = checkCalledNumberAgainstOwnedList(
+      destinationNumber,
+      ownedNumbers
+    );
+    const callControlIdForLog = call?.callControlId || call?.options?.callControlId || null;
+    if (!ownershipCheck.ok) {
+      logTenantSecurityClient('critical', {
+        eventType: 'inbound_rejected_wrong_tenant',
+        rejectionReason: ownershipCheck.reason,
+        rawDestination: destinationNumber || null,
+        canonicalDestination: canonicalDestination || null,
+        ownedCount: ownedNumbers.length,
+        callControlId: callControlIdForLog,
+        userId: credsSnapshot?.userId ? String(credsSnapshot.userId) : null,
+      });
+      rejectIncomingCallSafely(
+        call,
+        `inbound_wrong_tenant:${ownershipCheck.reason}`
+      );
+      // Do NOT touch any incoming-call UI state — silently drop.
+      return;
+    }
+
+    // Local check passed. Kick off an authoritative server check in
+    // parallel; if the server contradicts the local cache (e.g. the
+    // number was released mid-session) we tear the UI down.
+    verifyInboundOwnershipServer({
+      calledNumber: destinationNumber,
+      callerNumber:
+        call?.options?.remoteCallerNumber ??
+        call?.options?.callerNumber ??
+        null,
+      callControlId: callControlIdForLog,
+    })
+      .then((verdict) => {
+        if (verdict?.ok === true) return;
+        logTenantSecurityClient('critical', {
+          eventType: 'inbound_rejected_server_verify_failed',
+          rejectionReason: verdict?.reason || 'server_denied_ownership',
+          rawDestination: destinationNumber || null,
+          canonicalDestination: canonicalDestination || verdict?.canonical || null,
+          callControlId: callControlIdForLog,
+          userId: credsSnapshot?.userId ? String(credsSnapshot.userId) : null,
+        });
+        if (currentCallRef.current === call) {
+          try {
+            soundManager.stopRingtone();
+          } catch (_) {
+            /* ignore */
+          }
+          if (notificationRef.current) {
+            try {
+              notificationRef.current.close();
+            } catch (_) {
+              /* ignore */
+            }
+            notificationRef.current = null;
+          }
+          setIncomingCall(null);
+          setRemoteNumber('');
+          setCallPhaseLabel(null);
+          setCallState(CALL_STATES.IDLE);
+          currentCallRef.current = null;
+        }
+        rejectIncomingCallSafely(
+          call,
+          `inbound_server_verify_failed:${verdict?.reason || 'unknown'}`
+        );
+      })
+      .catch(() => {
+        // verifyInboundOwnershipServer already fails closed; if the
+        // promise itself rejects (e.g. network), fall back to safe
+        // rejection.
+        logTenantSecurityClient('critical', {
+          eventType: 'inbound_rejected_server_verify_exception',
+          rejectionReason: 'verify_promise_rejected',
+          rawDestination: destinationNumber || null,
+          canonicalDestination: canonicalDestination || null,
+          callControlId: callControlIdForLog,
+        });
+        if (currentCallRef.current === call) {
+          try {
+            soundManager.stopRingtone();
+          } catch (_) {
+            /* ignore */
+          }
+          setIncomingCall(null);
+          setRemoteNumber('');
+          setCallPhaseLabel(null);
+          setCallState(CALL_STATES.IDLE);
+          currentCallRef.current = null;
+        }
+        rejectIncomingCallSafely(call, 'inbound_server_verify_exception');
+      });
+
+    logTenantSecurityClient('info', {
+      eventType: 'inbound_local_ownership_accepted',
+      canonicalDestination: canonicalDestination || destinationNumber || null,
+      callControlId: callControlIdForLog,
+      userId: credsSnapshot?.userId ? String(credsSnapshot.userId) : null,
+    });
 
     const rawCaller =
       call.options?.remoteCallerNumber ??
@@ -1526,6 +1737,16 @@ export const CallProvider = ({ children }) => {
 
         client.on('telnyx.socket.close', () => {
           console.log('📱 Telnyx socket closed');
+          telecomStructuredLog('[WS FLOW]', {
+            sourcePath: 'CallContext.jsx:telnyx.socket.close',
+            eventType: 'telnyx_socket_close',
+            callId: outboundCallRecordIdRef.current
+              ? String(outboundCallRecordIdRef.current)
+              : null,
+            userId: null,
+            callControlId: currentCallRef.current?.callControlId || null,
+            currentStatus: callStateRef.current,
+          });
           setIsClientReady(false);
           isInitializedRef.current = false;
 
@@ -1556,6 +1777,16 @@ export const CallProvider = ({ children }) => {
         // Monitor connection health
         client.on('telnyx.socket.open', () => {
           console.log('📱 Telnyx socket opened - connection active');
+          telecomStructuredLog('[WS FLOW]', {
+            sourcePath: 'CallContext.jsx:telnyx.socket.open',
+            eventType: 'telnyx_socket_open',
+            callId: outboundCallRecordIdRef.current
+              ? String(outboundCallRecordIdRef.current)
+              : null,
+            userId: null,
+            callControlId: currentCallRef.current?.callControlId || null,
+            currentStatus: callStateRef.current,
+          });
         });
 
         client.on('telnyx.rtc.incoming', (call) => {
@@ -2482,6 +2713,39 @@ export const CallProvider = ({ children }) => {
       }
     }
   }, [isSpeaker, callState]);
+
+  useEffect(() => {
+    const onAuthoritative = async (ev) => {
+      const payload = ev?.detail || {};
+      const callId = payload?.callId != null ? String(payload.callId) : '';
+      const activeId = outboundCallRecordIdRef.current != null ? String(outboundCallRecordIdRef.current) : '';
+      if (!callId || !activeId || callId !== activeId) return;
+      const gate = shouldAcceptAuthoritativePayload({
+        sequence: payload.sequence,
+        callStateVersion: payload.callStateVersion,
+      });
+      if (!gate.accept) {
+        logParity('reject_stale_socket', { callId, reason: gate.reason, payload });
+        return;
+      }
+      markAuthoritativeAccepted({
+        sequence: payload.sequence,
+        callStateVersion: payload.callStateVersion,
+      });
+      authoritativeBackendSeqRef.current = Math.max(
+        authoritativeBackendSeqRef.current,
+        Number(payload.sequence || 0)
+      );
+      const remote = payload.snapshot?.callStatus || payload.callStatus;
+      logParity('authoritative_received', { callId, remote });
+      const snap = await fetchCanonicalCallSnapshot(callId);
+      if (snap?.status && remote && String(snap.status) !== String(remote)) {
+        logParity('mismatch_after_fetch', { callId, apiStatus: snap.status, socketStatus: remote });
+      }
+    };
+    window.addEventListener('otodial:call-authoritative-state', onAuthoritative);
+    return () => window.removeEventListener('otodial:call-authoritative-state', onAuthoritative);
+  }, []);
 
   // Defer Telnyx disconnect on unmount so React 18 StrictMode fake-unmount does not cancel in-flight connect().
   useEffect(() => {

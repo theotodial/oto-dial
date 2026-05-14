@@ -37,6 +37,16 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
       0,
       Number(subscription.minutesLimit ?? subscription.limits?.minutesTotal ?? 0)
     );
+    const creditsLimit = Math.max(
+      0,
+      Number(
+        subscription.creditsLimit ??
+          subscription.monthlyCreditsLimit ??
+          subscription.limits?.creditsTotal ??
+          subscription.limits?.minutesTotal ??
+          0
+      )
+    );
     const unlimited =
       Boolean(subscription.isUnlimited) ||
       Boolean(subscription.displayUnlimited) ||
@@ -55,8 +65,13 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
         0,
         Number(subscription.minutesRemaining ?? minutesLimit - minutesUsed)
       ),
+      creditsRemaining: Math.max(
+        0,
+        Number(subscription.creditsRemaining ?? creditsLimit - minutesUsed)
+      ),
       smsLimit,
       minutesLimit,
+      creditsLimit,
       isSmsEnabled: unlimited || smsLimit > 0,
       isCallEnabled: !voiceOff && (unlimited || minutesLimit > 0),
       source: subscription.source || "subscription",
@@ -68,13 +83,16 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
     const minutesUsed = Math.max(0, Number(activityUsage?.minutesUsed ?? 0));
     const smsLimit = Math.max(0, Number(customPackage.smsAllowed ?? 0));
     const minutesLimit = Math.max(0, Number(customPackage.minutesAllowed ?? 0));
+    const creditsLimit = minutesLimit;
     return {
       smsUsed,
       minutesUsed,
       smsRemaining: Math.max(0, smsLimit - smsUsed),
       minutesRemaining: Math.max(0, minutesLimit - minutesUsed),
+      creditsRemaining: Math.max(0, creditsLimit - minutesUsed),
       smsLimit,
       minutesLimit,
+      creditsLimit,
       isSmsEnabled: smsLimit > 0,
       isCallEnabled: minutesLimit > 0,
       source: "customPackage",
@@ -86,8 +104,10 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
     minutesUsed: 0,
     smsRemaining: 0,
     minutesRemaining: 0,
+    creditsRemaining: 0,
     smsLimit: 0,
     minutesLimit: 0,
+    creditsLimit: 0,
     isSmsEnabled: false,
     isCallEnabled: false,
     source: "none",
@@ -249,10 +269,23 @@ export async function loadUserSubscription(userId) {
 
   const smsLimit = canonical.smsLimit;
   const minutesLimit = canonical.minutesLimit;
+  const creditsLimit = Math.max(
+    0,
+    Number(
+      subscription.monthlyCreditsLimit ??
+        subscription.limits?.creditsTotal ??
+        subscription.limits?.minutesTotal ??
+        minutesLimit
+    )
+  );
   const smsUsed = canonical.smsUsed;
   const secondsUsed = canonical.secondsUsed;
   const minutesUsed = canonical.minutesUsed;
   const minutesRemaining = canonical.minutesRemaining;
+  const creditsRemaining = Math.max(
+    0,
+    Number(subscription.creditsRemaining ?? creditsLimit - minutesUsed)
+  );
   const smsRemaining = canonical.smsRemaining;
   const rawLimits = subscription.limits || {};
   const isManuallyEnabled =
@@ -279,14 +312,17 @@ export async function loadUserSubscription(userId) {
     displayUnlimited: Boolean(subscription.displayUnlimited),
     planId: subscription.planId,
     minutesRemaining,
+    creditsRemaining,
     smsRemaining,
     minutesLimit,
+    creditsLimit,
     smsLimit,
     minutesUsed,
     smsUsed,
     limits: {
       ...(subscription.limits || {}),
       minutesTotal: minutesLimit,
+      creditsTotal: creditsLimit,
       smsTotal: smsLimit,
       numbersTotal: Number(subscription.limits?.numbersTotal ?? 0),
     },

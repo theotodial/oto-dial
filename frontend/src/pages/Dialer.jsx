@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import API from '../api';
+import { fetchProjectedBalance } from '../services/projectedCreditService';
 import { useCall } from '../context/CallContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { useAuth } from '../context/AuthContext';
@@ -44,13 +45,45 @@ function Dialer() {
   } = useCall();
 
   const { subscription } = useSubscription();
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
+  const [projectedAvailable, setProjectedAvailable] = useState(null);
+  const [projectedLoading, setProjectedLoading] = useState(false);
+
+  const refreshProjectedCredits = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setProjectedLoading(true);
+    try {
+      const res = await fetchProjectedBalance();
+      if (res.ok && Number.isFinite(Number(res.data?.projectedAvailableCredits))) {
+        setProjectedAvailable(Number(res.data.projectedAvailableCredits));
+      } else {
+        setProjectedAvailable(null);
+      }
+    } catch {
+      setProjectedAvailable(null);
+    } finally {
+      setProjectedLoading(false);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    refreshProjectedCredits();
+    if (!isAuthenticated) return undefined;
+    const id = setInterval(refreshProjectedCredits, 12000);
+    return () => clearInterval(id);
+  }, [isAuthenticated, refreshProjectedCredits]);
+
+  useEffect(() => {
+    if (!isInCall && callState === 'idle') {
+      refreshProjectedCredits();
+    }
+  }, [isInCall, callState, refreshProjectedCredits]);
   const canUseService = Boolean(subscription?.id ?? subscription?._id);
   const billingUiActive = Boolean(subscription?.isActive ?? subscription?.active);
   const isManuallyEnabled = Boolean(
     subscription?.isManuallyEnabled ??
       (Number(subscription?.limits?.smsTotal ?? 0) > 0 ||
-        Number(subscription?.limits?.minutesTotal ?? 0) > 0)
+        Number(subscription?.limits?.creditsTotal ?? subscription?.limits?.minutesTotal ?? 0) > 0)
   );
   const subscriptionUsable = billingUiActive || isManuallyEnabled;
 
@@ -298,6 +331,23 @@ function Dialer() {
             {canUseService && !subscriptionUsable && (
               <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded">
                 Subscription inactive — remaining balance available
+              </div>
+            )}
+            {canUseService && (projectedLoading || projectedAvailable != null) && (
+              <div
+                className="text-xs text-gray-600 dark:text-gray-300 px-2 py-1 rounded border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-800/80"
+                title="Includes active call reservations and realtime usage from intervals not yet settled."
+              >
+                {projectedLoading && projectedAvailable == null ? (
+                  <span>Available credits…</span>
+                ) : (
+                  <>
+                    Available credits:{' '}
+                    <span className="font-semibold text-gray-900 dark:text-white">
+                      {Math.round(projectedAvailable ?? 0)}
+                    </span>
+                  </>
+                )}
               </div>
             )}
           </div>

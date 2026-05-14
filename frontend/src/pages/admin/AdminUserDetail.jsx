@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import API from '../../api';
 import { notifySubscriptionChanged } from '../../utils/subscriptionSync';
 import { SUPPORTED_COUNTRIES } from '../../utils/supportedCountries';
 
 function AdminUserDetail() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams();
+  const fromTelecomRisk = Boolean(location.state?.fromTelecomRisk);
+  const telecomRiskAnalyticsContext = location.state?.telecomRiskAnalyticsContext || null;
   const [user, setUser] = useState(null);
   const [subscription, setSubscription] = useState(null);
   const [usage, setUsage] = useState(null);
@@ -47,6 +50,7 @@ function AdminUserDetail() {
   const [featureSaving, setFeatureSaving] = useState(false);
   const [allowedCallCountries, setAllowedCallCountries] = useState([]);
   const [showCountriesDropdown, setShowCountriesDropdown] = useState(false);
+  const [userIdCopied, setUserIdCopied] = useState(false);
 
   const userFeatures = user?.features || { voiceEnabled: true, campaignEnabled: false };
   const voiceFeatureOn = userFeatures.voiceEnabled !== false;
@@ -725,6 +729,19 @@ function AdminUserDetail() {
               >
                 ← Back to Users
               </button>
+              {fromTelecomRisk && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate('/adminbobby/analytics/telecom-risk', {
+                      state: telecomRiskAnalyticsContext || undefined,
+                    })
+                  }
+                  className="block text-sm text-rose-700 hover:text-rose-900 dark:text-rose-400 dark:hover:text-rose-300 mb-2"
+                >
+                  ← Back to telecom risk & profitability
+                </button>
+              )}
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">User Details</h1>
             </div>
             <button
@@ -746,9 +763,28 @@ function AdminUserDetail() {
               <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6">
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Identity</h2>
                 <dl className="grid grid-cols-2 gap-4">
-                  <div>
+                  <div className="col-span-2">
                     <dt className="text-sm text-gray-600 dark:text-gray-400">User ID</dt>
-                    <dd className="text-sm font-mono text-gray-900 dark:text-white">{user.identity?.id}</dd>
+                    <dd className="mt-1 flex flex-wrap items-center gap-2 text-sm font-mono text-gray-900 dark:text-white break-all">
+                      <span>{user.identity?.id}</span>
+                      {user.identity?.id ? (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(String(user.identity.id));
+                              setUserIdCopied(true);
+                              window.setTimeout(() => setUserIdCopied(false), 2000);
+                            } catch {
+                              alert('Could not copy to clipboard');
+                            }
+                          }}
+                          className="shrink-0 rounded-md border border-gray-300 bg-white px-2 py-0.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-700 dark:text-gray-200 dark:hover:bg-slate-600"
+                        >
+                          {userIdCopied ? 'Copied' : 'Copy'}
+                        </button>
+                      ) : null}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-sm text-gray-600 dark:text-gray-400">Name</dt>
@@ -1469,7 +1505,7 @@ function AdminUserDetail() {
                   <option value="">-- Select a plan --</option>
                   {availablePlans.map((plan) => (
                     <option key={String(plan._id)} value={String(plan._id)}>
-                      {plan.adminOnly ? `${plan.name} (admin only)` : plan.name} — ${plan.currency || 'USD'} ${plan.price}/mo · SMS {plan.limits?.smsTotal ?? '—'} · min {plan.limits?.minutesTotal ?? '—'}
+                      {plan.adminOnly ? `${plan.name} (admin only)` : plan.name} — ${plan.currency || 'USD'} ${plan.price}/mo · SMS {plan.limits?.smsTotal ?? '—'} · credits {plan.limits?.creditsTotal ?? plan.limits?.minutesTotal ?? '—'}
                     </option>
                   ))}
                 </select>

@@ -13,9 +13,18 @@ import { Server as SocketIOServer } from "socket.io";
 import connectDB from "./config/db.js";
 import { getTelnyx } from "./config/telnyx.js";
 import { validateEnv } from "./src/utils/envValidator.js";
+import { applySafeModeOperationalDefaults, getDeploymentMode } from "./src/services/deploymentModeService.js";
+import { runProductionReadinessChecks } from "./src/services/productionReadinessService.js";
+import { telecomOperationalLog } from "./src/utils/telecomOperationalLog.js";
 import { sendEmailSafe, logResendConfigAtStartup } from "./src/services/email.service.js";
 import { configureAdminLiveEvents } from "./src/services/adminLiveEventsService.js";
 import { registerUserSmsNamespace } from "./src/events/smsEvents.js";
+import {
+  registerPerformanceTelemetryIo,
+  startPerformanceTelemetryService,
+} from "./src/services/performanceTelemetryService.js";
+import { flushTelemetryBuffersNow } from "./src/services/telemetryBufferService.js";
+import { startWorkerHeartbeatPublisher } from "./src/services/workerHeartbeatService.js";
 import {
   registerSmsOutboundProcessor,
   startSmsOutboundQueueWorker,
@@ -28,6 +37,8 @@ import {
 import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
 import { startSystemHealthService } from "./src/services/systemHealthService.js";
 import { startCallHeartbeatMonitor } from "./src/services/callHeartbeatMonitor.js";
+import { startCallCreditIntervalWorker } from "./src/services/callCreditIntervalWorker.js";
+import { recoverActiveCallEconomics } from "./src/services/economicRecoveryService.js";
 import { initCampaignQueue } from "./src/services/campaignQueueService.js";
 import { runCampaignJob } from "./src/services/campaignSendWorker.js";
 import { startCampaignSchedulePoller } from "./src/services/campaignSchedulePoller.js";
@@ -57,6 +68,11 @@ if (!String(process.env.RESEND_API_KEY || "").trim()) {
 }
 
 validateEnv();
+applySafeModeOperationalDefaults();
+telecomOperationalLog("[DEPLOYMENT MODE]", {
+  deploymentMode: getDeploymentMode(),
+  nodeEnv: process.env.NODE_ENV || null,
+});
 
 const _resendKey = String(process.env.RESEND_API_KEY || "").trim();
 if (_resendKey && !_resendKey.startsWith("re_")) {
@@ -112,6 +128,9 @@ const io = new SocketIOServer(server, {
 });
 configureAdminLiveEvents(io);
 registerUserSmsNamespace(io);
+registerPerformanceTelemetryIo(io);
+startPerformanceTelemetryService();
+startWorkerHeartbeatPublisher();
 registerSmsOutboundProcessor(processOutboundQueueJob);
 startSmsOutboundQueueWorker();
 const PORT = process.env.PORT || 5000;
@@ -582,6 +601,26 @@ async function startServer() {
     }
 
     try {
+      const readiness = await runProductionReadinessChecks({ fullIndexAudit: true });
+      if (readiness.overall === "critical" && String(process.env.ALLOW_UNSAFE_STARTUP || "").trim() !== "1") {
+        const payload = {
+          level: "critical",
+          message: "Production readiness checks reported CRITICAL; refusing to bind HTTP port.",
+          hint: "Set ALLOW_UNSAFE_STARTUP=1 only for a controlled emergency start.",
+          readiness,
+        };
+        console.error(JSON.stringify(payload, null, 2));
+        telecomOperationalLog("[STARTUP CHECK]", { blocked: true, ...payload });
+        process.exit(1);
+      }
+    } catch (readinessErr) {
+      console.error("❌ Production readiness checks failed:", readinessErr?.message || readinessErr);
+      if (String(process.env.ALLOW_UNSAFE_STARTUP || "").trim() !== "1") {
+        process.exit(1);
+      }
+    }
+
+    try {
       const catalogFix = await ensureStripeCatalogConsistency();
       if (catalogFix.plansUpdated || catalogFix.addonsUpdated) {
         console.log(
@@ -614,6 +653,22 @@ async function startServer() {
       startCallHeartbeatMonitor();
     } catch (hbErr) {
       console.error("⚠️ Call heartbeat monitor failed to start:", hbErr.message);
+    }
+    try {
+      const startupLimit = Math.min(
+        500,
+        Math.max(5, Number(process.env.ECONOMIC_RECOVERY_STARTUP_LIMIT || 200))
+      );
+      const recovery = await recoverActiveCallEconomics({ mode: "startup", limit: startupLimit });
+      console.log("[ECONOMIC RECOVERY] startup sweep", { processed: recovery.processed });
+    } catch (econRecErr) {
+      console.error("⚠️ Economic recovery startup sweep failed:", econRecErr.message);
+    }
+
+    try {
+      startCallCreditIntervalWorker();
+    } catch (creditWorkerErr) {
+      console.error("⚠️ Call credit interval worker failed to start:", creditWorkerErr.message);
     }
 
     try {
@@ -652,7 +707,8 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, () => {
     stopAgentRuntime()
       .catch(() => {})
-      .finally(() => {
+      .finally(async () => {
+        await flushTelemetryBuffersNow().catch(() => {});
         stopOtoAgentsTaskQueue();
         process.exit(0);
       });

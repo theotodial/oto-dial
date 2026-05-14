@@ -1,4 +1,5 @@
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import PrefetchLink from './PrefetchLink';
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -34,7 +35,7 @@ function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
-          <Link to="/" className="flex items-center space-x-3 hover:opacity-80 transition-opacity">
+          <PrefetchLink to="/" className="flex items-center space-x-3 hover:opacity-80 transition-opacity">
             <img 
               src={logo} 
               alt="OTO DIAL Logo" 
@@ -50,24 +51,24 @@ function Navbar() {
               <span className="text-white font-bold text-xl">OD</span>
             </div>
             <span className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white tracking-tight">OTO DIAL</span>
-          </Link>
+          </PrefetchLink>
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center space-x-6">
             {isAuthenticated ? (
               <>
-                <Link
+                <PrefetchLink
                   to="/recents"
                   className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium transition-colors"
                 >
                   Voice
-                </Link>
-                <Link
+                </PrefetchLink>
+                <PrefetchLink
                   to="/dashboard"
                   className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium transition-colors"
                 >
                   Dashboard
-                </Link>
+                </PrefetchLink>
                 <button
                   onClick={handleLogout}
                   className="px-4 py-2 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600 font-medium transition-colors"
@@ -77,18 +78,18 @@ function Navbar() {
               </>
             ) : (
               <>
-                <Link
+                <PrefetchLink
                   to="/login"
                   className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium transition-colors"
                 >
                   Login
-                </Link>
-                <Link
+                </PrefetchLink>
+                <PrefetchLink
                   to="/signup"
                   className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors shadow-sm hover:shadow-md"
                 >
                   Get Started
-                </Link>
+                </PrefetchLink>
               </>
             )}
             
@@ -148,20 +149,20 @@ function Navbar() {
           <div className="md:hidden py-4 border-t border-gray-200 dark:border-slate-700">
             {isAuthenticated ? (
               <div className="flex flex-col space-y-4 items-center">
-                <Link
+                <PrefetchLink
                   to="/recents"
                   className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Voice
-                </Link>
-                <Link
+                </PrefetchLink>
+                <PrefetchLink
                   to="/dashboard"
                   className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Dashboard
-                </Link>
+                </PrefetchLink>
                 <button
                   onClick={() => {
                     handleLogout();
@@ -174,20 +175,20 @@ function Navbar() {
               </div>
             ) : (
               <div className="flex flex-col space-y-4 items-center">
-                <Link
+                <PrefetchLink
                   to="/login"
                   className="px-6 py-2 text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium text-center"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Login
-                </Link>
-                <Link
+                </PrefetchLink>
+                <PrefetchLink
                   to="/signup"
                   className="px-8 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium text-center inline-block"
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Get Started
-                </Link>
+                </PrefetchLink>
               </div>
             )}
           </div>

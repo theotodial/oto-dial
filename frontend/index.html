@@ -2,25 +2,36 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('theme');
+          var dark = t ? t === 'dark' : true;
+          if (dark) document.documentElement.classList.add('dark');
+          else document.documentElement.classList.remove('dark');
+        } catch (e) {}
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OTO DIAL – Affordable Virtual Phone Numbers & Cloud Calling</title>
-    <meta name="description" content="Get local virtual phone numbers for calling and SMS worldwide. Perfect for travelers, freelancers, and remote work. Simple plans, no SIM needed." />
-    <meta name="keywords" content="virtual phone number, cloud phone number, international phone number, online calling and SMS, local phone number abroad, US phone number online, UK virtual number, global calling app, TextNow alternative, Google Voice alternative, affordable virtual number, cloud dialer, international SMS app" />
-    <meta name="author" content="OTO DIAL" />
+    <title>Browser-Based Calling &amp; Free US Virtual Number | OTODIAL</title>
+    <meta name="description" content="OTODIAL delivers a free US virtual number with browser-based outbound calling and SMS plus fair telecom credit billing. VoIP dialer for cold callers, freelancers, agencies, and remote sales teams dialing the United States. No VPN · no LLC · Google Voice alternative · TextNow alternative." />
+    <meta name="keywords" content="free US virtual number, US virtual phone number, virtual phone number, cloud phone system, browser dialer, VoIP dialer, outbound calling software, sales dialer, cold calling software, cloud calling platform, business phone number, virtual US number, online phone number, Google Voice alternative, TextNow alternative, internet calling app, browser based softphone, remote sales dialer, web based calling, virtual number for freelancers, virtual number for remote workers, online SMS platform, telecom SaaS, VoIP calling platform, telecom credits, cloud dialer, cold caller software" />
+    <meta name="author" content="OTODIAL" />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://otodial.com/" />
-    
+
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="OTODIAL" />
     <meta property="og:url" content="https://otodial.com/" />
-    <meta property="og:title" content="OTO DIAL – Affordable Virtual Phone Numbers & Cloud Calling" />
-    <meta property="og:description" content="Get local virtual phone numbers for calling and SMS worldwide. Perfect for travelers, freelancers, and remote work. Simple plans, no SIM needed." />
-    
+    <meta property="og:title" content="Browser-Based Calling &amp; Free US Virtual Number | OTODIAL" />
+    <meta property="og:description" content="Cloud dialer with a free US virtual number: telecom credits, outbound calling, SMS where included. US-only numbering inventory. Serious Google Voice and TextNow alternative — no VPN, no LLC." />
+
     <!-- Twitter -->
     <meta property="twitter:card" content="summary_large_image" />
     <meta property="twitter:url" content="https://otodial.com/" />
-    <meta property="twitter:title" content="OTO DIAL – Affordable Virtual Phone Numbers & Cloud Calling" />
-    <meta property="twitter:description" content="Get local virtual phone numbers for calling and SMS worldwide. Perfect for travelers, freelancers, and remote work. Simple plans, no SIM needed." />
+    <meta property="twitter:title" content="Browser-Based Calling &amp; Free US Virtual Number | OTODIAL" />
+    <meta property="twitter:description" content="Outbound calling software with US virtual numbers, telecom credits, and browser-first VoIP workflows. Transparent US numbering — dial globally from anywhere without VPN juggling." />
     
     <!-- Favicons -->
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
@@ -45,14 +56,12 @@
       body {
         margin: 0;
         padding: 0;
-        background-color: white;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
           'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
           sans-serif;
       }
       #root {
         min-height: 100vh;
-        background-color: white;
       }
     </style>
   </head>

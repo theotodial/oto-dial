@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import PrefetchLink from "../PrefetchLink";
 
 function normalizeMenuItems(items = []) {
   if (!Array.isArray(items)) return [];
@@ -67,7 +67,7 @@ function SiteHeader({ headerConfig = {}, themeSettings = {}, isBuilderPreview = 
             <span className="text-lg font-bold text-gray-900">{brandText}</span>
           </button>
         ) : (
-          <Link to="/" className="flex items-center gap-3">
+          <PrefetchLink to="/" className="flex items-center gap-3">
             {logoUrl ? (
               <img src={logoUrl} alt="Logo" className="h-8 w-auto object-contain" />
             ) : (
@@ -79,7 +79,7 @@ function SiteHeader({ headerConfig = {}, themeSettings = {}, isBuilderPreview = 
               </div>
             )}
             <span className="text-lg font-bold text-gray-900">{brandText}</span>
-          </Link>
+          </PrefetchLink>
         )}
 
         {/* Desktop */}
@@ -137,19 +137,19 @@ function SiteHeader({ headerConfig = {}, themeSettings = {}, isBuilderPreview = 
             </>
           ) : (
             <>
-              <Link
+              <PrefetchLink
                 to="/login"
                 className="text-sm font-semibold text-gray-700 hover:text-gray-900"
               >
                 Login
-              </Link>
-              <Link
+              </PrefetchLink>
+              <PrefetchLink
                 to="/signup"
                 className="px-4 py-2 rounded-xl text-white font-semibold text-sm"
                 style={{ backgroundColor: "var(--site-primary)" }}
               >
                 Get Started
-              </Link>
+              </PrefetchLink>
             </>
           )}
         </div>
@@ -214,21 +214,21 @@ function SiteHeader({ headerConfig = {}, themeSettings = {}, isBuilderPreview = 
                 </>
               ) : (
                 <>
-                  <Link
+                  <PrefetchLink
                     to="/login"
                     className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold text-center"
                     onClick={() => setMobileOpen(false)}
                   >
                     Login
-                  </Link>
-                  <Link
+                  </PrefetchLink>
+                  <PrefetchLink
                     to="/signup"
                     className="flex-1 px-3 py-2 rounded-lg text-white text-sm font-semibold text-center"
                     style={{ backgroundColor: "var(--site-primary)" }}
                     onClick={() => setMobileOpen(false)}
                   >
                     Get Started
-                  </Link>
+                  </PrefetchLink>
                 </>
               )}
             </div>

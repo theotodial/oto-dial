@@ -5,6 +5,11 @@ import Call from "../../models/Call.js";
 import SMS from "../../models/SMS.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import TelnyxCost from "../../models/TelnyxCost.js";
+import CreditLedger from "../../models/CreditLedger.js";
+import User from "../../models/User.js";
+import StripeInvoice from "../../models/StripeInvoice.js";
+import { calculateAllUsersProfitability } from "../../services/userProfitabilityEngine.js";
+import { getBillingTraceSnapshot } from "../../services/billingTraceService.js";
 import { getStripe } from "../../../config/stripe.js";
 import {
   syncPaidInvoicesFromStripe,
@@ -138,7 +143,8 @@ router.get("/", requireAdmin, async (req, res) => {
       callCosts,
       smsCosts,
       numberCosts,
-      mongoRevenueSummary
+      mongoRevenueSummary,
+      creditLedgerAgg
     ] = await Promise.all([
       TelnyxCost.aggregate([
         { $match: callCostMatch },
@@ -181,10 +187,40 @@ router.get("/", requireAdmin, async (req, res) => {
         invoiceCount: 0,
         subscriptionRevenue: 0,
         addonRevenue: 0
-      }))
+      })),
+      CreditLedger.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: effectiveStartDate, $lte: effectiveEndDate },
+          },
+        },
+        {
+          $group: {
+            _id: "$type",
+            totalAmount: { $sum: "$amount" },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
     ]);
 
     let grossRevenue = Number(mongoRevenueSummary.grossRevenue) || 0;
+    const ledgerByType = Object.fromEntries(
+      creditLedgerAgg.map((row) => [String(row._id), row])
+    );
+    const totalCreditsGranted = Math.max(
+      0,
+      (ledgerByType.subscription_credit_grant?.totalAmount || 0) +
+        (ledgerByType.add_on_purchase?.totalAmount || 0) +
+        (ledgerByType.admin_adjustment?.totalAmount || 0) +
+        (ledgerByType.refund?.totalAmount || 0) +
+        (ledgerByType.migration_conversion?.totalAmount || 0)
+    );
+    const totalCreditsConsumed = Math.abs(
+      (ledgerByType.outbound_attempt_charge?.totalAmount || 0) +
+        (ledgerByType.connected_duration_charge?.totalAmount || 0) +
+        (ledgerByType.sms_charge?.totalAmount || 0)
+    );
     let stripeInvoiceCount = Number(mongoRevenueSummary.invoiceCount) || 0;
     let subscriptionRevenue = Number(mongoRevenueSummary.subscriptionRevenue) || 0;
     let addonRevenue = Number(mongoRevenueSummary.addonRevenue) || 0;
@@ -503,6 +539,234 @@ router.get("/", requireAdmin, async (req, res) => {
     const sentSms = allSms.filter(s => s.direction === "outbound");
     const receivedSms = allSms.filter(s => s.direction === "inbound");
     const failedSms = allSms.filter(s => s.status === "failed");
+    const answeredCalls = outboundCalls.filter((c) =>
+      ["answered", "in-progress", "completed"].includes(String(c.status || "").toLowerCase())
+    );
+    const rejectedLikeCalls = outboundCalls.filter((c) =>
+      ["rejected", "busy", "no-answer", "failed", "canceled"].includes(
+        String(c.status || "").toLowerCase()
+      )
+    );
+    const shortCallThresholdSeconds = 20;
+    const shortAnsweredCalls = answeredCalls.filter(
+      (c) => Number(c.billedSeconds ?? c.durationSeconds ?? 0) <= shortCallThresholdSeconds
+    );
+    const asr =
+      outboundCalls.length > 0 ? (answeredCalls.length / outboundCalls.length) * 100 : 0;
+    const avgAnsweredSeconds =
+      answeredCalls.length > 0
+        ? answeredCalls.reduce(
+            (sum, c) => sum + Number(c.billedSeconds ?? c.durationSeconds ?? 0),
+            0
+          ) / answeredCalls.length
+        : 0;
+    const creditsBurnedOnRejectedCalls = Math.round(
+      Math.abs(ledgerByType.outbound_attempt_charge?.totalAmount || 0)
+    );
+    const answeredDurationCredits = Math.round(
+      Math.abs(ledgerByType.connected_duration_charge?.totalAmount || 0)
+    );
+    const creditsPerAnsweredCall =
+      answeredCalls.length > 0
+        ? (creditsBurnedOnRejectedCalls + answeredDurationCredits) / answeredCalls.length
+        : 0;
+
+    const callStatsByUser = new Map();
+    for (const call of outboundCalls) {
+      const key = String(call.user || "");
+      if (!key) continue;
+      const entry = callStatsByUser.get(key) || {
+        outboundAttempts: 0,
+        answered: 0,
+        rejectedLike: 0,
+        shortAnswered: 0,
+        totalAnsweredSeconds: 0,
+      };
+      entry.outboundAttempts += 1;
+      const status = String(call.status || "").toLowerCase();
+      const billedSeconds = Number(call.billedSeconds ?? call.durationSeconds ?? 0);
+      const answered = ["answered", "in-progress", "completed"].includes(status);
+      if (answered) {
+        entry.answered += 1;
+        entry.totalAnsweredSeconds += billedSeconds;
+        if (billedSeconds <= shortCallThresholdSeconds) entry.shortAnswered += 1;
+      }
+      if (["rejected", "busy", "no-answer", "failed", "canceled"].includes(status)) {
+        entry.rejectedLike += 1;
+      }
+      callStatsByUser.set(key, entry);
+    }
+
+    const userRevenue = new Map();
+    const userCosts = new Map();
+    const paidInvoices = await StripeInvoice.find({
+        status: "paid",
+        createdAt: { $gte: effectiveStartDate, $lte: effectiveEndDate },
+      })
+      .select("userId amountPaid")
+      .lean();
+    for (const inv of paidInvoices) {
+      const key = inv?.userId ? String(inv.userId) : "";
+      if (!key) continue;
+      userRevenue.set(key, Number(userRevenue.get(key) || 0) + Number(inv.amountPaid || 0));
+    }
+    for (const c of allCalls) {
+      const key = c?.user ? String(c.user) : "";
+      if (!key) continue;
+      userCosts.set(key, Number(userCosts.get(key) || 0) + Number(c.cost || 0));
+    }
+    for (const s of allSms) {
+      const key = s?.user ? String(s.user) : "";
+      if (!key) continue;
+      userCosts.set(
+        key,
+        Number(userCosts.get(key) || 0) + Number(s.cost || 0) + Number(s.carrierFees || 0)
+      );
+    }
+
+    const riskRows = Array.from(callStatsByUser.entries()).map(([userId, stats]) => {
+      const rejectRatio =
+        stats.outboundAttempts > 0 ? stats.rejectedLike / stats.outboundAttempts : 0;
+      const shortCallRatio =
+        stats.answered > 0 ? stats.shortAnswered / stats.answered : 0;
+      const revenue = Number(userRevenue.get(userId) || 0);
+      const telnyxCost = Number(userCosts.get(userId) || 0);
+      const grossMarginEstimate = revenue - telnyxCost;
+      return {
+        userId,
+        outboundAttempts: stats.outboundAttempts,
+        answeredCalls: stats.answered,
+        rejectRatio: Number((rejectRatio * 100).toFixed(2)),
+        shortCallRatio: Number((shortCallRatio * 100).toFixed(2)),
+        avgAnsweredSeconds:
+          stats.answered > 0 ? Number((stats.totalAnsweredSeconds / stats.answered).toFixed(2)) : 0,
+        telnyxCostEstimate: Number(telnyxCost.toFixed(4)),
+        subscriptionRevenueEstimate: Number(revenue.toFixed(2)),
+        grossMarginEstimate: Number(grossMarginEstimate.toFixed(2)),
+        riskScore:
+          Number((rejectRatio * 0.5 + shortCallRatio * 0.5).toFixed(4)),
+      };
+    });
+    const topOutboundAttemptUsers = [...riskRows]
+      .sort((a, b) => b.outboundAttempts - a.outboundAttempts)
+      .slice(0, 20);
+    const highRejectRatioUsers = [...riskRows]
+      .filter((u) => u.outboundAttempts >= 10)
+      .sort((a, b) => b.rejectRatio - a.rejectRatio)
+      .slice(0, 20);
+    const shortCallHeavyUsers = [...riskRows]
+      .filter((u) => u.answeredCalls >= 5)
+      .sort((a, b) => b.shortCallRatio - a.shortCallRatio)
+      .slice(0, 20);
+    const negativeMarginUsers = [...riskRows]
+      .filter((u) => u.grossMarginEstimate < 0)
+      .sort((a, b) => a.grossMarginEstimate - b.grossMarginEstimate)
+      .slice(0, 20);
+    const profitEngine = await calculateAllUsersProfitability({
+      startDate: effectiveStartDate,
+      endDate: effectiveEndDate,
+    }).catch(() => ({ users: [] }));
+    const profitUsers = Array.isArray(profitEngine?.users) ? profitEngine.users : [];
+    const topLosingUsers = [...profitUsers]
+      .sort((a, b) => Number(a.gross_margin || 0) - Number(b.gross_margin || 0))
+      .slice(0, 20);
+    const topAbusingUsers = [...profitUsers]
+      .filter((u) => Number(u.outbound_attempts || 0) >= 10)
+      .sort((a, b) => Number(b.reject_ratio || 0) - Number(a.reject_ratio || 0))
+      .slice(0, 20);
+    const marginHeatmap = [...profitUsers]
+      .sort((a, b) => Number(a.margin_ratio || 0) - Number(b.margin_ratio || 0))
+      .slice(0, 100)
+      .map((u) => ({
+        userId: u.userId,
+        marginRatio: Number(u.margin_ratio || 0),
+        grossMargin: Number(u.gross_margin || 0),
+        telnyxCost: Number(u.total_telnyx_cost_estimate || 0),
+        revenue: Number(u.total_subscription_revenue || 0),
+        rejectRatio: Number(u.reject_ratio || 0),
+      }));
+    const costVsRevenueSeries = [...profitUsers]
+      .sort((a, b) => Number(b.total_telnyx_cost_estimate || 0) - Number(a.total_telnyx_cost_estimate || 0))
+      .slice(0, 40)
+      .map((u) => ({
+        userId: u.userId,
+        cost: Number(u.total_telnyx_cost_estimate || 0),
+        revenue: Number(u.total_subscription_revenue || 0),
+        grossMargin: Number(u.gross_margin || 0),
+      }));
+
+    const ledgerWindowMatch = {
+      createdAt: { $gte: effectiveStartDate, $lte: effectiveEndDate },
+    };
+    const traceSnap = getBillingTraceSnapshot({ limit: 80 });
+    const [
+      billingNegativeUsers,
+      billingDuplicateKeys,
+      billingOrphanLedger,
+      billingHangingReservations,
+      billingHighFrequency,
+    ] = await Promise.all([
+      User.find({ remainingCredits: { $lt: 0 } })
+        .select("_id email remainingCredits reservedCredits")
+        .limit(20)
+        .lean(),
+      CreditLedger.aggregate([
+        { $match: ledgerWindowMatch },
+        { $group: { _id: "$idempotencyKey", c: { $sum: 1 } } },
+        { $match: { c: { $gt: 1 } } },
+        { $limit: 25 },
+      ]),
+      CreditLedger.find({
+        ...ledgerWindowMatch,
+        type: { $in: ["connected_duration_charge", "outbound_attempt_charge"] },
+        $or: [{ callId: null }, { callId: { $exists: false } }],
+      })
+        .select("_id idempotencyKey type createdAt")
+        .limit(20)
+        .lean(),
+      Call.find({
+        direction: "outbound",
+        status: { $in: ["completed", "failed", "rejected", "canceled", "busy", "no-answer"] },
+        creditReservationHeld: { $gt: 0 },
+        creditReservationReleasedAt: null,
+        updatedAt: { $gte: effectiveStartDate, $lte: effectiveEndDate },
+      })
+        .select("_id user creditReservationHeld status")
+        .limit(20)
+        .lean(),
+      CreditLedger.aggregate([
+        { $match: ledgerWindowMatch },
+        { $group: { _id: "$user", events: { $sum: 1 }, netCredits: { $sum: "$amount" } } },
+        { $sort: { events: -1 } },
+        { $limit: 20 },
+      ]),
+    ]);
+
+    const billingIntegrity = {
+      processNote:
+        "Runtime duplicate skips are counted when applyBillingEvent receives the same idempotencyKey twice; Mongo unique index prevents double rows.",
+      duplicateLedgerKeyGroups: billingDuplicateKeys,
+      duplicateRuntimeSkips: traceSnap.duplicateSkipCount,
+      failedLedgerWrites: traceSnap.ledgerWriteFailureCount,
+      negativeBalanceUsers: billingNegativeUsers,
+      orphanLedgerEntries: billingOrphanLedger,
+      unreleasedCallReservations: billingHangingReservations,
+      highestBillingFrequencyUsers: billingHighFrequency.map((row) => ({
+        userId: String(row._id),
+        ledgerEventsInWindow: row.events,
+        netCreditsInWindow: Number(row.netCredits || 0),
+      })),
+      abnormalChargeSpikes: billingHighFrequency
+        .filter((row) => row.events >= 50 && Number(row.netCredits || 0) <= -100)
+        .slice(0, 10)
+        .map((row) => ({
+          userId: String(row._id),
+          ledgerEventsInWindow: row.events,
+          netCreditsInWindow: Number(row.netCredits || 0),
+        })),
+      recentTraces: traceSnap.traces,
+      recentDuplicateKeys: traceSnap.recentDuplicateKeys,
+    };
 
     finish(200, {
       success: true,
@@ -572,7 +836,11 @@ router.get("/", requireAdmin, async (req, res) => {
         totalOutboundCalls: outboundCalls.length,
         totalInboundCalls: inboundCalls.length,
         totalCallMinutes: parseFloat(totalCallMinutes.toFixed(2)),
-        failedCalls: failedCalls.length
+        failedCalls: failedCalls.length,
+        answerSeizureRatio: Number(asr.toFixed(2)),
+        averageAnsweredCallDurationSeconds: Number(avgAnsweredSeconds.toFixed(2)),
+        creditsBurnedPerAnsweredCall: Number(creditsPerAnsweredCall.toFixed(2)),
+        creditsBurnedOnRejectedCalls
       },
       messaging: {
         totalSmsSent: sentSms.length,
@@ -585,6 +853,49 @@ router.get("/", requireAdmin, async (req, res) => {
         costPerMinute: parseFloat(avgCostPerMinute.toFixed(4)),
         costPerSms: parseFloat(avgCostPerSms.toFixed(4))
       },
+      credits: {
+        totalGranted: Math.round(totalCreditsGranted),
+        totalConsumed: Math.round(totalCreditsConsumed),
+        outboundAttemptCharges: Math.round(
+          Math.abs(ledgerByType.outbound_attempt_charge?.totalAmount || 0)
+        ),
+        connectedDurationCharges: Math.round(
+          Math.abs(ledgerByType.connected_duration_charge?.totalAmount || 0)
+        ),
+        smsCharges: Math.round(Math.abs(ledgerByType.sms_charge?.totalAmount || 0)),
+      },
+      telecomRisk: {
+        highRiskUsers: riskRows
+          .filter((r) => r.outboundAttempts >= 10)
+          .sort((a, b) => b.riskScore - a.riskScore)
+          .slice(0, 20),
+        highRejectRatioUsers,
+        shortCallHeavyUsers,
+        topOutboundAttemptUsers,
+        negativeMarginUsers,
+        marginHeatmap,
+        topLosingUsers: topLosingUsers.map((u) => ({
+          userId: u.userId,
+          grossMargin: Number(u.gross_margin || 0),
+          marginRatio: Number(u.margin_ratio || 0),
+          telnyxCost: Number(u.total_telnyx_cost_estimate || 0),
+          revenue: Number(u.total_subscription_revenue || 0),
+          rejectRatio: Number(u.reject_ratio || 0),
+          avgCallDuration: Number(u.avg_call_duration || 0),
+          outboundAttempts: Number(u.outbound_attempts || 0),
+        })),
+        topAbusingUsers: topAbusingUsers.map((u) => ({
+          userId: u.userId,
+          rejectRatio: Number(u.reject_ratio || 0),
+          avgCallDuration: Number(u.avg_call_duration || 0),
+          outboundAttempts: Number(u.outbound_attempts || 0),
+          shortCallRatio: Number(u.short_call_ratio || 0),
+          grossMargin: Number(u.gross_margin || 0),
+          marginRatio: Number(u.margin_ratio || 0),
+        })),
+        costVsRevenueSeries,
+      },
+      billingIntegrity,
       stripeSync
     });
   } catch (err) {

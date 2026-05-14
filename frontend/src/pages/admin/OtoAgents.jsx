@@ -24,11 +24,11 @@ const modeStyles = {
 
 function StatCard({ label, value, detail }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/80 p-5 shadow-sm backdrop-blur dark:bg-slate-900/80">
+    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-sm backdrop-blur">
       <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400" />
-      <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="mt-3 text-3xl font-semibold text-slate-950 dark:text-white">{value}</p>
-      <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{detail}</p>
+      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{label}</p>
+      <p className="mt-3 text-3xl font-semibold text-white">{value}</p>
+      <p className="mt-2 text-sm text-slate-400">{detail}</p>
     </div>
   );
 }
@@ -609,7 +609,7 @@ export default function OtoAgents() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,#172554,transparent_35%),linear-gradient(135deg,#020617,#0f172a_45%,#111827)] p-6 text-slate-950 dark:text-white">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,#172554,transparent_35%),linear-gradient(135deg,#020617,#0f172a_45%,#111827)] p-6 text-white">
       <CreateAgentModal open={createOpen} onClose={() => setCreateOpen(false)} onCreated={loadDashboard} />
       <div className="mx-auto max-w-7xl space-y-6">
         <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/10 p-6 text-white shadow-2xl backdrop-blur">

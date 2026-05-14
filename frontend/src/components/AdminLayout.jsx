@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Suspense, useState } from 'react';
+import { AdminPageFallback } from './loadingFallbacks';
 import AdminSidebar from './AdminSidebar';
 
 const MenuIcon = () => (
@@ -16,10 +16,9 @@ const CloseIcon = () => (
 
 function AdminLayout({ children }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const location = useLocation();
 
   return (
-    <div className="h-screen w-screen flex overflow-hidden bg-gray-50 dark:bg-slate-900">
+    <div className="h-screen w-screen flex overflow-hidden bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-slate-100">
       {/* Mobile Hamburger Button */}
       <button
         id="mobile-sidebar-button"
@@ -32,8 +31,8 @@ function AdminLayout({ children }) {
       </button>
 
       <AdminSidebar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
-      <div className="flex-1 overflow-auto bg-gray-50 dark:bg-slate-800 lg:ml-0 pt-0">
-        {children}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-gray-50 dark:bg-slate-900 lg:ml-0 pt-0 antialiased">
+        <Suspense fallback={<AdminPageFallback />}>{children}</Suspense>
       </div>
     </div>
   );

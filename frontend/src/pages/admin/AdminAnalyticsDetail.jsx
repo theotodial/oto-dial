@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import API from '../../api';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -171,9 +171,9 @@ function AdminAnalyticsDetail() {
 
   if (loading) {
     return (
-      <div className="p-6">
+      <div className="p-6 min-h-full text-gray-900 dark:text-slate-100">
         <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 dark:border-indigo-400"></div>
         </div>
       </div>
     );
@@ -236,6 +236,19 @@ function AdminAnalyticsDetail() {
       byChannel: {}
     }
   };
+  const voice = data?.voice || {
+    answerSeizureRatio: 0,
+    averageAnsweredCallDurationSeconds: 0,
+    creditsBurnedPerAnsweredCall: 0,
+    creditsBurnedOnRejectedCalls: 0
+  };
+  const telecomRisk = data?.telecomRisk || {
+    highRiskUsers: [],
+    highRejectRatioUsers: [],
+    shortCallHeavyUsers: [],
+    topOutboundAttemptUsers: [],
+    negativeMarginUsers: []
+  };
   const buildSourceDisplayLabel = (source, channel, handle = null) => {
     const icon = getSourceIcon(source, channel);
     const base = formatSourceLabel(source || 'direct');
@@ -287,6 +300,110 @@ function AdminAnalyticsDetail() {
       socialPlatform: user.socialPlatform || null,
       influencerHandle: user.influencerHandle || null
     }));
+
+  const navigateToUserFromTelecomRisk = (userId) => {
+    if (!userId) return;
+    navigate(`/adminbobby/users/${encodeURIComponent(String(userId))}`, {
+      state: {
+        fromTelecomRisk: true,
+        telecomRiskAnalyticsContext: {
+          data,
+          dateRange,
+          realtimeWindow,
+          meta,
+        },
+      },
+    });
+  };
+
+  const renderRiskTable = (rows, mode = 'default') => {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return (
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          No users matched this risk cohort in the selected period.
+        </p>
+      );
+    }
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-gray-200 dark:border-slate-700">
+              <th className="text-left py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">User</th>
+              <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Attempts</th>
+              <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Answered</th>
+              <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Reject %</th>
+              <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Short %</th>
+              <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Avg Ans Sec</th>
+              <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Telnyx $</th>
+              <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Revenue $</th>
+              <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Margin $</th>
+              {mode === 'risk' && (
+                <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Risk</th>
+              )}
+              <th className="text-right py-3 px-4 text-xs font-semibold text-gray-700 dark:text-gray-300">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, idx) => (
+              <tr
+                key={`${row.userId || 'user'}-${idx}`}
+                className="border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50"
+              >
+                <td className="py-3 px-4 text-sm font-mono text-gray-900 dark:text-white break-all">
+                  {row.userId || 'unknown'}
+                </td>
+                <td className="py-3 px-4 text-right text-sm text-gray-900 dark:text-white">{Number(row.outboundAttempts || 0).toLocaleString()}</td>
+                <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{Number(row.answeredCalls || 0).toLocaleString()}</td>
+                <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{Number(row.rejectRatio || 0).toFixed(2)}%</td>
+                <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{Number(row.shortCallRatio || 0).toFixed(2)}%</td>
+                <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{Number(row.avgAnsweredSeconds || 0).toFixed(2)}</td>
+                <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{Number(row.telnyxCostEstimate || 0).toFixed(4)}</td>
+                <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">{Number(row.subscriptionRevenueEstimate || 0).toFixed(2)}</td>
+                <td className={`py-3 px-4 text-right text-sm font-semibold ${
+                  Number(row.grossMarginEstimate || 0) < 0
+                    ? 'text-rose-600 dark:text-rose-400'
+                    : 'text-emerald-600 dark:text-emerald-400'
+                }`}>
+                  {Number(row.grossMarginEstimate || 0).toFixed(2)}
+                </td>
+                {mode === 'risk' && (
+                  <td className="py-3 px-4 text-right text-sm text-gray-700 dark:text-gray-300">
+                    {Number(row.riskScore || 0).toFixed(4)}
+                  </td>
+                )}
+                <td className="py-3 px-4 text-right whitespace-nowrap">
+                  {row.userId ? (
+                    <span className="inline-flex flex-wrap justify-end gap-x-3 gap-y-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigateToUserFromTelecomRisk(row.userId);
+                        }}
+                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200 underline-offset-2 hover:underline"
+                      >
+                        Open user
+                      </button>
+                      <Link
+                        to={`/adminbobby/analytics/profitability-tools?userId=${encodeURIComponent(String(row.userId))}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 dark:text-emerald-400 dark:hover:text-emerald-200 underline-offset-2 hover:underline"
+                      >
+                        Profit tools
+                      </Link>
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-400 dark:text-gray-500">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
 
   const renderDetailContent = () => {
     switch (category) {
@@ -1051,6 +1168,65 @@ function AdminAnalyticsDetail() {
           </div>
         );
 
+      case 'telecom-risk':
+        return (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="bg-rose-50 dark:bg-rose-900/20 rounded-lg p-6">
+                <div className="text-sm text-rose-600 dark:text-rose-400 mb-1">ASR</div>
+                <div className="text-3xl font-bold text-rose-600 dark:text-rose-400">
+                  {Number(voice.answerSeizureRatio || 0).toFixed(2)}%
+                </div>
+              </div>
+              <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-6">
+                <div className="text-sm text-amber-600 dark:text-amber-400 mb-1">Avg Answered Duration</div>
+                <div className="text-3xl font-bold text-amber-600 dark:text-amber-400">
+                  {Number(voice.averageAnsweredCallDurationSeconds || 0).toFixed(2)}s
+                </div>
+              </div>
+              <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-6">
+                <div className="text-sm text-indigo-600 dark:text-indigo-400 mb-1">Credits / Answered</div>
+                <div className="text-3xl font-bold text-indigo-600 dark:text-indigo-400">
+                  {Number(voice.creditsBurnedPerAnsweredCall || 0).toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-6">
+                <div className="text-sm text-orange-600 dark:text-orange-400 mb-1">Rejected Attempt Burn</div>
+                <div className="text-3xl font-bold text-orange-600 dark:text-orange-400">
+                  {Number(voice.creditsBurnedOnRejectedCalls || 0).toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">High Risk Users</h3>
+              {renderRiskTable(telecomRisk.highRiskUsers, 'risk')}
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">High Reject Ratio Users</h3>
+                {renderRiskTable(telecomRisk.highRejectRatioUsers)}
+              </div>
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Short-Call-Heavy Users</h3>
+                {renderRiskTable(telecomRisk.shortCallHeavyUsers)}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Top Outbound Attempt Users</h3>
+                {renderRiskTable(telecomRisk.topOutboundAttemptUsers)}
+              </div>
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Negative Margin Users</h3>
+                {renderRiskTable(telecomRisk.negativeMarginUsers)}
+              </div>
+            </div>
+          </div>
+        );
+
       default:
         return (
           <div className="text-center py-12">
@@ -1070,7 +1246,8 @@ function AdminAnalyticsDetail() {
       pages: 'Page Performance',
       visitors: 'Visitor Details',
       realtime: 'Realtime Active Users',
-      sources: 'Traffic Sources'
+      sources: 'Traffic Sources',
+      'telecom-risk': 'Telecom Risk & Profitability'
     };
     return titles[category] || 'Analytics Detail';
   };

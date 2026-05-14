@@ -1,6 +1,7 @@
 import Call from "../models/Call.js";
 import { CALL_STATES } from "../utils/callStateMachine.js";
 import { applyCallTransition } from "./callTransitionService.js";
+import { telecomStructuredLog } from "../utils/telecomStructuredLog.js";
 
 const TICK_MS = Number(process.env.CALL_HEARTBEAT_TICK_MS || 45000);
 const STALE_MS = Number(process.env.CALL_HEARTBEAT_STALE_MS || 120000);
@@ -42,12 +43,14 @@ export function startCallHeartbeatMonitor() {
           reason: "server_heartbeat_timeout",
         });
         if (result.ok) {
-          console.log("[CALL FLOW]", {
+          telecomStructuredLog("[CLEANUP FLOW]", {
+            callId: String(v._id),
             userId: v.user ? String(v.user) : null,
-            state: "timeout",
-            callControlId: null,
-            detail: "server_heartbeat_timeout",
-            timestamp: new Date().toISOString(),
+            callControlId: v.telnyxCallControlId || null,
+            currentStatus: v.status || null,
+            eventType: "heartbeat_timeout",
+            sourcePath: "callHeartbeatMonitor.js:startCallHeartbeatMonitor",
+            hangupCause: "server_heartbeat_timeout",
           });
         }
       }

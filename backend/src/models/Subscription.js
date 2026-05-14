@@ -88,18 +88,21 @@ const subscriptionSchema = new mongoose.Schema(
 
     usage: {
       minutesUsed: { type: Number, default: 0 },
-      smsUsed: { type: Number, default: 0 }
+      smsUsed: { type: Number, default: 0 },
+      creditsUsed: { type: Number, default: 0 },
     },
 
     limits: {
       minutesTotal: { type: Number, required: true },
       smsTotal: { type: Number, required: true },
-      numbersTotal: { type: Number, required: true }
+      numbersTotal: { type: Number, required: true },
+      creditsTotal: { type: Number, default: 0 },
     },
 
     addons: {
       minutes: { type: Number, default: 0 },
-      sms: { type: Number, default: 0 }
+      sms: { type: Number, default: 0 },
+      credits: { type: Number, default: 0 },
     },
 
     // Optional expiry dates for add-ons (e.g. 30 days after purchase)
@@ -132,6 +135,10 @@ const subscriptionSchema = new mongoose.Schema(
       type: Number,
       default: null
     },
+    monthlyCreditsLimit: {
+      type: Number,
+      default: null
+    },
 
     dailySmsLimit: {
       type: Number,
@@ -142,6 +149,10 @@ const subscriptionSchema = new mongoose.Schema(
       type: Number,
       default: null
     },
+    dailyCreditsLimit: {
+      type: Number,
+      default: null
+    },
 
     dailySmsUsed: {
       type: Number,
@@ -149,6 +160,10 @@ const subscriptionSchema = new mongoose.Schema(
     },
     
     dailyMinutesUsed: {
+      type: Number,
+      default: 0
+    },
+    dailyCreditsUsed: {
       type: Number,
       default: 0
     },

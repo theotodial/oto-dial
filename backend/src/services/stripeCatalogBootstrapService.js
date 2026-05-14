@@ -16,6 +16,7 @@ import {
   UNLIMITED_PLAN_NAME,
   UNLIMITED_PLAN_TYPE
 } from "../constants/unlimitedPlan.js";
+import { CREDIT_ADDONS } from "../config/creditConfig.js";
 
 /**
  * Ensures Mongo plan/add-on Stripe price IDs are aligned with canonical catalog.
@@ -46,13 +47,16 @@ export async function ensureStripeCatalogConsistency() {
       stripePriceId: STRIPE_PLAN_PRICE_IDS[UNLIMITED_PLAN_TYPE],
       limits: {
         minutesTotal: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
+        creditsTotal: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
         smsTotal: UNLIMITED_INTERNAL_LIMITS.monthlySmsLimit,
         numbersTotal: UNLIMITED_INTERNAL_LIMITS.dedicatedNumbers
       },
       monthlySmsLimit: UNLIMITED_INTERNAL_LIMITS.monthlySmsLimit,
       monthlyMinutesLimit: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
+      monthlyCreditsLimit: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
       dailySmsLimit: UNLIMITED_INTERNAL_LIMITS.dailySmsLimit,
       dailyMinutesLimit: UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit,
+      dailyCreditsLimit: UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit,
       dedicatedNumbers: UNLIMITED_INTERNAL_LIMITS.dedicatedNumbers,
       displayUnlimited: true,
       active: true
@@ -80,13 +84,16 @@ export async function ensureStripeCatalogConsistency() {
       stripePriceId: AFFILIATE_UNLIMITED_STRIPE_PRICE_ID,
       limits: {
         minutesTotal: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
+        creditsTotal: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
         smsTotal: AFFILIATE_UNLIMITED_LIMITS.monthlySmsLimit,
         numbersTotal: AFFILIATE_UNLIMITED_LIMITS.dedicatedNumbers
       },
       monthlySmsLimit: AFFILIATE_UNLIMITED_LIMITS.monthlySmsLimit,
       monthlyMinutesLimit: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
+      monthlyCreditsLimit: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
       dailySmsLimit: AFFILIATE_UNLIMITED_LIMITS.dailySmsLimit,
       dailyMinutesLimit: AFFILIATE_UNLIMITED_LIMITS.dailyMinutesLimit,
+      dailyCreditsLimit: AFFILIATE_UNLIMITED_LIMITS.dailyMinutesLimit,
       dedicatedNumbers: AFFILIATE_UNLIMITED_LIMITS.dedicatedNumbers,
       displayUnlimited: true,
       active: true
@@ -115,14 +122,19 @@ export async function ensureStripeCatalogConsistency() {
         plan.monthlySmsLimit || UNLIMITED_INTERNAL_LIMITS.monthlySmsLimit;
       plan.monthlyMinutesLimit =
         plan.monthlyMinutesLimit || UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit;
+      plan.monthlyCreditsLimit =
+        plan.monthlyCreditsLimit || plan.monthlyMinutesLimit || UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit;
       plan.dailySmsLimit =
         plan.dailySmsLimit || UNLIMITED_INTERNAL_LIMITS.dailySmsLimit;
       plan.dailyMinutesLimit =
         plan.dailyMinutesLimit || UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit;
+      plan.dailyCreditsLimit =
+        plan.dailyCreditsLimit || plan.dailyMinutesLimit || UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit;
       plan.dedicatedNumbers =
         plan.dedicatedNumbers || UNLIMITED_INTERNAL_LIMITS.dedicatedNumbers;
       plan.limits = {
         minutesTotal: plan.monthlyMinutesLimit,
+        creditsTotal: plan.monthlyCreditsLimit,
         smsTotal: plan.monthlySmsLimit,
         numbersTotal: plan.dedicatedNumbers
       };
@@ -145,14 +157,19 @@ export async function ensureStripeCatalogConsistency() {
         plan.monthlySmsLimit || UNLIMITED_INTERNAL_LIMITS.monthlySmsLimit;
       plan.monthlyMinutesLimit =
         plan.monthlyMinutesLimit || UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit;
+      plan.monthlyCreditsLimit =
+        plan.monthlyCreditsLimit || plan.monthlyMinutesLimit || UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit;
       plan.dailySmsLimit =
         plan.dailySmsLimit || UNLIMITED_INTERNAL_LIMITS.dailySmsLimit;
       plan.dailyMinutesLimit =
         plan.dailyMinutesLimit || UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit;
+      plan.dailyCreditsLimit =
+        plan.dailyCreditsLimit || plan.dailyMinutesLimit || UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit;
       plan.dedicatedNumbers =
         plan.dedicatedNumbers || UNLIMITED_INTERNAL_LIMITS.dedicatedNumbers;
       plan.limits = {
         minutesTotal: plan.monthlyMinutesLimit,
+        creditsTotal: plan.monthlyCreditsLimit,
         smsTotal: plan.monthlySmsLimit,
         numbersTotal: plan.dedicatedNumbers
       };
@@ -169,10 +186,28 @@ export async function ensureStripeCatalogConsistency() {
         `🔧 Stripe catalog fix (plan): ${plan.name} -> ${canonicalPriceId}`
       );
     }
+    if (Number(plan?.limits?.creditsTotal || 0) <= 0) {
+      if (canonicalPriceId === STRIPE_PLAN_PRICE_IDS.basic) {
+        plan.limits = { ...(plan.limits || {}), creditsTotal: 1500 };
+        plan.monthlyCreditsLimit = 1500;
+        plan.dailyCreditsLimit = plan.dailyCreditsLimit || 300;
+        await plan.save();
+        updates.plansUpdated += 1;
+      } else if (canonicalPriceId === STRIPE_PLAN_PRICE_IDS.super) {
+        plan.limits = { ...(plan.limits || {}), creditsTotal: 2500 };
+        plan.monthlyCreditsLimit = 2500;
+        plan.dailyCreditsLimit = plan.dailyCreditsLimit || 500;
+        await plan.save();
+        updates.plansUpdated += 1;
+      }
+    }
   }
 
   const addons = await AddonPlan.find({ active: true });
   for (const addon of addons) {
+    if (String(addon.type || "").toLowerCase() === "credits") {
+      continue;
+    }
     const canonicalAddonPriceId = getCanonicalAddonPriceId(addon);
     if (canonicalAddonPriceId && addon.stripePriceId !== canonicalAddonPriceId) {
       addon.stripePriceId = canonicalAddonPriceId;
@@ -204,9 +239,12 @@ export async function ensureAdminAssignableInternalPlans() {
     currency: "USD",
     limits: {
       minutesTotal: 0,
+      creditsTotal: 0,
       smsTotal: 1700,
       numbersTotal: 1
     },
+    monthlyCreditsLimit: 0,
+    dailyCreditsLimit: 0,
     dedicatedNumbers: 1,
     displayUnlimited: false,
     adminOnly: false,
@@ -249,9 +287,12 @@ export async function ensureAdminAssignableInternalPlans() {
         currency: "USD",
         limits: {
           minutesTotal: 0,
+          creditsTotal: 0,
           smsTotal: 1000,
           numbersTotal: 1
         },
+        monthlyCreditsLimit: 0,
+        dailyCreditsLimit: 0,
         dedicatedNumbers: 1,
         displayUnlimited: false,
         adminOnly: false,
@@ -264,6 +305,24 @@ export async function ensureAdminAssignableInternalPlans() {
     },
     { upsert: true, new: true, runValidators: true }
   );
+
+  for (const pack of CREDIT_ADDONS) {
+    await AddonPlan.findOneAndUpdate(
+      { name: pack.name },
+      {
+        $set: {
+          name: pack.name,
+          type: "credits",
+          price: pack.price,
+          currency: "USD",
+          quantity: pack.quantity,
+          stripePriceId: `manual_credit_pack_${pack.quantity}`,
+          active: true,
+        },
+      },
+      { upsert: true, new: true, runValidators: true }
+    );
+  }
   return { ok: true };
 }
 

@@ -9,7 +9,18 @@ import { callLifecycleAgent } from "./calls/callLifecycleAgent.js";
 import { callGlobalReconciliationJob } from "./calls/callGlobalReconciliationJob.js";
 import { liveStateSyncAgent } from "./sync/liveStateSyncAgent.js";
 import { deploymentSafetyAgent } from "./deployment/deploymentSafetyAgent.js";
+import { profitProtectionAgent } from "./telecom/profitProtectionAgent.js";
+import { ledgerConsistencyAgent } from "./telecom/ledgerConsistencyAgent.js";
+import { billingConsistencyAgent } from "./telecom/billingConsistencyAgent.js";
+import { economicTimelineConsistencyAgent } from "./telecom/economicTimelineConsistencyAgent.js";
+import { economicRecoveryAgent } from "./telecom/economicRecoveryAgent.js";
+import { stuckBillingAgent } from "./telecom/stuckBillingAgent.js";
+import { activeSessionReconciliationAgent } from "./telecom/activeSessionReconciliationAgent.js";
+import { telecomChaosAgent } from "./telecom/telecomChaosAgent.js";
 import { agentLog, compactError } from "./shared/agentLogger.js";
+import { claimAgentExecution, releaseAgentExecution, getAgentExecutionPolicy } from "../services/distributedAgentCoordinator.js";
+import { recordAgentRunDurationMs } from "../services/telecomBackpressureService.js";
+import { scheduleTelecomTask, TELECOM_PRIORITY } from "../services/telecomPriorityScheduler.js";
 
 const DEFAULT_LEASE_MS = 55_000;
 const OWNER_ID = `${os.hostname()}:${process.pid}:${crypto.randomUUID()}`;
@@ -22,11 +33,34 @@ const registeredAgents = [
   callGlobalReconciliationJob,
   liveStateSyncAgent,
   deploymentSafetyAgent,
+  profitProtectionAgent,
+  ledgerConsistencyAgent,
+  billingConsistencyAgent,
+  economicTimelineConsistencyAgent,
+  economicRecoveryAgent,
+  stuckBillingAgent,
+  activeSessionReconciliationAgent,
+  telecomChaosAgent,
 ];
 
 let started = false;
 let stopped = false;
 const timers = new Map();
+
+/** @type {Record<string, string>} */
+const AGENT_TELECOM_PRIORITY = {
+  "telecom-health-agent": TELECOM_PRIORITY.LOW,
+  "profit-protection-agent": TELECOM_PRIORITY.LOW,
+  "deployment-safety-agent": TELECOM_PRIORITY.MEDIUM,
+  "live-state-sync-agent": TELECOM_PRIORITY.HIGH,
+  "multi-tenant-isolation-agent": TELECOM_PRIORITY.HIGH,
+  "queue-recovery-agent": TELECOM_PRIORITY.HIGH,
+  "telecom-chaos-agent": TELECOM_PRIORITY.CRITICAL,
+};
+
+function telecomPriorityForAgent(name) {
+  return AGENT_TELECOM_PRIORITY[name] || TELECOM_PRIORITY.CRITICAL;
+}
 
 function isDisabled() {
   return String(process.env.PRODUCTION_AGENTS_ENABLED || "true").trim().toLowerCase() === "false";
@@ -85,15 +119,39 @@ async function markAgent(agent, patch) {
 
 async function runAgent(agent) {
   if (stopped) return;
+  const policy = getAgentExecutionPolicy(agent.name);
+  if (policy.skipRun) {
+    return;
+  }
+  const coordLeaseMs = Number(agent.leaseMs || DEFAULT_LEASE_MS);
+  const coord = await claimAgentExecution(agent.name, coordLeaseMs);
+  if (!coord.acquired) return;
   try {
     const hasLease = await acquireLease(agent);
     if (!hasLease) return;
 
     const startedAt = Date.now();
-    const metrics = await agent.run({
+    const ctx = {
       ownerId: OWNER_ID,
       log: (severity, event, details = {}) => agentLog(agent.name, severity, event, details),
-    });
+    };
+    const prio = telecomPriorityForAgent(agent.name);
+    const scheduled = await scheduleTelecomTask(prio, () => agent.run(ctx));
+    if (!scheduled.ok && scheduled.dropped) {
+      await markAgent(agent, {
+        status: "healthy",
+        lastRunAt: new Date(),
+        nextRunAt: new Date(Date.now() + Number(agent.intervalMs || 60_000)),
+        lastError: null,
+        metrics: { durationMs: Date.now() - startedAt, telecomTaskDropped: true },
+      });
+      recordAgentRunDurationMs(Date.now() - startedAt);
+      return;
+    }
+    if (!scheduled.ok) {
+      throw new Error(scheduled.error || "telecom_task_failed");
+    }
+    const metrics = scheduled.result;
     await markAgent(agent, {
       status: "healthy",
       lastRunAt: new Date(),
@@ -101,6 +159,7 @@ async function runAgent(agent) {
       lastError: null,
       metrics: { ...(metrics || {}), durationMs: Date.now() - startedAt },
     });
+    recordAgentRunDurationMs(Date.now() - startedAt);
   } catch (error) {
     await AgentRuntimeState.findOneAndUpdate(
       { agent: agent.name },
@@ -118,6 +177,10 @@ async function runAgent(agent) {
       { upsert: true }
     ).catch(() => {});
     agentLog(agent.name, "error", "agent_run_failed", { error: compactError(error) });
+  } finally {
+    if (coord.source === "redis") {
+      await releaseAgentExecution(agent.name, coord.ownerId).catch(() => {});
+    }
   }
 }
 

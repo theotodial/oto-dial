@@ -81,6 +81,50 @@ function buildReviewSchemaFromSections({ sections = [], organizationName = "" } 
   };
 }
 
+/** Default document SEO for the marketing homepage when CMS/API metadata is unavailable. */
+export const DEFAULT_HOME_DOCUMENT_SEO = {
+  meta: {
+    title: "Browser-Based Calling & Free US Virtual Number | OTODIAL",
+    description:
+      "OTODIAL delivers a free US virtual number with browser-based outbound calling and SMS — fair telecom credit billing, VoIP dialer controls, unlimited calling option. No VPN or LLC needed. Serious Google Voice alternative and TextNow alternative for cold calling software and remote sales teams dialing the United States.",
+    canonicalUrl: "https://otodial.com/",
+    ogTitle: "Browser-Based Calling & Free US Virtual Number | OTODIAL",
+    ogDescription:
+      "Cloud dialer SaaS with a free US virtual number, telecom credits, outbound calling, and SMS. Use anywhere with no VPN · no LLC · Google Voice alternative · TextNow alternative.",
+    twitterTitle: "Browser-Based Calling & Free US Virtual Number | OTODIAL",
+    twitterDescription:
+      "Virtual US numbers, browser dialer workflows, outbound calling software, telecom credits — honest US-only numbering without hidden global claims.",
+    ogImage: "",
+  },
+  keywords: [
+    "free US virtual number",
+    "US virtual phone number",
+    "cloud phone system",
+    "browser dialer",
+    "VoIP dialer",
+    "outbound calling software",
+    "sales dialer",
+    "cold calling software",
+    "cloud calling platform",
+    "business phone number",
+    "virtual US number",
+    "online phone number",
+    "Google Voice alternative",
+    "TextNow alternative",
+    "internet calling app",
+    "browser based softphone",
+    "remote sales dialer",
+    "web based calling",
+    "virtual number for freelancers",
+    "virtual number for remote workers",
+    "online SMS platform",
+    "telecom SaaS",
+    "VoIP calling platform",
+    "telecom credits",
+    "cloud dialer",
+  ],
+};
+
 export function applySeoSettingsToDocument(seo = {}, context = {}) {
   if (typeof document === "undefined") return;
   const meta = seo?.meta || {};

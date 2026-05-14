@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
+import { DashboardPageFallback } from './loadingFallbacks';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import { MobileSidebarContext } from '../context/MobileSidebarContext';
@@ -140,7 +141,7 @@ function DashboardLayout({ children }) {
             emailBannerPad ? 'pt-12 sm:pt-14' : 'pt-0'
           }`}
         >
-          {children}
+          <Suspense fallback={<DashboardPageFallback />}>{children}</Suspense>
         </div>
       </div>
     </MobileSidebarContext.Provider>

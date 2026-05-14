@@ -8,8 +8,10 @@
     "dev": "nodemon index.js",
     "start": "node index.js",
     "reconcile:subscriptions": "node scripts/runSubscriptionReconciliation.js",
+    "migrate:minutes-to-credits": "node scripts/migrateMinutesToCredits.mjs",
     "migrate:calls:missed-to-no-answer": "node scripts/migrateMissedCallsToNoAnswer.mjs",
-    "test": "node --test"
+    "test": "node --test --test-timeout=60000",
+    "production:verify": "node scripts/production-verify.mjs"
   },
   "keywords": [],
   "author": "",

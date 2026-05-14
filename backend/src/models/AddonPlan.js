@@ -8,10 +8,10 @@ const addonPlanSchema = new mongoose.Schema(
       unique: true
     },
 
-    // "minutes" or "sms"
+    // "minutes" or "sms" or "credits"
     type: {
       type: String,
-      enum: ["minutes", "sms"],
+      enum: ["minutes", "sms", "credits"],
       required: true
     },
 

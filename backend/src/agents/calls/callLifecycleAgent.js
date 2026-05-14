@@ -68,7 +68,7 @@ export const callLifecycleAgent = {
           callId: call._id,
           destination: call.phoneNumber,
           direction: call.direction,
-          status: to,
+          status: CALL_STATES.FAILED,
         }).catch(() => {});
         emitUserStateResyncRequired(call.user, {
           reason: "call_lifecycle_cleanup",

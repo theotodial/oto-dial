@@ -7,6 +7,10 @@ import {
   isTerminalStatus,
   normalizeCallStatus,
 } from "../utils/callStateMachine.js";
+import { telecomStructuredLog } from "../utils/telecomStructuredLog.js";
+import { recordTelecomEventSequence } from "./telecomSequenceService.js";
+import { broadcastAuthoritativeCallState } from "./socketConsistencyService.js";
+import { recordCallTransition } from "./telecomBackpressureService.js";
 
 function toDate(value) {
   if (!value) return null;
@@ -38,9 +42,9 @@ async function logLifecycle({
 }
 
 function logOutboundDialDebug(fields = {}) {
-  console.log("[OUTBOUND DIAL DEBUG]", {
+  telecomStructuredLog("[CALL FLOW]", {
+    sourcePath: "callTransitionService.js:applyCallTransition",
     ...fields,
-    timestamp: new Date().toISOString(),
   });
 }
 
@@ -50,11 +54,13 @@ function normalizeApplyResult(result) {
       ok: false,
       reason: result?.reason || "apply_failed",
       call: result?.call || null,
+      meta: null,
     };
   }
   return {
     ok: true,
     call: result?.call || null,
+    meta: result?.meta || null,
   };
 }
 
@@ -74,6 +80,9 @@ export async function applyCallTransition({
   logOutboundDialDebug({
     phase: "transition_enter",
     callId: callId ? String(callId) : null,
+    userId: null,
+    callControlId: null,
+    currentStatus: null,
     targetStatus: normalizedTargetStatus,
     accepted: null,
     rejectionReason: null,
@@ -88,6 +97,8 @@ export async function applyCallTransition({
       logOutboundDialDebug({
         phase: "not_found",
         callId: callId ? String(callId) : null,
+        userId: null,
+        callControlId: null,
         currentStatus: null,
         targetStatus: normalizedTargetStatus,
         accepted: false,
@@ -114,6 +125,8 @@ export async function applyCallTransition({
       logOutboundDialDebug({
         phase: "ordering_rejected",
         callId: String(call._id),
+        userId: call.user ? String(call.user) : null,
+        callControlId: call.telnyxCallControlId || null,
         currentStatus: from,
         targetStatus: to,
         accepted: false,
@@ -215,6 +228,8 @@ export async function applyCallTransition({
     logOutboundDialDebug({
       phase: "transition_applied",
       callId: String(call._id),
+      userId: call.user ? String(call.user) : null,
+      callControlId: call.telnyxCallControlId || null,
       currentStatus: from,
       targetStatus: to,
       accepted: true,
@@ -225,13 +240,15 @@ export async function applyCallTransition({
       transitionSource: source || null,
     });
 
-    return { ok: true, call };
+    return { ok: true, call, meta: { from, to } };
   });
   const out = normalizeApplyResult(locked);
   if (!out.ok) {
     logOutboundDialDebug({
       phase: "transition_exit_rejected",
       callId: callId ? String(callId) : null,
+      userId: out.call?.user ? String(out.call.user) : null,
+      callControlId: out.call?.telnyxCallControlId || null,
       currentStatus: out.call?.status || null,
       targetStatus: normalizedTargetStatus,
       accepted: false,
@@ -241,6 +258,35 @@ export async function applyCallTransition({
       eventType: eventType || null,
       transitionSource: source || null,
     });
+  }
+  if (out.ok && out.call?._id) {
+    const c = out.call;
+    const fromS = out.meta?.from != null ? normalizeCallStatus(out.meta.from) : normalizeCallStatus(c.status);
+    const toS = out.meta?.to != null ? normalizeCallStatus(out.meta.to) : normalizeCallStatus(c.status);
+    if (out.meta?.to != null && fromS !== toS) {
+      recordCallTransition();
+    }
+    void recordTelecomEventSequence({
+      callId: c._id,
+      provider: "internal",
+      providerEventId: null,
+      providerTimestamp: eventAt || new Date(),
+      receivedAt: new Date(),
+      eventType: eventType || "call_transition",
+      source: source || "call_transition_service",
+      orderingAccepted: true,
+      orderingReason: "transition_applied",
+      currentCallStatus: fromS,
+      nextCallStatus: toS,
+      duplicate: false,
+      metadata: { reason: reason || null, details: details || {} },
+    }).catch(() => {});
+    void broadcastAuthoritativeCallState({
+      callId: c._id,
+      userId: c.user,
+      source: "call_transition",
+      eventType: eventType || null,
+    }).catch(() => {});
   }
   return out;
 }

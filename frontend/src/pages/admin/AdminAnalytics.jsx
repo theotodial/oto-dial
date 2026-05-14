@@ -172,9 +172,9 @@ function AdminAnalytics() {
 
   if (loading) {
     return (
-      <div className="p-6">
+      <div className="p-6 min-h-full text-gray-900 dark:text-slate-100">
         <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 dark:border-indigo-400"></div>
         </div>
       </div>
     );
@@ -211,6 +211,11 @@ function AdminAnalytics() {
   const browsers = data?.browsers || [];
   const os = data?.os || [];
   const pages = data?.pages || [];
+  const voice = data?.voice || {};
+  const telecomRisk = data?.telecomRisk || {};
+  const highRiskUsers = telecomRisk?.highRiskUsers || [];
+  const topOutboundAttemptUsers = telecomRisk?.topOutboundAttemptUsers || [];
+  const negativeMarginUsers = telecomRisk?.negativeMarginUsers || [];
   const dailyVisitors = data?.dailyVisitors || [];
   const topIPs = data?.topIPs || [];
   const uniqueIpVisitors = Number(overview?.uniqueIpVisitors || 0);
@@ -229,11 +234,12 @@ function AdminAnalytics() {
     ? `Top source: ${buildSourceDisplayLabel(topSource.socialPlatform || topSource.source, topSource.influencerHandle || null)}`
     : `${(trafficSources.summary?.totalVisits || 0).toLocaleString()} tracked visits`;
 
-  // Card component - navigates to detail page
-  const MetricCard = ({ id, title, icon, value, subtitle, color, gradient }) => {
+  // Card component - navigates to detail page (`navigateTo` when a second card shares one detail view)
+  const MetricCard = ({ id, navigateTo, title, icon, value, subtitle, color, gradient }) => {
+    const routeId = navigateTo ?? id;
     return (
       <div 
-        onClick={() => handleCardClick(id)}
+        onClick={() => handleCardClick(routeId)}
         className={`bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm hover:shadow-lg hover:scale-[1.02] transition-all duration-300 cursor-pointer overflow-hidden ${gradient}`}
       >
         <div className="w-full p-6">
@@ -473,6 +479,21 @@ function AdminAnalytics() {
           gradient="bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-900/20 dark:to-blue-900/20"
         />
 
+        {/* Telecom Risk Card */}
+        <MetricCard
+          id="telecom-risk"
+          title="Telecom Risk & Margin"
+          icon={
+            <svg className="w-6 h-6 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
+            </svg>
+          }
+          value={highRiskUsers.length.toLocaleString()}
+          subtitle={`ASR ${Number(voice?.answerSeizureRatio || 0).toFixed(2)}% · Negative margin ${negativeMarginUsers.length}`}
+          color="text-rose-600 dark:text-rose-400"
+          gradient="bg-gradient-to-br from-rose-50 to-red-50 dark:from-rose-900/20 dark:to-red-900/20"
+        />
+
         {/* Page Performance Card */}
         <MetricCard
           id="pages"
@@ -501,6 +522,22 @@ function AdminAnalytics() {
           subtitle="Unique Visitor IPs"
           color="text-cyan-600 dark:text-cyan-400"
           gradient="bg-gradient-to-br from-cyan-50 to-teal-50 dark:from-cyan-900/20 dark:to-teal-900/20"
+        />
+
+        {/* Outbound Pressure Card */}
+        <MetricCard
+          id="telecom-outbound-pressure"
+          navigateTo="telecom-risk"
+          title="Outbound Pressure"
+          icon={
+            <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          }
+          value={Number(topOutboundAttemptUsers?.[0]?.outboundAttempts || 0).toLocaleString()}
+          subtitle="Highest outbound attempts (single user)"
+          color="text-amber-600 dark:text-amber-400"
+          gradient="bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20"
         />
       </div>
     </div>

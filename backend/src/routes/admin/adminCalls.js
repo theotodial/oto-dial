@@ -9,8 +9,14 @@ import {
 } from "../../services/adminLiveEventsService.js";
 import { ACTIVE_CALL_STATUSES } from "../../utils/callStateMachine.js";
 import CallLifecycleEvent from "../../models/CallLifecycleEvent.js";
+import ProcessedWebhookEvent from "../../models/ProcessedWebhookEvent.js";
 
 const router = express.Router();
+
+const CALL_HEARTBEAT_STALE_MS = Number(process.env.CALL_HEARTBEAT_STALE_MS || 120000);
+const AGENT_CALL_ACTIVE_STALE_MS = Number(
+  process.env.AGENT_CALL_ACTIVE_STALE_MS || 6 * 60 * 60 * 1000
+);
 
 router.get("/debug/live", requireAdmin, async (_req, res) => {
   try {
@@ -165,6 +171,157 @@ router.get("/debug/invalid-transitions", requireAdmin, async (req, res) => {
       success: false,
       error: "Failed to fetch invalid transition diagnostics",
     });
+  }
+});
+
+/**
+ * GET /api/admin/calls/runtime-health
+ * Aggregate-only diagnostics (no secrets).
+ */
+router.get("/runtime-health", requireAdmin, async (_req, res) => {
+  try {
+    const since1h = new Date(Date.now() - 60 * 60 * 1000);
+    const since5m = new Date(Date.now() - 5 * 60 * 1000);
+    const hbCutoff = new Date(Date.now() - CALL_HEARTBEAT_STALE_MS);
+    const reconStaleCutoff = new Date(Date.now() - AGENT_CALL_ACTIVE_STALE_MS);
+
+    const [
+      activeByStatus,
+      activeTotal,
+      outboundWebrtcHeartbeatStaleApprox,
+      orphanCandidatesStaleReconciliation,
+      staleEventIgnoredLastHour,
+      reconciliationRepairsLastHour,
+      invalidTransitionsLastHour,
+      telnyxVoiceDuplicateHintsLastHour,
+      activeCallsClientSyncedLast5m,
+    ] = await Promise.all([
+      Call.aggregate([
+        { $match: { status: { $in: ACTIVE_CALL_STATUSES } } },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
+      Call.countDocuments({ status: { $in: ACTIVE_CALL_STATUSES } }),
+      Call.countDocuments({
+        direction: "outbound",
+        source: "webrtc",
+        status: { $in: ACTIVE_CALL_STATUSES },
+        lastHeartbeatAt: { $exists: true, $ne: null, $lte: hbCutoff },
+      }),
+      Call.countDocuments({
+        status: { $in: ACTIVE_CALL_STATUSES },
+        updatedAt: { $lte: reconStaleCutoff },
+      }),
+      CallLifecycleEvent.countDocuments({
+        event: "stale_event_ignored",
+        timestamp: { $gte: since1h },
+      }),
+      CallLifecycleEvent.countDocuments({
+        action: "force_terminal_repair",
+        timestamp: { $gte: since1h },
+      }),
+      CallLifecycleEvent.countDocuments({
+        event: "invalid_transition",
+        timestamp: { $gte: since1h },
+      }),
+      ProcessedWebhookEvent.countDocuments({
+        provider: "telnyx:voice",
+        lastDuplicateAt: { $gte: since1h },
+      }),
+      Call.countDocuments({
+        status: { $in: ACTIVE_CALL_STATUSES },
+        lastClientSyncAt: { $gte: since5m },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      at: new Date().toISOString(),
+      redisConfigured: Boolean(String(process.env.REDIS_URL || "").trim()),
+      activeCallCount: activeTotal,
+      activeByStatus,
+      outboundWebrtcHeartbeatStaleApprox,
+      orphanCandidatesStaleReconciliation,
+      staleEventIgnoredLastHour,
+      reconciliationRepairsLastHour,
+      invalidTransitionsLastHour,
+      telnyxVoiceDuplicateHintsLastHour,
+      activeCallsClientSyncedLast5m,
+      notes: {
+        heartbeatStaleApprox:
+          "Count of active outbound WebRTC rows with lastHeartbeatAt older than CALL_HEARTBEAT_STALE_MS (may overlap heartbeat monitor).",
+        orphanCandidatesStaleReconciliation:
+          "Active calls with updatedAt older than AGENT_CALL_ACTIVE_STALE_MS (same shape as global reconciliation scan).",
+      },
+    });
+  } catch (err) {
+    console.error("Admin runtime-health error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch runtime health" });
+  }
+});
+
+/**
+ * GET /api/admin/calls/media-health
+ * Aggregate + recent in-memory admin debug tail (no secrets).
+ */
+router.get("/media-health", requireAdmin, async (_req, res) => {
+  try {
+    const recent = getRecentCallDebugEvents();
+    const recentAdminDebugMediaBridgeFailures = recent.filter(
+      (e) => e.eventType === "media.bridge_failed"
+    ).length;
+    const recentAdminDebugBridgeCommands = recent.filter(
+      (e) => e.eventType === "call.bridge.command"
+    ).length;
+
+    const [
+      activeParkedOutboundBridgeClaimedCount,
+      activeParkedOutboundAwaitingBridgeClaimCount,
+      answeredActiveWithoutBridgedAtCount,
+    ] = await Promise.all([
+      Call.countDocuments({
+        direction: "outbound",
+        source: "webrtc",
+        webrtcParkBridgeAttempted: true,
+        status: { $in: ACTIVE_CALL_STATUSES },
+      }),
+      Call.countDocuments({
+        direction: "outbound",
+        source: "webrtc",
+        webrtcParkPstnCallControlId: { $exists: true, $nin: [null, ""] },
+        webrtcParkBridgeAttempted: { $ne: true },
+        status: { $in: ["dialing", "ringing", "answered", "in-progress"] },
+      }),
+      Call.countDocuments({
+        direction: "outbound",
+        source: "webrtc",
+        status: { $in: ["answered", "in-progress"] },
+        callAnsweredAt: { $exists: true, $ne: null },
+        callBridgedAt: null,
+        webrtcParkPstnCallControlId: { $exists: true, $nin: [null, ""] },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      at: new Date().toISOString(),
+      recentAdminDebugEventBufferSize: recent.length,
+      recentAdminDebugBridgeCommands,
+      recentAdminDebugMediaBridgeFailures,
+      activeParkedOutboundBridgeClaimedCount,
+      activeParkedOutboundAwaitingBridgeClaimCount,
+      answeredActiveWithoutBridgedAtCount,
+      peerConnectionsNote:
+        "Active WebRTC peer connection counts are client-only; use browser console [WEBRTC FLOW] lines.",
+      recentSampleTail: recent.slice(0, 8).map((e) => ({
+        at: e.at,
+        eventType: e.eventType || e.kind || null,
+        callId: e.callId ? String(e.callId) : null,
+        state: e.state || null,
+      })),
+    });
+  } catch (err) {
+    console.error("Admin media-health error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch media health" });
   }
 });
 

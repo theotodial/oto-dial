@@ -47,9 +47,12 @@ async function initializePlans() {
         stripePriceId: STRIPE_PLAN_PRICE_IDS.basic,
         limits: {
           minutesTotal: 1500,
+          creditsTotal: 1500,
           smsTotal: 100,
           numbersTotal: 1
         },
+        monthlyCreditsLimit: 1500,
+        dailyCreditsLimit: 300,
         dedicatedNumbers: 1,
         displayUnlimited: false,
         active: true
@@ -64,9 +67,12 @@ async function initializePlans() {
         stripePriceId: STRIPE_PLAN_PRICE_IDS.super,
         limits: {
           minutesTotal: 2500,
+          creditsTotal: 2500,
           smsTotal: 200,
           numbersTotal: 1
         },
+        monthlyCreditsLimit: 2500,
+        dailyCreditsLimit: 500,
         dedicatedNumbers: 1,
         displayUnlimited: false,
         active: true
@@ -81,13 +87,16 @@ async function initializePlans() {
         stripePriceId: STRIPE_PLAN_PRICE_IDS[UNLIMITED_PLAN_TYPE],
         limits: {
           minutesTotal: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
+          creditsTotal: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
           smsTotal: UNLIMITED_INTERNAL_LIMITS.monthlySmsLimit,
           numbersTotal: UNLIMITED_INTERNAL_LIMITS.dedicatedNumbers
         },
         monthlySmsLimit: UNLIMITED_INTERNAL_LIMITS.monthlySmsLimit,
         monthlyMinutesLimit: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
+        monthlyCreditsLimit: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
         dailySmsLimit: UNLIMITED_INTERNAL_LIMITS.dailySmsLimit,
         dailyMinutesLimit: UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit,
+        dailyCreditsLimit: UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit,
         dedicatedNumbers: UNLIMITED_INTERNAL_LIMITS.dedicatedNumbers,
         displayUnlimited: true,
         active: true
@@ -102,13 +111,16 @@ async function initializePlans() {
         stripePriceId: STRIPE_PLAN_PRICE_IDS[AFFILIATE_UNLIMITED_PLAN_TYPE],
         limits: {
           minutesTotal: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
+          creditsTotal: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
           smsTotal: AFFILIATE_UNLIMITED_LIMITS.monthlySmsLimit,
           numbersTotal: AFFILIATE_UNLIMITED_LIMITS.dedicatedNumbers
         },
         monthlySmsLimit: AFFILIATE_UNLIMITED_LIMITS.monthlySmsLimit,
         monthlyMinutesLimit: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
+        monthlyCreditsLimit: AFFILIATE_UNLIMITED_LIMITS.monthlyMinutesLimit,
         dailySmsLimit: AFFILIATE_UNLIMITED_LIMITS.dailySmsLimit,
         dailyMinutesLimit: AFFILIATE_UNLIMITED_LIMITS.dailyMinutesLimit,
+        dailyCreditsLimit: AFFILIATE_UNLIMITED_LIMITS.dailyMinutesLimit,
         dedicatedNumbers: AFFILIATE_UNLIMITED_LIMITS.dedicatedNumbers,
         displayUnlimited: true,
         active: true
@@ -123,6 +135,7 @@ async function initializePlans() {
         stripePriceId: SMS_CAMPAIGN_STRIPE_PRICE_ID,
         limits: {
           minutesTotal: 0,
+          creditsTotal: 0,
           smsTotal: 1700,
           numbersTotal: 1
         },
@@ -143,6 +156,7 @@ async function initializePlans() {
         stripePriceId: SMS_CAMPAIGN_1000_STRIPE_PRICE_ID,
         limits: {
           minutesTotal: 0,
+          creditsTotal: 0,
           smsTotal: 1000,
           numbersTotal: 1
         },
@@ -199,6 +213,7 @@ async function initializePlans() {
 
       console.log(`   - Price: $${planData.price}/month`);
       console.log(`   - Limits: ${planData.limits.minutesTotal} minutes, ${planData.limits.smsTotal} SMS, ${planData.limits.numbersTotal} number(s)`);
+      console.log(`   - Credits included: ${planData.limits.creditsTotal ?? 0}`);
       console.log(`   - Stripe Product ID: ${planData.stripeProductId}`);
       console.log(`   - Stripe Price ID: ${planData.stripePriceId}`);
       console.log(`   - MongoDB ID: ${plan._id}\n`);
@@ -226,6 +241,33 @@ async function initializePlans() {
         currency: "USD",
         quantity: 500,
         stripePriceId: STRIPE_ADDON_PRICE_IDS.sms_500,
+        active: true
+      },
+      {
+        name: "Credit Pack 1000",
+        type: "credits",
+        price: 9.99,
+        currency: "USD",
+        quantity: 1000,
+        stripePriceId: "manual_credit_pack_1000",
+        active: true
+      },
+      {
+        name: "Credit Pack 2500",
+        type: "credits",
+        price: 19.99,
+        currency: "USD",
+        quantity: 2500,
+        stripePriceId: "manual_credit_pack_2500",
+        active: true
+      },
+      {
+        name: "Credit Pack 5000",
+        type: "credits",
+        price: 34.99,
+        currency: "USD",
+        quantity: 5000,
+        stripePriceId: "manual_credit_pack_5000",
         active: true
       }
     ];

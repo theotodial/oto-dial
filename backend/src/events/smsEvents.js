@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import Subscription from "../models/Subscription.js";
 import { getCanonicalUsage } from "../services/usage/getCanonicalUsage.js";
+import { evaluateCallAuthoritativeEmit, recordAuthoritativeEmitDelivered } from "../services/socketThrottleService.js";
 
 /** Internal hook for tests or workers (optional). */
 export const smsEventBus = new EventEmitter();
@@ -145,4 +146,23 @@ export function emitUserStateResyncRequired(userId, detail = {}) {
   };
   nsp.to(`user:${String(userId)}`).emit("state_resync_required", payload);
   smsEventBus.emit("state_resync_required", payload);
+}
+
+/**
+ * Canonical call snapshot for WebRTC / dialer parity (versioned).
+ * @param {import("mongoose").Types.ObjectId|string} userId
+ * @param {object} payload
+ */
+export function emitCallAuthoritativeState(userId, payload) {
+  if (!userId || !payload) return;
+  const decision = evaluateCallAuthoritativeEmit(userId, payload);
+  if (!decision.allow) return;
+  const nsp = userNamespace();
+  if (!nsp) return;
+  nsp.to(`user:${String(userId)}`).emit("call:authoritative_state", {
+    ...payload,
+    emittedAt: new Date().toISOString(),
+  });
+  recordAuthoritativeEmitDelivered(userId);
+  smsEventBus.emit("call:authoritative_state", { userId: String(userId), ...payload });
 }

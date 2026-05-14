@@ -27,6 +27,8 @@ import {
   SmsGuardError,
 } from "./smsGuardService.js";
 import { enqueueOutboundSms } from "./smsQueueService.js";
+import { getUserCreditSnapshot } from "./creditLedgerService.js";
+import { CREDIT_RULES } from "../config/creditConfig.js";
 
 /** Telnyx accepted send (carrier delivery tracked separately via webhooks). */
 function isOutboundSendCompleteForIdempotency(row) {
@@ -398,6 +400,19 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
         ok: false,
         error:
           "No SMS remaining. Please upgrade your plan or wait for your next billing cycle.",
+        status: 403,
+        retryable: false,
+      };
+    }
+
+    const creditSnapshot = await getUserCreditSnapshot(userId);
+    if (
+      !creditSnapshot ||
+      Number(creditSnapshot.remainingCredits || 0) < CREDIT_RULES.smsOutboundCharge
+    ) {
+      return {
+        ok: false,
+        error: "Insufficient telecom credits to send SMS.",
         status: 403,
         retryable: false,
       };

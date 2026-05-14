@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import PrefetchLink from './PrefetchLink';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import logo from '../assets/otodial-logo.png';
@@ -105,7 +106,7 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
         ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
       {/* Logo */}
-      <Link
+      <PrefetchLink
         to={homePath}
         className="mb-8 block px-1"
         onClick={() => setMobileMenuOpen(false)}
@@ -116,15 +117,13 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
           alt="OTO Dial"
           className="w-14 h-14 object-contain mx-auto hover:opacity-90 transition-opacity"
         />
-      </Link>
-
-      {/* Navigation Items */}
+      </PrefetchLink>
       <nav className="flex-1 flex flex-col items-center space-y-3 w-full px-3">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = location.pathname === item.path;
           return (
-            <Link
+            <PrefetchLink
               key={item.path}
               to={item.path}
               onClick={() => setMobileMenuOpen(false)}
@@ -141,14 +140,14 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
             >
               <Icon />
               <span className="text-[9px] mt-1 font-semibold uppercase tracking-wide">{item.label}</span>
-            </Link>
+            </PrefetchLink>
           );
         })}
       </nav>
 
       {/* Profile — compact round avatar */}
       <div className="mt-3 flex flex-col items-center px-3 w-full">
-        <Link
+        <PrefetchLink
           to="/profile"
           onClick={() => setMobileMenuOpen(false)}
           className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full
@@ -168,7 +167,7 @@ function Sidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) {
               {userInitials(display)}
             </span>
           )}
-        </Link>
+        </PrefetchLink>
         <span className="text-[8px] mt-0.5 font-semibold uppercase tracking-wide text-white/75 text-center max-w-[4.5rem] truncate">
           Profile
         </span>

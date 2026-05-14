@@ -302,6 +302,15 @@ export function AppStateProvider({ children }) {
     socket.on("sms:failed", onFailed);
     socket.on("state_resync_required", onStateResyncRequired);
 
+    const onAuthoritativeCall = (payload) => {
+      window.dispatchEvent(
+        new CustomEvent("otodial:call-authoritative-state", {
+          detail: payload && typeof payload === "object" ? payload : {},
+        })
+      );
+    };
+    socket.on("call:authoritative_state", onAuthoritativeCall);
+
     return () => {
       socket.off("sms:usage-updated", onUsage);
       socket.off("sms:queued", onQueued);
@@ -309,6 +318,7 @@ export function AppStateProvider({ children }) {
       socket.off("sms:delivered", onDelivered);
       socket.off("sms:failed", onFailed);
       socket.off("state_resync_required", onStateResyncRequired);
+      socket.off("call:authoritative_state", onAuthoritativeCall);
       socket.disconnect();
     };
   }, [requestBootstrapRefresh, user?._id, user?.id]);

@@ -41,9 +41,18 @@ const callSchema = new mongoose.Schema(
       default: false,
     },
 
+    /**
+     * Tenant owner. SECURITY-CRITICAL: a Call row may NEVER change tenants
+     * after creation. The placeholder pattern in the inbound webhook creates a
+     * row with `user: null` and then either binds an owner via `$setOnInsert`
+     * or transitions the row to FAILED; an existing row's `user` is never
+     * reassigned. The `immutable` flag enforces this at the schema layer for
+     * any code path that mutates an existing document via .save().
+     */
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
+      immutable: true,
     },
 
     /** Immutable number ownership for inbound routing correctness. */
@@ -189,6 +198,50 @@ const callSchema = new mongoose.Schema(
     usageCountedSeconds: {
       type: Number,
       default: 0
+    },
+    attemptChargedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    attemptChargeIdempotencyKey: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    durationCreditsCharged: {
+      type: Number,
+      default: 0,
+    },
+    durationBillingCursorAt: {
+      type: Date,
+      default: null,
+    },
+    durationBillingStoppedAt: {
+      type: Date,
+      default: null,
+    },
+    durationBillingLastEventAt: {
+      type: Date,
+      default: null,
+    },
+    creditReservationHeld: {
+      type: Number,
+      default: 0,
+    },
+    creditReservationReleasedAt: {
+      type: Date,
+      default: null,
+    },
+    riskPricing: {
+      reservationMultiplier: {
+        type: Number,
+        default: 1,
+      },
+      reservationHeld: {
+        type: Number,
+        default: 0,
+      },
     },
 
     carrierFee: {

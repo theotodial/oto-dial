@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import PrefetchLink from '../PrefetchLink';
 import { useState, useEffect } from 'react';
 import API from '../../api';
 import PlanFeatureBullet from '../PlanFeatureBullet';
@@ -22,7 +22,7 @@ const DEFAULT_MARKETING_PLANS = [
     description: "Perfect for individuals and small teams",
     features: [
       "Free Virtual Number",
-      "1,500 Voice Minutes",
+      "1,500 Telecom Credits",
       "100 SMS",
       "Email Support"
     ],
@@ -36,7 +36,7 @@ const DEFAULT_MARKETING_PLANS = [
     description: "For growing businesses and power users",
     features: [
       "Free Virtual Number",
-      "2,500 Voice Minutes",
+      "2,500 Telecom Credits",
       "200 SMS",
       "Email Support"
     ],
@@ -50,7 +50,7 @@ const DEFAULT_MARKETING_PLANS = [
     description: 'Unlimited outbound calling for power users',
     features: [
       { text: 'Free Virtual Number', included: true },
-      { text: 'Unlimited voice minutes', included: true },
+      { text: 'Unlimited telecom credits', included: true },
       { text: 'SMS not included', included: false },
       { text: 'Email Support', included: true },
     ],
@@ -104,28 +104,32 @@ function NewPricingSection() {
   }, []);
 
   return (
-    <section id="pricing" className="py-24 px-4 bg-white dark:bg-slate-900">
+    <section id="pricing" className="scroll-mt-24 py-20 md:py-24 px-4 bg-white dark:bg-slate-900">
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
-        <div className="text-center mb-16">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4 tracking-tight">
+        <div className="text-center mb-14 max-w-3xl mx-auto">
+          <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-[0.2em] mb-3">
+            Affordable telecom SaaS pricing
+          </p>
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-4 tracking-tight">
             Simple, transparent pricing
           </h2>
-          <p className="text-lg md:text-xl text-gray-600 dark:text-gray-400 max-w-2xl mx-auto leading-relaxed">
-            Choose the perfect plan for your business. No hidden fees, no surprises.
+          <p className="text-base md:text-lg text-gray-600 dark:text-gray-400 leading-relaxed">
+            Every paid plan includes a free US virtual number, browser-based calling, and fair telecom credit billing.
+            No hidden carrier fees, no surprise add-ons.
           </p>
         </div>
 
         {/* Pricing Cards */}
-        <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
+        <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
           {plans.map((plan) => (
             <div
               key={plan.name}
-              className={`relative bg-white dark:bg-slate-800 rounded-2xl ${
+              className={`relative bg-white dark:bg-slate-900 rounded-[1.35rem] ring-1 ring-black/[0.04] dark:ring-white/[0.06] ${
                 plan.popular
-                  ? 'border-2 border-indigo-600 shadow-2xl md:scale-105'
-                  : 'border border-gray-200 dark:border-slate-700 shadow-lg'
-              } p-8 hover:shadow-2xl transition-all duration-300`}
+                  ? 'border-2 border-indigo-600 shadow-2xl shadow-indigo-500/15 md:scale-[1.03]'
+                  : 'border border-gray-200 dark:border-slate-800 shadow-lg'
+              } p-7 md:p-8 hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-300`}
             >
               {/* Popular badge */}
               {plan.popular && (
@@ -137,15 +141,16 @@ function NewPricingSection() {
               )}
 
               {/* Plan name */}
-              <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{plan.name}</h3>
-              <p className="text-gray-600 dark:text-gray-400 mb-6">{plan.description}</p>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">{plan.name}</h3>
+              <p className="text-gray-600 dark:text-gray-400 mb-6 text-sm md:text-base">{plan.description}</p>
 
               {/* Price */}
-              <div className="mb-8">
+              <div className="mb-7 pb-6 border-b border-gray-100 dark:border-slate-800">
                 <div className="flex items-baseline">
-                  <span className="text-5xl font-bold text-gray-900 dark:text-white">${plan.price}</span>
-                  <span className="text-gray-600 dark:text-gray-400 ml-2">/month</span>
+                  <span className="text-5xl font-bold text-gray-900 dark:text-white tracking-tight">${plan.price}</span>
+                  <span className="text-gray-500 dark:text-gray-400 ml-2 text-sm">/month</span>
                 </div>
+                <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">Billed monthly · cancel anytime</p>
               </div>
 
               {/* Features */}
@@ -156,20 +161,23 @@ function NewPricingSection() {
               </ul>
 
               {/* CTA Button */}
-              <Link
+              <PrefetchLink
                 to="/billing"
                 className={`block w-full text-center py-3 px-6 rounded-xl font-semibold transition-all duration-200 ${
                   plan.popular
-                    ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg hover:shadow-xl'
-                    : 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-slate-600'
+                    ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/30'
+                    : 'bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-slate-700'
                 }`}
               >
                 {plan.cta}
-              </Link>
+              </PrefetchLink>
             </div>
           ))}
         </div>
 
+        <p className="text-center text-xs md:text-sm text-gray-500 dark:text-gray-500 mt-10">
+          Free US virtual number · Browser-based calling · No VPN · No LLC · No SIM
+        </p>
       </div>
     </section>
   );

@@ -1,5 +1,7 @@
 import express from "express";
 import { sendOutboundSms } from "../services/smsOutboundService.js";
+import { getUserCreditSnapshot } from "../services/creditLedgerService.js";
+import { CREDIT_RULES } from "../config/creditConfig.js";
 
 const router = express.Router();
 
@@ -66,8 +68,15 @@ router.post("/send", async (req, res) => {
   });
 
   if (!result.ok) {
+    const creditSnapshot = await getUserCreditSnapshot(req.userId).catch(() => null);
     return res.status(result.status || 500).json({
       error: result.error,
+      ...(creditSnapshot
+        ? {
+            requiredCredits: CREDIT_RULES.smsOutboundCharge,
+            remainingCredits: creditSnapshot.remainingCredits,
+          }
+        : {}),
       ...(result.mongoId ? { mongoId: result.mongoId } : {}),
       ...(result.countryLocked
         ? { countryLocked: true, sourceCountry: result.sourceCountry }

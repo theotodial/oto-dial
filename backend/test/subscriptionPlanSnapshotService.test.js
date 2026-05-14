@@ -25,6 +25,7 @@ test("buildSubscriptionPlanSnapshot applies unlimited defaults for internal limi
   assert.equal(snapshot.dailyMinutesLimit, UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit);
   assert.deepEqual(snapshot.limits, {
     minutesTotal: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
+    creditsTotal: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
     smsTotal: UNLIMITED_INTERNAL_LIMITS.monthlySmsLimit,
     numbersTotal: 1
   });
@@ -58,6 +59,7 @@ test("applyPlanSnapshotToSubscription maps unlimited plan metadata for assignmen
   assert.equal(subscription.planName, "Unlimited");
   assert.deepEqual(subscription.limits, {
     minutesTotal: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
+    creditsTotal: UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit,
     smsTotal: UNLIMITED_INTERNAL_LIMITS.monthlySmsLimit,
     numbersTotal: 1
   });

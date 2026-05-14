@@ -9,6 +9,7 @@ import {
   invalidateUserSubscriptionCache,
   loadLatestSubscriptionDocument,
 } from "../services/subscriptionService.js";
+import { computeProjectedUserBalance } from "../services/projectedBalanceService.js";
 import { applyUserEntitlementsForPlan } from "../services/userPlanEntitlementsService.js";
 
 const router = express.Router();
@@ -27,6 +28,7 @@ const getSubscriptionHandler = async (req, res) => {
       return res.json({
         planName: "No Plan",
         minutesRemaining: 0,
+        creditsRemaining: 0,
         smsRemaining: 0,
         status: "inactive",
         isActive: false,
@@ -58,6 +60,9 @@ const getSubscriptionHandler = async (req, res) => {
       planType: subscription.planType || (unlimited ? "unlimited" : null),
       displayUnlimited: unlimited,
       minutesRemaining: unlimited ? "∞" : subscription.minutesRemaining,
+      creditsRemaining: unlimited
+        ? "∞"
+        : Number(subscription.creditsRemaining ?? subscription.minutesRemaining ?? 0),
       smsRemaining: unlimited ? "∞" : subscription.smsRemaining,
       status: subscription.status || "active",
       isActive: subscription.status === "active",
@@ -68,6 +73,9 @@ const getSubscriptionHandler = async (req, res) => {
         ? { numbersTotal: Number(subscription.limits?.numbersTotal ?? 0) }
         : subscription.limits,
       totalMinutes: unlimited ? null : Number(subscription.limits?.minutesTotal ?? 0),
+      totalCredits: unlimited
+        ? null
+        : Number(subscription.limits?.creditsTotal ?? subscription.limits?.minutesTotal ?? 0),
       totalSMS: unlimited ? null : Number(subscription.limits?.smsTotal ?? 0),
       subscription: safeSubscription
     });
@@ -79,6 +87,21 @@ const getSubscriptionHandler = async (req, res) => {
 
 router.get("/", getSubscriptionHandler);
 router.get("/current", getSubscriptionHandler);
+
+/**
+ * GET /api/subscription/projected-balance
+ * Read-only realtime exposure for dialer / billing UI.
+ */
+router.get("/projected-balance", async (req, res) => {
+  try {
+    const userId = req.userId;
+    const projection = await computeProjectedUserBalance(userId);
+    res.json({ success: true, ...projection });
+  } catch (err) {
+    console.error("[subscription] projected-balance", err);
+    res.status(500).json({ success: false, error: "Failed to compute projected balance" });
+  }
+});
 
 /**
  * GET /api/subscription/activation-health

@@ -26,6 +26,9 @@ router.get("/plans", async (req, res) => {
         price: plan.price,
         currency: plan.currency,
         limits: plan.limits,
+        creditsIncluded: Number(
+          plan.limits?.creditsTotal ?? plan.monthlyCreditsLimit ?? plan.limits?.minutesTotal ?? 0
+        ),
         stripeProductId: plan.stripeProductId,
         stripePriceId: plan.stripePriceId,
         smsCampaignPlan: Boolean(plan.smsCampaignPlan),

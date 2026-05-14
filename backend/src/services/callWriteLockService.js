@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
 import { getRedisClient } from "./cache.service.js";
+import { telecomStructuredLog } from "../utils/telecomStructuredLog.js";
 
 const LOCAL_LOCKS = new Map();
 const DEFAULT_LOCK_MS = Number(process.env.CALL_WRITE_LOCK_MS || 8000);
+const MAX_WAIT_MS = Number(process.env.CALL_WRITE_LOCK_WAIT_MAX_MS || 12000);
 const POLL_MS = 30;
 
 function sleep(ms) {
@@ -55,7 +57,8 @@ export async function withCallWriteLock(callId, fn, options = {}) {
   const lockKey = `lock:call:${lockId}`;
   const ownerId = randomUUID();
   const leaseMs = Math.max(500, Number(options.leaseMs || DEFAULT_LOCK_MS));
-  const timeoutMs = Math.max(100, Number(options.timeoutMs || leaseMs));
+  const requested = Math.max(100, Number(options.timeoutMs || leaseMs));
+  const timeoutMs = Math.min(requested, MAX_WAIT_MS);
   const started = Date.now();
   let acquired = false;
   let mode = "memory";
@@ -80,6 +83,17 @@ export async function withCallWriteLock(callId, fn, options = {}) {
       lockKey,
       mode,
       reason: "lock_not_acquired",
+    });
+    telecomStructuredLog("[CLEANUP FLOW]", {
+      callId: lockId,
+      userId: null,
+      callControlId: null,
+      currentStatus: null,
+      eventType: "call_write_lock_skipped",
+      sourcePath: "callWriteLockService.js:withCallWriteLock",
+      mode,
+      leaseMs,
+      timeoutMs,
     });
     return { ok: false, reason: "call_write_lock_skipped" };
   }

@@ -121,6 +121,20 @@ const smsSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    creditsCharged: {
+      type: Number,
+      default: 0,
+    },
+    creditsChargedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    creditChargeIdempotencyKey: {
+      type: String,
+      default: null,
+      index: true,
+    },
 
     moderationStatus: {
       type: String,

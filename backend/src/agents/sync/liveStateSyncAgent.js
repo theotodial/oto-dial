@@ -3,6 +3,7 @@ import Call from "../../models/Call.js";
 import Subscription from "../../models/Subscription.js";
 import { emitUserStateResyncRequired } from "../../events/smsEvents.js";
 import { ACTIVE_CALL_STATUSES } from "../../utils/callStateMachine.js";
+import { shouldSuppressNonCriticalWebhookWork } from "../../services/webhookBurstProtectionService.js";
 
 const AGENT = "live-state-sync-agent";
 
@@ -12,6 +13,10 @@ export const liveStateSyncAgent = {
   leaseMs: Number(process.env.AGENT_LIVE_SYNC_LEASE_MS || 90 * 1000),
 
   async run({ log }) {
+    if (shouldSuppressNonCriticalWebhookWork("parity_refresh")) {
+      log("info", "live_state_sync_skipped_load", {});
+      return { skipped: true, reason: "parity_refresh_suppressed" };
+    }
     const cutoff = new Date(Date.now() - Number(process.env.AGENT_LIVE_SYNC_STALE_MS || 10 * 60 * 1000));
     const [recentSmsUsers, activeCallUsers, recentlyUpdatedSubs] = await Promise.all([
       SMS.distinct("user", { updatedAt: { $gte: cutoff } }),

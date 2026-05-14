@@ -45,6 +45,10 @@ const planSchema = new mongoose.Schema(
         type: Number,
         required: true
       },
+      creditsTotal: {
+        type: Number,
+        default: 0
+      },
       smsTotal: {
         type: Number,
         required: true
@@ -64,6 +68,10 @@ const planSchema = new mongoose.Schema(
       type: Number,
       default: null
     },
+    monthlyCreditsLimit: {
+      type: Number,
+      default: null
+    },
 
     dailySmsLimit: {
       type: Number,
@@ -71,6 +79,10 @@ const planSchema = new mongoose.Schema(
     },
 
     dailyMinutesLimit: {
+      type: Number,
+      default: null
+    },
+    dailyCreditsLimit: {
       type: Number,
       default: null
     },

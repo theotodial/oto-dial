@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Navbar from './Navbar';
@@ -8,66 +9,77 @@ import PublicRoute from './PublicRoute';
 import GlobalCallOverlay from './GlobalCallOverlay';
 import EmailVerificationBanner from './EmailVerificationBanner';
 import AnalyticsTracker from './AnalyticsTracker';
-import Home from '../pages/Home';
-import Signup from '../pages/Signup';
-import Login from '../pages/Login';
-import ForgotPassword from '../pages/ForgotPassword';
-import ResetPassword from '../pages/ResetPassword';
-import OAuthConsent from '../pages/OAuthConsent';
-import OAuthSuccess from '../pages/OAuthSuccess';
-import Recents from '../pages/Recents';
-import Campaign from '../pages/Campaign';
 import { CampaignProvider } from '../context/CampaignContext';
-import Dashboard from '../pages/Dashboard';
-import Contacts from '../pages/Contacts';
-import Billing from '../pages/Billing';
-import BuyNumber from '../pages/BuyNumber';
-import SubscriptionDetails from '../pages/SubscriptionDetails';
-import Profile from '../pages/Profile';
-import Support from '../pages/Support';
-import Contact from '../pages/Contact';
-import Privacy from '../pages/Privacy';
-import Terms from '../pages/Terms';
 import AffiliateProtectedRoute from './AffiliateProtectedRoute';
-import AffiliateLanding from '../pages/AffiliateLanding';
-import AffiliateSignup from '../pages/AffiliateSignup';
-import AffiliateLogin from '../pages/AffiliateLogin';
-import AffiliateOAuthSuccess from '../pages/AffiliateOAuthSuccess';
-import AffiliateDashboard from '../pages/AffiliateDashboard';
-import AdminLogin from '../pages/admin/AdminLogin';
-import AdminAnalytics from '../pages/admin/AdminAnalytics';
-import AdminAnalyticsDetail from '../pages/admin/AdminAnalyticsDetail';
-import AdminAffiliates from '../pages/admin/AdminAffiliates';
-import AdminBlog from '../pages/admin/AdminBlog';
-import AdminCalls from '../pages/admin/AdminCalls';
-import AdminDashboardEnterprise from '../pages/admin/AdminDashboardEnterprise';
-import AdminNotifications from '../pages/admin/AdminNotifications';
-import AdminNumbers from '../pages/admin/AdminNumbers';
-import OtoAgents from '../pages/admin/OtoAgents';
-import AdminSms from '../pages/admin/AdminSms';
-import AdminSmsApproval from '../pages/admin/AdminSmsApproval';
-import AdminSupport from '../pages/admin/AdminSupport';
-import AdminSystemHealth from '../pages/admin/AdminSystemHealth';
-import AdminTeam from '../pages/admin/AdminTeam';
-import AdminUserDetail from '../pages/admin/AdminUserDetail';
-import AdminUsers from '../pages/admin/AdminUsers';
-import SiteBuilder from '../pages/admin/site/SiteBuilder';
-import SiteEnvironment from '../pages/admin/site/SiteEnvironment';
-import SiteSeo from '../pages/admin/site/SiteSeo';
-import Blog from '../pages/Blog';
-import BlogPost from '../pages/BlogPost';
 import AdminProtectedRoute from './AdminProtectedRoute';
 import AdminLayout from './AdminLayout';
 import SkeletonApp from './SkeletonApp';
+import RouteFallback from './loadingFallbacks';
+import {
+  Home,
+  Signup,
+  Login,
+  ForgotPassword,
+  ResetPassword,
+  OAuthConsent,
+  OAuthSuccess,
+  Recents,
+  Campaign,
+  Dashboard,
+  Contacts,
+  Billing,
+  BuyNumber,
+  SubscriptionDetails,
+  Profile,
+  Support,
+  Contact,
+  Privacy,
+  Terms,
+  AffiliateLanding,
+  AffiliateSignup,
+  AffiliateLogin,
+  AffiliateOAuthSuccess,
+  AffiliateDashboard,
+  AdminLogin,
+  AdminAnalytics,
+  AdminAnalyticsDetail,
+  AdminProfitabilityTools,
+  AdminAffiliates,
+  AdminBlog,
+  AdminCalls,
+  AdminDashboardEnterprise,
+  AdminNotifications,
+  AdminNumbers,
+  OtoAgents,
+  AdminSms,
+  AdminSmsApproval,
+  AdminSupport,
+  AdminSystemHealth,
+  AdminLaunchHealth,
+  AdminTeam,
+  AdminUserDetail,
+  AdminUsers,
+  SiteBuilder,
+  SiteEnvironment,
+  SiteSeo,
+  Blog,
+  BlogPost,
+} from '../routes/lazyPages';
 
 function HomeOrRedirect() {
   const { token, user, hydrated } = useAuth();
-  if (!token) return <Home />;
+  if (!token) {
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <Home />
+      </Suspense>
+    );
+  }
   if (!hydrated) return <SkeletonApp />;
   const f = user?.features || { voiceEnabled: true, campaignEnabled: false };
   const voice = f.voiceEnabled !== false;
   const camp = Boolean(f.campaignEnabled);
-  if (user?.mode === "campaign") return <Navigate to="/campaign" replace />;
+  if (user?.mode === 'campaign') return <Navigate to="/campaign" replace />;
   if (voice) return <Navigate to="/recents" replace />;
   if (camp) return <Navigate to="/campaign" replace />;
   return <Navigate to="/dashboard" replace />;
@@ -86,7 +98,9 @@ export default function AppShell() {
           element={
             <PublicRoute>
               <Navbar />
-              <Login />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <Login />
+              </Suspense>
             </PublicRoute>
           }
         />
@@ -95,35 +109,165 @@ export default function AppShell() {
           element={
             <PublicRoute>
               <Navbar />
-              <Signup />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <Signup />
+              </Suspense>
             </PublicRoute>
           }
         />
-        <Route path="/forgot-password" element={<><Navbar /><ForgotPassword /></>} />
-        <Route path="/reset-password" element={<><Navbar /><ResetPassword /></>} />
-        <Route path="/contact" element={<><Navbar /><Contact /></>} />
-        <Route path="/privacy" element={<><Navbar /><Privacy /></>} />
-        <Route path="/terms" element={<><Navbar /><Terms /></>} />
-        <Route path="/affiliate" element={<><Navbar /><AffiliateLanding /></>} />
-        <Route path="/affiliate/signup" element={<><Navbar /><AffiliateSignup /></>} />
-        <Route path="/affiliate/login" element={<><Navbar /><AffiliateLogin /></>} />
-        <Route path="/affiliate/oauth-success" element={<AffiliateOAuthSuccess />} />
+        <Route
+          path="/forgot-password"
+          element={
+            <>
+              <Navbar />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <ForgotPassword />
+              </Suspense>
+            </>
+          }
+        />
+        <Route
+          path="/reset-password"
+          element={
+            <>
+              <Navbar />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <ResetPassword />
+              </Suspense>
+            </>
+          }
+        />
+        <Route
+          path="/contact"
+          element={
+            <>
+              <Navbar />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <Contact />
+              </Suspense>
+            </>
+          }
+        />
+        <Route
+          path="/privacy"
+          element={
+            <>
+              <Navbar />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <Privacy />
+              </Suspense>
+            </>
+          }
+        />
+        <Route
+          path="/terms"
+          element={
+            <>
+              <Navbar />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <Terms />
+              </Suspense>
+            </>
+          }
+        />
+        <Route
+          path="/affiliate"
+          element={
+            <>
+              <Navbar />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <AffiliateLanding />
+              </Suspense>
+            </>
+          }
+        />
+        <Route
+          path="/affiliate/signup"
+          element={
+            <>
+              <Navbar />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <AffiliateSignup />
+              </Suspense>
+            </>
+          }
+        />
+        <Route
+          path="/affiliate/login"
+          element={
+            <>
+              <Navbar />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <AffiliateLogin />
+              </Suspense>
+            </>
+          }
+        />
+        <Route
+          path="/affiliate/oauth-success"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <AffiliateOAuthSuccess />
+            </Suspense>
+          }
+        />
         <Route
           path="/affiliate/dashboard"
           element={
             <AffiliateProtectedRoute>
-              <AffiliateDashboard />
+              <Suspense fallback={<RouteFallback />}>
+                <AffiliateDashboard />
+              </Suspense>
             </AffiliateProtectedRoute>
           }
         />
-        <Route path="/blog" element={<Blog />} />
-        <Route path="/blog/:slug" element={<BlogPost />} />
-        <Route path="/oauth/consent" element={<OAuthConsent />} />
-        <Route path="/oauth-success" element={<><Navbar /><OAuthSuccess /></>} />
+        <Route
+          path="/blog"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <Blog />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/blog/:slug"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <BlogPost />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/oauth/consent"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <OAuthConsent />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/oauth-success"
+          element={
+            <>
+              <Navbar />
+              <Suspense fallback={<RouteFallback belowNav />}>
+                <OAuthSuccess />
+              </Suspense>
+            </>
+          }
+        />
 
-        <Route path="/adminbobby" element={<AdminLogin />} />
+        <Route
+          path="/adminbobby"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <AdminLogin />
+            </Suspense>
+          }
+        />
         <Route path="/adminbobby/dashboard" element={<AdminProtectedRoute><AdminLayout><AdminDashboardEnterprise /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/system-health" element={<AdminProtectedRoute><AdminLayout><AdminSystemHealth /></AdminLayout></AdminProtectedRoute>} />
+        <Route path="/adminbobby/launch-health" element={<AdminProtectedRoute><AdminLayout><AdminLaunchHealth /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/oto-agents" element={<AdminProtectedRoute><AdminLayout><OtoAgents /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/users" element={<AdminProtectedRoute><AdminLayout><AdminUsers /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/users/:id" element={<AdminProtectedRoute><AdminLayout><AdminUserDetail /></AdminLayout></AdminProtectedRoute>} />
@@ -136,6 +280,7 @@ export default function AppShell() {
         <Route path="/adminbobby/blog" element={<AdminProtectedRoute><AdminLayout><AdminBlog /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/blog/:id" element={<AdminProtectedRoute><AdminLayout><AdminBlog /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/blog/new" element={<AdminProtectedRoute><AdminLayout><AdminBlog /></AdminLayout></AdminProtectedRoute>} />
+        <Route path="/adminbobby/analytics/profitability-tools" element={<AdminProtectedRoute><AdminLayout><AdminProfitabilityTools /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/analytics" element={<AdminProtectedRoute><AdminLayout><AdminAnalytics /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/analytics/:category" element={<AdminProtectedRoute><AdminLayout><AdminAnalyticsDetail /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/affiliates" element={<AdminProtectedRoute><AdminLayout><AdminAffiliates /></AdminLayout></AdminProtectedRoute>} />

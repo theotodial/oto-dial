@@ -55,7 +55,7 @@ export function getPlanFeatureBullets(plan) {
   if (isCatalogUnlimitedPlan(plan)) {
     return [
       { text: "Free Virtual Number", included: true },
-      { text: "Unlimited voice minutes", included: true },
+      { text: "Unlimited telecom credits", included: true },
       { text: "SMS not included", included: false },
       { text: "Email support", included: true },
     ];
@@ -65,16 +65,19 @@ export function getPlanFeatureBullets(plan) {
     return [
       { text: "Free Virtual Number", included: true },
       { text: `${s.toLocaleString()} SMS (inbound + outbound)`, included: true },
-      { text: "No voice minutes — SMS only", included: true },
+      { text: "No call credits — SMS only", included: true },
       { text: "Pro campaign: templates & analytics", included: true },
       { text: "Email support", included: true },
     ];
   }
-  const m = Math.max(0, Number(plan?.limits?.minutesTotal ?? 0));
+  const c = Math.max(
+    0,
+    Number(plan?.limits?.creditsTotal ?? plan?.creditsIncluded ?? plan?.limits?.minutesTotal ?? 0)
+  );
   const s = Math.max(0, Number(plan?.limits?.smsTotal ?? 0));
   return [
     { text: "Free Virtual Number", included: true },
-    { text: `${m.toLocaleString()} Voice Minutes`, included: true },
+    { text: `${c.toLocaleString()} Telecom Credits`, included: true },
     { text: `${s.toLocaleString()} SMS`, included: true },
     { text: "Email Support", included: true },
   ];

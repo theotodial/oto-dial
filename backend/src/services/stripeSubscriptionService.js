@@ -24,6 +24,7 @@ import {
 import { getServerDayKey } from "./unlimitedUsageService.js";
 import { getLatestSubscription } from "./subscriptionService.js";
 import { applyUserEntitlementsForPlan } from "./userPlanEntitlementsService.js";
+import { applyBillingEvent } from "./billingEnforcementGateway.js";
 
 const MUTABLE_MONGO_STATUSES = ["active", "pending_activation", "past_due", "incomplete"];
 const REPAIRABLE_STRIPE_STATUSES = new Set(["active", "trialing", "past_due", "incomplete"]);
@@ -442,6 +443,15 @@ async function activateSubscriptionAtomic({
   invoiceId = null,
   stripeSubscriptionId = null
 }) {
+  const planCredits = Math.max(
+    0,
+    Number(
+      subscription.monthlyCreditsLimit ??
+        subscription.limits?.creditsTotal ??
+        subscription.limits?.minutesTotal ??
+        0
+    )
+  );
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -496,6 +506,24 @@ async function activateSubscriptionAtomic({
     session.endSession();
 
     await updateAnalyticsForActivatedSubscription(user._id, target._id);
+    if (planCredits > 0 && invoiceId) {
+      await applyBillingEvent({
+        userId: user._id,
+        amount: planCredits,
+        type: "subscription_credit_grant",
+        reason: "stripe_invoice_paid_subscription_renewal",
+        metadata: {
+          subscriptionId: String(target._id),
+          invoiceId: String(invoiceId),
+          stripeSubscriptionId: stripeSubscriptionId || target.stripeSubscriptionId || null,
+        },
+        idempotencyKey: `subgrant:${String(target._id)}:${String(invoiceId)}`,
+        allowNegative: true,
+        sourceService: "stripeSubscriptionService.applyRenewalCredits",
+      }).catch((err) => {
+        console.warn("⚠️ subscription credit grant failed:", err?.message || err);
+      });
+    }
 
     const planDoc = await Plan.findById(target.planId).lean();
     if (planDoc) {
@@ -563,11 +591,32 @@ async function applyAddonFromCheckoutSession(session) {
 
     subscription.addons.sms = (subscription.addons?.sms || 0) + addonQuantity;
     subscription.addonsSmsExpiry = newExpiry;
+  } else if (addonType === "credits") {
+    subscription.addons.credits = (subscription.addons?.credits || 0) + addonQuantity;
   } else {
     throw new Error(`Unknown add-on type: ${addonType}`);
   }
 
   await subscription.save();
+  if (addonType === "credits" && addonQuantity > 0) {
+    await applyBillingEvent({
+      userId: user._id,
+      amount: addonQuantity,
+      type: "add_on_purchase",
+      reason: "stripe_addon_credit_pack",
+      metadata: {
+        subscriptionId: String(subscription._id),
+        addonId: String(addon._id),
+        addonType,
+        addonQuantity,
+      },
+      idempotencyKey: `addon:${String(session.id)}:${String(addon._id)}`,
+      allowNegative: true,
+      sourceService: "stripeSubscriptionService.applyAddonFromCheckoutSession",
+    }).catch((err) => {
+      console.warn("⚠️ add-on credit grant failed:", err?.message || err);
+    });
+  }
 
   return {
     userId: user._id,

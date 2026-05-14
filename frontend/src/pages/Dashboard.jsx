@@ -68,7 +68,7 @@ function Dashboard() {
   const [balance, setBalance] = useState(0);
   const [numbers, setNumbers] = useState([]);
   const [packageDetails, setPackageDetails] = useState({
-    remainingMinutes: 0,
+    remainingCredits: 0,
     remainingSMS: 0,
     planName: 'No Plan',
     unlimitedMinutesDisplay: false,
@@ -97,7 +97,7 @@ function Dashboard() {
 
     if (!hasRow) {
       setPackageDetails({
-        remainingMinutes: 0,
+        remainingCredits: 0,
         remainingSMS: 0,
         planName: 'No Plan',
         unlimitedMinutesDisplay: false,
@@ -113,7 +113,7 @@ function Dashboard() {
     const unlimitedSms = subscription.unlimitedSmsDisplay ?? legacyAll;
 
     setPackageDetails({
-      remainingMinutes: unlimitedMinutes ? '∞' : (usage?.minutesRemaining ?? 0),
+      remainingCredits: unlimitedMinutes ? '∞' : Math.round(usage?.creditsRemaining ?? usage?.minutesRemaining ?? 0),
       remainingSMS: unlimitedSms ? '∞' : (usage?.smsRemaining ?? 0),
       planName: subscription.planName || 'No Plan',
       unlimitedMinutesDisplay: unlimitedMinutes,
@@ -332,11 +332,11 @@ function Dashboard() {
           <div className="space-y-3 mb-4">
             {!isSmsCampaignPlan && (
               <div className="flex items-center justify-between">
-                <span className="text-sm opacity-90">Remaining Minutes</span>
+                <span className="text-sm opacity-90">Remaining Credits</span>
                 <span className="text-2xl font-bold">
                   {packageDetails.unlimitedMinutesDisplay
                     ? '∞'
-                    : parseFloat(packageDetails?.remainingMinutes || 0).toFixed(2)}
+                    : Number(packageDetails?.remainingCredits || 0)}
                 </span>
               </div>
             )}
@@ -440,7 +440,9 @@ function Dashboard() {
                       <span>
                         <span className="font-semibold block">
                           {addon.type === 'minutes'
-                            ? `${addon.quantity.toLocaleString()} extra minutes`
+                            ? `${addon.quantity.toLocaleString()} legacy minutes`
+                            : addon.type === 'credits'
+                            ? `${addon.quantity.toLocaleString()} telecom credits`
                             : `${addon.quantity.toLocaleString()} extra SMS`}
                         </span>
                         <span className="text-xs opacity-80">30 days after purchase</span>
@@ -619,10 +621,10 @@ function Dashboard() {
             >
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                  Need more minutes or SMS?
+                  Need more telecom credits?
                 </p>
                 <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">
-                  Open add-ons — top up anytime. 30-day add-on window after purchase.
+                  Open add-ons — top up telecom credits anytime. 30-day add-on window after purchase.
                 </p>
               </div>
               <span className="flex-shrink-0 text-indigo-600 dark:text-indigo-400 font-medium text-xs">

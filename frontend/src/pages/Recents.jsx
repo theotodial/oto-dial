@@ -233,12 +233,17 @@ function Recents() {
   const isManuallyEnabled = Boolean(
     subscription?.isManuallyEnabled ??
       (Number(subscription?.limits?.smsTotal ?? 0) > 0 ||
-        Number(subscription?.limits?.minutesTotal ?? 0) > 0)
+        Number(subscription?.limits?.creditsTotal ?? subscription?.limits?.minutesTotal ?? 0) > 0)
   );
   const subscriptionUsable = billingUiActive || isManuallyEnabled;
   const subscriptionData = {
     remainingSMS: usage?.smsRemaining ?? subscription?.smsRemaining ?? 0,
-    minutesRemaining: usage?.minutesRemaining ?? subscription?.minutesRemaining ?? 0,
+    creditsRemaining:
+      usage?.creditsRemaining ??
+      usage?.minutesRemaining ??
+      subscription?.creditsRemaining ??
+      subscription?.minutesRemaining ??
+      0,
     planName: subscription?.planName || 'No Plan',
   };
 

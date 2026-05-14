@@ -23,8 +23,10 @@ const ChevronUpIcon = () => (
 
 const navItems = [
   { path: '/adminbobby/dashboard', label: 'Dashboard', role: 'dashboard' },
+  { path: '/adminbobby/calls', label: 'Calls', role: 'calls' },
   { path: '/adminbobby/oto-agents', label: 'OTO Agents', role: 'dashboard', ai: true },
   { path: '/adminbobby/system-health', label: 'System Health', role: 'dashboard' },
+  { path: '/adminbobby/launch-health', label: 'Launch health', role: 'dashboard' },
   { path: '/adminbobby/users', label: 'Users', role: 'users' },
   { path: '/adminbobby/affiliates', label: 'Affiliates', role: 'affiliates' },
   { path: '/adminbobby/notifications', label: 'Notifications', role: 'notifications' },
@@ -32,10 +34,10 @@ const navItems = [
   { path: '/adminbobby/team', label: 'Team', role: 'team' },
   { path: '/adminbobby/blog', label: 'Blog', role: 'blog' },
   { path: '/adminbobby/analytics', label: 'Analytics', role: 'analytics' },
+  { path: '/adminbobby/analytics/profitability-tools', label: 'Profit tools', role: 'analytics' },
 ];
 
 const communicationsItems = [
-  { path: '/adminbobby/calls', label: 'Calls', role: 'calls' },
   { path: '/adminbobby/sms', label: 'SMS', role: 'sms', exact: true },
   { path: '/adminbobby/sms-approval', label: 'SMS Approval', role: 'sms' },
   { path: '/adminbobby/numbers', label: 'Numbers', role: 'numbers' },
@@ -110,7 +112,11 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
           {/* Main Navigation Items */}
           <div className="px-2 space-y-1">
             {visibleNavItems.map((item) => {
-              const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+              let isActive =
+                location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+              if (item.path === '/adminbobby/analytics' && location.pathname.startsWith('/adminbobby/analytics/profitability-tools')) {
+                isActive = false;
+              }
               return (
                 <Link
                   key={item.path}

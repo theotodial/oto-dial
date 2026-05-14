@@ -140,6 +140,109 @@ const userSchema = new mongoose.Schema(
       default: 0,
       select: false,
     },
+    remainingCredits: {
+      type: Number,
+      default: 0,
+      index: true,
+    },
+    totalCreditsUsed: {
+      type: Number,
+      default: 0,
+    },
+    reservedCredits: {
+      type: Number,
+      default: 0,
+    },
+    lifetimeCreditsPurchased: {
+      type: Number,
+      default: 0,
+    },
+    riskFlags: {
+      negativeMargin: {
+        type: Boolean,
+        default: false,
+        index: true,
+      },
+      abuseRisk: {
+        type: Boolean,
+        default: false,
+        index: true,
+      },
+      coldCallPattern: {
+        type: Boolean,
+        default: false,
+      },
+      burningCreditsFasterThanRevenue: {
+        type: Boolean,
+        default: false,
+      },
+      lastRiskEvaluatedAt: {
+        type: Date,
+        default: null,
+      },
+      lastRejectRatio: {
+        type: Number,
+        default: 0,
+      },
+      lastGrossMargin: {
+        type: Number,
+        default: 0,
+      },
+      lastAvgCallDuration: {
+        type: Number,
+        default: 0,
+      },
+      outboundAttemptVolume: {
+        type: Number,
+        default: 0,
+      },
+      throttleDelayMs: {
+        type: Number,
+        default: 0,
+      },
+      reservationMultiplier: {
+        type: Number,
+        default: 1,
+      },
+      maxConcurrentCalls: {
+        type: Number,
+        default: null,
+      },
+    },
+
+    /** Admin manual overrides for profit guardrails (expires + optional note). */
+    riskOverrides: {
+      reservationMultiplier: {
+        type: Number,
+        default: null,
+      },
+      throttleDelayMs: {
+        type: Number,
+        default: null,
+      },
+      maxConcurrentCalls: {
+        type: Number,
+        default: null,
+      },
+      expiresAt: {
+        type: Date,
+        default: null,
+        index: true,
+      },
+      updatedAt: {
+        type: Date,
+        default: null,
+      },
+      updatedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+      note: {
+        type: String,
+        default: "",
+      },
+    },
 
     smsUsed: {
       type: Number,

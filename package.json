@@ -7,6 +7,8 @@
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "test": "cd backend && npm test",
+    "production:verify": "cd backend && npm run production:verify",
     "build": "cd frontend && npm run build",
     "build:backend": "cd backend && npm install --production",
     "build:frontend": "cd frontend && npm run build",

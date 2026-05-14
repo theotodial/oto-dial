@@ -30,6 +30,13 @@ export function buildSubscriptionPlanSnapshot(plan = {}) {
       plan.limits?.minutesTotal,
       displayUnlimited ? UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit : 0
     ),
+    creditsTotal: toSafeNumber(
+      plan.limits?.creditsTotal,
+      toSafeNumber(
+        plan.monthlyCreditsLimit,
+        toSafeNumber(plan.limits?.minutesTotal, displayUnlimited ? UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit : 0)
+      )
+    ),
     smsTotal: toSafeNumber(
       plan.limits?.smsTotal,
       displayUnlimited ? UNLIMITED_INTERNAL_LIMITS.monthlySmsLimit : 0
@@ -39,8 +46,13 @@ export function buildSubscriptionPlanSnapshot(plan = {}) {
 
   let monthlySmsLimit = null;
   let monthlyMinutesLimit = null;
+  let monthlyCreditsLimit = toSafeNumber(
+    plan.monthlyCreditsLimit,
+    toSafeNumber(plan.limits?.creditsTotal, toSafeNumber(plan.limits?.minutesTotal, 0))
+  );
   let dailySmsLimit = null;
   let dailyMinutesLimit = null;
+  let dailyCreditsLimit = toSafeNumber(plan.dailyCreditsLimit, 0) || null;
 
   if (displayUnlimited) {
     monthlySmsLimit = toPositiveInteger(
@@ -59,10 +71,19 @@ export function buildSubscriptionPlanSnapshot(plan = {}) {
       plan.dailyMinutesLimit,
       UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit
     );
+    monthlyCreditsLimit = toPositiveInteger(
+      plan.monthlyCreditsLimit ?? plan.limits?.creditsTotal ?? plan.limits?.minutesTotal,
+      UNLIMITED_INTERNAL_LIMITS.monthlyMinutesLimit
+    );
+    dailyCreditsLimit = toPositiveInteger(
+      plan.dailyCreditsLimit ?? plan.dailyMinutesLimit,
+      UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit
+    );
 
     // Keep canonical monthly limits in subscription.limits for backend calculations.
     limits.smsTotal = monthlySmsLimit;
     limits.minutesTotal = monthlyMinutesLimit;
+    limits.creditsTotal = monthlyCreditsLimit;
   }
 
   return {
@@ -72,8 +93,10 @@ export function buildSubscriptionPlanSnapshot(plan = {}) {
     dedicatedNumbers,
     monthlySmsLimit,
     monthlyMinutesLimit,
+    monthlyCreditsLimit,
     dailySmsLimit,
-    dailyMinutesLimit
+    dailyMinutesLimit,
+    dailyCreditsLimit
   };
 }
 
@@ -87,14 +110,17 @@ export function applyPlanSnapshotToSubscription(subscription, plan = {}) {
 
   subscription.limits = {
     minutesTotal: snapshot.limits.minutesTotal,
+    creditsTotal: snapshot.limits.creditsTotal,
     smsTotal: snapshot.limits.smsTotal,
     numbersTotal: snapshot.limits.numbersTotal
   };
 
   subscription.monthlySmsLimit = snapshot.monthlySmsLimit;
   subscription.monthlyMinutesLimit = snapshot.monthlyMinutesLimit;
+  subscription.monthlyCreditsLimit = snapshot.monthlyCreditsLimit;
   subscription.dailySmsLimit = snapshot.dailySmsLimit;
   subscription.dailyMinutesLimit = snapshot.dailyMinutesLimit;
+  subscription.dailyCreditsLimit = snapshot.dailyCreditsLimit;
 
   subscription.voiceCallsEnabled = plan.voiceCallsEnabled !== false;
   subscription.smsCampaignPlan = Boolean(plan.smsCampaignPlan);

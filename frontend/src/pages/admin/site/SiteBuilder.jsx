@@ -352,9 +352,9 @@ function SiteBuilder() {
       type: "hero",
       hidden: false,
       settings: {
-        heading: "Virtual Phone Numbers for Calling & SMS Anywhere",
+        heading: "Free US Virtual Number for Calling & SMS",
         subheading:
-          "Get a local phone number in the US, UK, and other countries. Make calls and send SMS from anywhere—perfect for travelers, freelancers, and remote workers. A simple alternative to Google Voice and TextNow.",
+          "OTODIAL provisions US numbers only—a browser dialer with cloud calling for freelancers, remote teams, and sales callers. Telecom credit billing keeps outbound calling transparent. Serious Google Voice and TextNow alternative for US outreach.",
         buttonText: "View Pricing",
         buttonLink: "#pricing",
         align: "center",
@@ -372,7 +372,7 @@ function SiteBuilder() {
             id: createSectionId(),
             title: "Virtual Phone Numbers",
             description:
-              "Get a local phone number in the US, UK, and other countries instantly. Perfect for travelers and remote workers. No contracts, activate in under 60 seconds."
+              "Choose a US virtual phone number powered by telecom SaaS onboarding. Activate in minutes from your browser — no misleading global inventory claims."
           },
           {
             id: createSectionId(),
@@ -390,7 +390,7 @@ function SiteBuilder() {
             id: createSectionId(),
             title: "Two-Way SMS Platform",
             description:
-              "Send and receive SMS messages from your virtual phone number. Perfect for staying connected with clients, family, and contacts worldwide."
+              "Send and receive SMS from your US virtual number online — ideal for follow-ups tied to outbound US calling."
           },
           {
             id: createSectionId(),
@@ -416,9 +416,9 @@ function SiteBuilder() {
         items: [
           {
             id: createSectionId(),
-            title: "Buy Virtual Phone Number",
+            title: "Claim your US number",
             description:
-              "Browse and buy virtual phone numbers from 100+ countries. Filter by location, features, or price to find the perfect number."
+              "Pick a subscription plan — every tier includes US numbering today. Transparent pricing without fake worldwide catalogs."
           },
           {
             id: createSectionId(),
