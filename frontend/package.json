@@ -5,7 +5,9 @@
   "description": "OTO-DIAL Frontend Application",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/clean-dist.mjs",
     "build": "vite build",
+    "postbuild": "node scripts/verify-dist-assets.mjs",
     "preview": "vite preview",
     "start": "serve -s dist -l ${PORT:-3000}",
     "generate-favicons": "node scripts/generate-favicons.js"

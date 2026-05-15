@@ -6,6 +6,7 @@ import {
   inactiveSubscriptionBootstrap,
   useAppState,
 } from "./AppStateContext";
+import { ensureOtodialDebug } from "../utils/otodialDebug";
 
 const AuthContext = createContext(null);
 
@@ -22,9 +23,8 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     try {
-      if (window.__OTODIAL_DEBUG__) {
-        window.__OTODIAL_DEBUG__.authReady = isReady;
-      }
+      const d = ensureOtodialDebug();
+      if (d) d.authReady = isReady;
     } catch (_) {
       /* ignore */
     }
