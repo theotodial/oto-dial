@@ -4,6 +4,7 @@ import API from "../api";
 import { OTODIAL_SMS_OUTBOUND_EVENT } from "../constants/smsOutboundEvents";
 import { clearCachedFetch, removeStorageKey } from "../utils/appCache";
 import { viteApiOriginForSockets } from "../utils/viteApiBase";
+import { bootMark } from "../utils/bootTiming";
 import {
   BOOTSTRAP_REFRESH_EVENT,
   BOOTSTRAP_REFRESH_STORAGE_KEY,
@@ -78,6 +79,23 @@ function normalizeUserFromLoginOrMe(u) {
   };
 }
 
+/** Synthetic user so auth shell + routes render before /api/app/bootstrap returns (no full-app skeleton). */
+export const BOOTSTRAP_PENDING_USER_ID = "__bootstrap_pending__";
+
+export function createBootstrapPlaceholderUser() {
+  return {
+    _id: BOOTSTRAP_PENDING_USER_ID,
+    id: BOOTSTRAP_PENDING_USER_ID,
+    name: "",
+    email: "",
+    isEmailVerified: true,
+    features: normalizeClientFeatures({}),
+    preferences: normalizeClientPreferences({}),
+    mode: "voice",
+    allowedCallCountries: [],
+  };
+}
+
 /** When /api/app/bootstrap fails, keep the session using data from POST /api/auth/login|register. */
 export function buildLoginFallbackPayload(loginUser) {
   const user = normalizeUserFromLoginOrMe(loginUser);
@@ -92,10 +110,12 @@ export function buildLoginFallbackPayload(loginUser) {
 
 export function AppStateProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem("token"));
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() =>
+    localStorage.getItem("token") ? createBootstrapPlaceholderUser() : null
+  );
   const [subscription, setSubscription] = useState(null);
   const [usage, setUsage] = useState(null);
-  const [isReady, setIsReady] = useState(() => !localStorage.getItem("token"));
+  const [isReady, setIsReady] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const hasFetchedRef = useRef(false);
   /** After first successful bootstrap with a token, background refetches must NOT flip isReady (avoids unmounting the whole app). */
@@ -110,7 +130,7 @@ export function AppStateProvider({ children }) {
     setUser(null);
     setSubscription(null);
     setUsage(null);
-    setIsReady(!localStorage.getItem("token"));
+    setIsReady(true);
     hasFetchedRef.current = false;
     sessionEstablishedRef.current = false;
   }, []);
@@ -152,9 +172,6 @@ export function AppStateProvider({ children }) {
     }
 
     setIsRefreshing(true);
-    if (!sessionEstablishedRef.current) {
-      setIsReady(false);
-    }
     try {
       const res = await API.get("/api/app/bootstrap");
       if (res.error || !res.data?.success) {
@@ -168,9 +185,9 @@ export function AppStateProvider({ children }) {
     } catch (error) {
       const status = Number(error?.status || 0);
       if (status === 401 || status === 403) {
-        clearAppState();
         localStorage.removeItem("token");
         setToken(null);
+        clearAppState();
       }
       setIsReady(true);
       throw error;
@@ -209,9 +226,9 @@ export function AppStateProvider({ children }) {
     if (hasFetchedRef.current) return;
     hasFetchedRef.current = true;
 
-    fetchBootstrap().catch(() => {
-      /* handled in fetchBootstrap */
-    });
+    fetchBootstrap()
+      .then(() => bootMark("app_bootstrap_ok"))
+      .catch(() => bootMark("app_bootstrap_finished"));
   }, [applyBootstrapData, clearAppState, fetchBootstrap]);
 
   useEffect(() => {
@@ -247,80 +264,91 @@ export function AppStateProvider({ children }) {
   useEffect(() => {
     const activeToken = localStorage.getItem("token");
     const uid = user?._id ?? user?.id;
-    if (!activeToken || !uid) {
+    if (!activeToken || !uid || uid === BOOTSTRAP_PENDING_USER_ID) {
       return undefined;
     }
 
-    const base = viteApiOriginForSockets(import.meta.env.VITE_API_URL || "");
-    const socket = io(`${base}/user`, {
-      path: "/socket.io",
-      auth: { token: activeToken },
-      transports: ["websocket", "polling"],
-    });
+    let socket;
+    let cancelled = false;
+    const hasRic = typeof requestIdleCallback !== "undefined";
+    const schedule = (fn) =>
+      hasRic ? requestIdleCallback(fn, { timeout: 2500 }) : setTimeout(fn, 0);
+    const cancelSchedule = (id) =>
+      hasRic ? cancelIdleCallback(id) : clearTimeout(id);
 
-    const onUsage = (payload) => {
-      if (!payload?.userId) return;
-      if (String(payload.userId) !== String(uid)) return;
-      setUsage((prev) => {
-        if (!prev) return prev;
-        const next = { ...prev };
-        if (payload.newSmsUsed != null) next.smsUsed = Number(payload.newSmsUsed);
-        if (payload.newRemainingSms != null) next.smsRemaining = Number(payload.newRemainingSms);
-        return next;
+    const connect = () => {
+      if (cancelled) return;
+      const base = viteApiOriginForSockets(import.meta.env.VITE_API_URL || "");
+      socket = io(`${base}/user`, {
+        path: "/socket.io",
+        auth: { token: activeToken },
+        transports: ["websocket", "polling"],
       });
+
+      const onUsage = (payload) => {
+        if (!payload?.userId) return;
+        if (String(payload.userId) !== String(uid)) return;
+        setUsage((prev) => {
+          if (!prev) return prev;
+          const next = { ...prev };
+          if (payload.newSmsUsed != null) next.smsUsed = Number(payload.newSmsUsed);
+          if (payload.newRemainingSms != null) next.smsRemaining = Number(payload.newRemainingSms);
+          return next;
+        });
+      };
+
+      socket.on("sms:usage-updated", onUsage);
+
+      const dispatchOutboundLifecycle = (phase, payload) => {
+        window.dispatchEvent(
+          new CustomEvent(OTODIAL_SMS_OUTBOUND_EVENT, {
+            detail: { phase, ...(payload && typeof payload === "object" ? payload : {}) },
+          })
+        );
+      };
+
+      const onQueued = (p) => dispatchOutboundLifecycle("queued", p);
+      const onSent = (p) => dispatchOutboundLifecycle("sent", p);
+      const onDelivered = (p) => dispatchOutboundLifecycle("delivered", p);
+      const onFailed = (p) => dispatchOutboundLifecycle("failed", p);
+      const onStateResyncRequired = (payload) => {
+        if (payload?.userId && String(payload.userId) !== String(uid)) return;
+        requestBootstrapRefresh({
+          reason: payload?.reason || "state_resync_required",
+          preserveUiState: true,
+        });
+        window.dispatchEvent(
+          new CustomEvent("otodial:state-resync-required", {
+            detail: payload || {},
+          })
+        );
+      };
+
+      socket.on("sms:queued", onQueued);
+      socket.on("sms:sent", onSent);
+      socket.on("sms:delivered", onDelivered);
+      socket.on("sms:failed", onFailed);
+      socket.on("state_resync_required", onStateResyncRequired);
+
+      const onAuthoritativeCall = (payload) => {
+        window.dispatchEvent(
+          new CustomEvent("otodial:call-authoritative-state", {
+            detail: payload && typeof payload === "object" ? payload : {},
+          })
+        );
+      };
+      socket.on("call:authoritative_state", onAuthoritativeCall);
     };
 
-    socket.on("sms:usage-updated", onUsage);
-
-    const dispatchOutboundLifecycle = (phase, payload) => {
-      window.dispatchEvent(
-        new CustomEvent(OTODIAL_SMS_OUTBOUND_EVENT, {
-          detail: { phase, ...(payload && typeof payload === "object" ? payload : {}) },
-        })
-      );
-    };
-
-    const onQueued = (p) => dispatchOutboundLifecycle("queued", p);
-    const onSent = (p) => dispatchOutboundLifecycle("sent", p);
-    const onDelivered = (p) => dispatchOutboundLifecycle("delivered", p);
-    const onFailed = (p) => dispatchOutboundLifecycle("failed", p);
-    const onStateResyncRequired = (payload) => {
-      if (payload?.userId && String(payload.userId) !== String(uid)) return;
-      requestBootstrapRefresh({
-        reason: payload?.reason || "state_resync_required",
-        preserveUiState: true,
-      });
-      window.dispatchEvent(
-        new CustomEvent("otodial:state-resync-required", {
-          detail: payload || {},
-        })
-      );
-    };
-
-    socket.on("sms:queued", onQueued);
-    socket.on("sms:sent", onSent);
-    socket.on("sms:delivered", onDelivered);
-    socket.on("sms:failed", onFailed);
-    socket.on("state_resync_required", onStateResyncRequired);
-
-    const onAuthoritativeCall = (payload) => {
-      window.dispatchEvent(
-        new CustomEvent("otodial:call-authoritative-state", {
-          detail: payload && typeof payload === "object" ? payload : {},
-        })
-      );
-    };
-    socket.on("call:authoritative_state", onAuthoritativeCall);
+    const scheduleId = schedule(connect);
 
     return () => {
-      socket.off("sms:usage-updated", onUsage);
-      socket.off("sms:queued", onQueued);
-      socket.off("sms:sent", onSent);
-      socket.off("sms:delivered", onDelivered);
-      socket.off("sms:failed", onFailed);
-      socket.off("state_resync_required", onStateResyncRequired);
-      socket.off("call:authoritative_state", onAuthoritativeCall);
-      socket.disconnect();
+      cancelled = true;
+      cancelSchedule(scheduleId);
+      if (socket) {
+        socket.removeAllListeners?.();
+        socket.disconnect();
+      }
     };
   }, [requestBootstrapRefresh, user?._id, user?.id]);
 
@@ -366,7 +394,10 @@ export function AppStateProvider({ children }) {
 
     hasFetchedRef.current = false;
     sessionEstablishedRef.current = false;
-    setIsReady(false);
+    setUser(createBootstrapPlaceholderUser());
+    setSubscription(inactiveSubscriptionBootstrap());
+    setUsage(emptyUsageBootstrap());
+    setIsReady(true);
     fetchBootstrap().catch(() => {
       /* handled in fetchBootstrap */
     });

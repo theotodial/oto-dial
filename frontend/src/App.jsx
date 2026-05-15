@@ -8,6 +8,7 @@ import { CallProvider } from './context/CallContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import AppShell from './components/AppShell';
 import { ensureOtodialDebug } from './utils/otodialDebug';
+import { bootMark } from './utils/bootTiming';
 
 function App() {
   const devRenderCountRef = useRef(0);
@@ -41,6 +42,18 @@ function App() {
     }
     console.log('[REACT MOUNT]');
     console.log('[ROUTER READY]');
+    bootMark('react_commit_effect');
+
+    let innerRaf = 0;
+    const outerRaf = requestAnimationFrame(() => {
+      innerRaf = requestAnimationFrame(() => {
+        bootMark('first_paint_committed');
+      });
+    });
+    return () => {
+      cancelAnimationFrame(outerRaf);
+      if (innerRaf) cancelAnimationFrame(innerRaf);
+    };
   }, []);
 
   return (

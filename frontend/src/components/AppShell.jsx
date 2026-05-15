@@ -13,7 +13,6 @@ import { CampaignProvider } from '../context/CampaignContext';
 import AffiliateProtectedRoute from './AffiliateProtectedRoute';
 import AdminProtectedRoute from './AdminProtectedRoute';
 import AdminLayout from './AdminLayout';
-import SkeletonApp from './SkeletonApp';
 import RouteFallback from './loadingFallbacks';
 import {
   Home,
@@ -67,7 +66,7 @@ import {
 } from '../routes/lazyPages';
 
 function HomeOrRedirect() {
-  const { token, user, hydrated } = useAuth();
+  const { token, user } = useAuth();
   if (!token) {
     return (
       <Suspense fallback={<RouteFallback />}>
@@ -75,7 +74,6 @@ function HomeOrRedirect() {
       </Suspense>
     );
   }
-  if (!hydrated) return <SkeletonApp />;
   const f = user?.features || { voiceEnabled: true, campaignEnabled: false };
   const voice = f.voiceEnabled !== false;
   const camp = Boolean(f.campaignEnabled);

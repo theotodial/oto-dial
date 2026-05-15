@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { useAppState } from './AppStateContext';
+import { useAppState, BOOTSTRAP_PENDING_USER_ID } from './AppStateContext';
 import { patchUserCampaignMode } from '../services/campaignService';
 
 const CampaignContext = createContext(null);
@@ -19,7 +19,7 @@ export function CampaignProvider({ children }) {
 
   useEffect(() => {
     if (hydratedFromProfileRef.current) return;
-    if (!user) return;
+    if (!user || user._id === BOOTSTRAP_PENDING_USER_ID) return;
     const profileMode = user?.preferences?.campaignMode === 'pro' ? 'pro' : 'lite';
     hydratedFromProfileRef.current = true;
     setCampaignModeState(profileMode);

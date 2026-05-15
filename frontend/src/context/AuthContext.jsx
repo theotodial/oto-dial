@@ -1,6 +1,7 @@
 import { createContext, useContext, useCallback, useMemo, useEffect } from "react";
 import API from "../api";
 import {
+  BOOTSTRAP_PENDING_USER_ID,
   buildLoginFallbackPayload,
   emptyUsageBootstrap,
   inactiveSubscriptionBootstrap,
@@ -24,11 +25,13 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     try {
       const d = ensureOtodialDebug();
-      if (d) d.authReady = isReady;
+      if (d) {
+        d.authReady = Boolean(isReady && (!token || (user && user._id !== BOOTSTRAP_PENDING_USER_ID)));
+      }
     } catch (_) {
       /* ignore */
     }
-  }, [isReady]);
+  }, [isReady, token, user]);
 
   const login = useCallback(async (email, password) => {
     const response = await API.post("/api/auth/login", { email, password });
@@ -156,8 +159,10 @@ export function AuthProvider({ children }) {
     () => ({
       user,
       token,
-      loading: isRefreshing && !isReady,
-      hydrated: Boolean(isReady && user),
+      loading: Boolean(
+        isRefreshing && user && user._id !== BOOTSTRAP_PENDING_USER_ID
+      ),
+      hydrated: Boolean(isReady && (!token || user)),
       isAuthenticated: !!token,
       login,
       signup,

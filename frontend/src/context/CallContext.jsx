@@ -1,5 +1,4 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { TelnyxRTC } from '@telnyx/webrtc';
 import API from '../api';
 import soundManager from '../utils/sounds';
 import { useWakeLock } from '../hooks/useWakeLock';
@@ -1907,7 +1906,8 @@ export const CallProvider = ({ children }) => {
           telnyxClientRef.current = null;
         }
 
-        // Create new Telnyx WebRTC client
+        const { TelnyxRTC } = await import('@telnyx/webrtc');
+        // Create new Telnyx WebRTC client (SDK chunk loads only when dialing stack initializes)
         const client = loginToken
           ? new TelnyxRTC({
               login_token: loginToken,
