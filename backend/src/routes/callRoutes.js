@@ -172,10 +172,22 @@ async function persistFailedCallAttempt(req, fields, hangupCause) {
   }
 }
 
+function logCallCredit(phase, fields = {}) {
+  console.log("[CALL CREDIT]", { phase, ...fields, t: new Date().toISOString() });
+}
+
+function logCallCreate(phase, fields = {}) {
+  console.log("[CALL CREATE]", { phase, ...fields, t: new Date().toISOString() });
+}
+
 router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
   const callCreateT0 = Date.now();
   const execTraceHeader = String(req.get("x-oto-exec-trace") || "").trim() || null;
   try {
+    logCallCreate("entry", {
+      execTraceHeader,
+      userId: req.userId ? String(req.userId) : null,
+    });
     console.log("[CALL FLOW] POST /api/calls entry", {
       execTraceHeader,
       userId: req.userId ? String(req.userId) : null,
@@ -425,7 +437,17 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
     ) {
         const activeCount = await Call.countDocuments({
           user: req.userId,
-          status: { $in: ["queued", "initiated", "dialing", "ringing", "answered", "in-progress"] },
+          status: {
+            $in: [
+              "queued",
+              "initiated",
+              "dialing",
+              "ringing",
+              "early-media",
+              "answered",
+              "in-progress",
+            ],
+          },
         });
         if (activeCount >= Number(profitGuardrails.maxConcurrentCalls)) {
           return res.status(429).json({
@@ -443,6 +465,13 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
         req.userId,
         profitGuardrails?.reservationMultiplier
       );
+      logCallCredit("pre_create_gate", {
+        userId: String(req.userId),
+        ok: creditGate.ok,
+        code: creditGate.code || null,
+        remainingCredits: creditGate.remainingCredits ?? null,
+        availableCredits: creditGate.availableCredits ?? null,
+      });
       if (!creditGate.ok) {
         await persistFailedCallAttempt(
           req,
@@ -464,6 +493,12 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       });
     }
 
+    logCallCreate("persist_before", {
+      userId: String(req.userId),
+      direction,
+      status,
+      to: normalizeCallPartyNumber(toNumber || phoneNumber),
+    });
     const call = await Call.create({
       user: req.userId,
       phoneNumber,
@@ -472,6 +507,11 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       direction,
       status,
       source: direction === "outbound" ? "webrtc" : source,
+    });
+    logCallCreate("persist_after", {
+      callId: call?._id ? String(call._id) : null,
+      userId: String(req.userId),
+      status: call?.status,
     });
 
     telecomStructuredLog("[CALL FLOW]", {
@@ -507,15 +547,35 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
     });
     if (direction === "outbound") {
       const guardrails = await getUserProfitGuardrails(call.user);
-      const reserve = await reserveCreditsForOutboundCall(call, {
-        reservationMultiplier: guardrails?.reservationMultiplier,
+      let reserve;
+      try {
+        reserve = await reserveCreditsForOutboundCall(call, {
+          reservationMultiplier: guardrails?.reservationMultiplier,
+        });
+      } catch (reserveErr) {
+        logCallCredit("reserve_exception", {
+          callId: String(call._id),
+          userId: String(req.userId),
+          error: reserveErr?.message || String(reserveErr),
+          stack: reserveErr?.stack || null,
+        });
+        await Call.deleteOne({ _id: call._id }).catch(() => {});
+        throw reserveErr;
+      }
+      logCallCredit("reserve_result", {
+        callId: String(call._id),
+        userId: String(req.userId),
+        ok: reserve?.ok,
+        code: reserve?.code || null,
+        hold: reserve?.hold ?? null,
       });
       if (!reserve?.ok) {
+        await releaseUnusedCallReservation(call).catch(() => {});
         await Call.deleteOne({ _id: call._id }).catch(() => {});
         return res.status(403).json({
           success: false,
           error: "Insufficient telecom credits to reserve outbound attempt.",
-          code: "INSUFFICIENT_CREDITS",
+          code: reserve?.code || "INSUFFICIENT_CREDITS",
         });
       }
     }
@@ -544,6 +604,11 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
 
     res.json({ success: true, call });
   } catch (err) {
+    console.error("[CALL ERROR] POST /api/calls", {
+      userId: req.userId ? String(req.userId) : null,
+      message: err?.message || String(err),
+      stack: err?.stack || null,
+    });
     console.error("[CALL CREATE ERROR]", err?.message || err, err?.stack);
     console.error("[CALL FLOW] CREATE CALL ERROR:", err?.message || err, err?.stack);
     return res.status(500).json({

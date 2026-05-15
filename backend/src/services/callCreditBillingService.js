@@ -64,20 +64,24 @@ export async function reserveCreditsForOutboundCall(call, options = {}) {
     return { ok: true, skipped: true, debugBypass: true };
   }
   const result = await reserveCreditsForOutboundCallSerialized(call, options);
+  if (!result || result.ok === false) {
+    return result || { ok: false, code: "RESERVE_FAILED" };
+  }
   const billing = result?.billing;
-  if (result?.ok && billing && !billing.duplicate) {
+  const hold = Number(result.hold || 0);
+  if (hold > 0 && (!billing || !billing.duplicate)) {
     await Call.updateOne(
       { _id: call._id },
       {
         $set: {
-          creditReservationHeld: result.hold,
-          "riskPricing.reservationMultiplier": result.reservationMultiplier,
-          "riskPricing.reservationHeld": result.hold,
+          creditReservationHeld: hold,
+          "riskPricing.reservationMultiplier": result.reservationMultiplier || 1,
+          "riskPricing.reservationHeld": hold,
         },
       }
     );
   }
-  return billing || result;
+  return { ok: true, hold, billing, reservationMultiplier: result.reservationMultiplier };
 }
 
 /**

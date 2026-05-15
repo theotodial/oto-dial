@@ -38,10 +38,13 @@ export const callLifecycleAgent = {
   async run({ log }) {
     const now = Date.now();
     const earlyCutoff = new Date(
-      now - Number(process.env.AGENT_CALL_EARLY_STALE_MS || 3 * 60 * 1000)
+      now - Number(process.env.AGENT_CALL_EARLY_STALE_MS || 8 * 60 * 1000)
+    );
+    const dialingCutoff = new Date(
+      now - Number(process.env.AGENT_CALL_DIALING_STALE_MS || 10 * 60 * 1000)
     );
     const ringingCutoff = new Date(
-      now - Number(process.env.AGENT_CALL_RINGING_STALE_MS || 6 * 60 * 1000)
+      now - Number(process.env.AGENT_CALL_RINGING_STALE_MS || 12 * 60 * 1000)
     );
     const activeCutoff = new Date(
       now - Number(process.env.AGENT_CALL_ACTIVE_STALE_MS || 6 * 60 * 60 * 1000)
@@ -67,7 +70,8 @@ export const callLifecycleAgent = {
     for (const call of stuckCalls) {
       const isRingPhase =
         call.status === CALL_STATES.RINGING || call.status === CALL_STATES.EARLY_MEDIA;
-      const cutoff = isRingPhase ? ringingCutoff : earlyCutoff;
+      const isDialing = call.status === CALL_STATES.DIALING;
+      const cutoff = isRingPhase ? ringingCutoff : isDialing ? dialingCutoff : earlyCutoff;
       if (lastActivityMs(call) > cutoff.getTime()) {
         continue;
       }

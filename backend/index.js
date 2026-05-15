@@ -131,6 +131,7 @@ import sitePublicRoutes from "./src/routes/sitePublic.js";
 import appBootstrapRoutes from "./src/routes/appBootstrap.js";
 import campaignRoutes from "./src/routes/campaignRoutes.js";
 import debugRoutes from "./src/routes/debugRoutes.js";
+import walletRoutes from "./src/routes/walletRoutes.js";
 import NotFoundLog from "./src/models/NotFoundLog.js";
 
 import telnyxVoiceWebhook from "./src/routes/webhooks/telnyxVoice.js";
@@ -481,6 +482,7 @@ app.use("/api/subscription", subscriptionCatalogRoutes);
 // Subscription GET handlers load their own lean doc — skip loadSubscription to avoid duplicate DB + phone scans
 app.use("/api/subscription", authenticateUser, subscriptionRoutes);
 app.use("/api/stripe", authenticateUser, stripeCheckoutRoutes);
+app.use("/api/wallet", authenticateUser, walletRoutes);
 app.use("/api/dialer", authenticateUser, loadSubscription, requireVoiceEnabled, dialerRoutes);
 app.use("/api/numbers", authenticateUser, loadSubscription, numberRoutes);
 app.use("/api/numbers", authenticateUser, loadSubscription, telnyxNumbersRoutes);

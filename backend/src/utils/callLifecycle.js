@@ -8,15 +8,16 @@ export const ACTIVE_CALL_STATUSES = [
   "initiated",
   "dialing",
   "ringing",
+  "early-media",
   "in-progress",
   "answered",
 ];
 
 const ACTIVE_CALL_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
-/** Early-phase rows left behind after refresh/errors block new dials (409) — auto-fail after this. */
-const STALE_EARLY_STATUS_MS = 45 * 60 * 1000;
-const STALE_EARLY_STATUSES = ["initiated", "dialing", "queued"];
+/** Stuck queued/initiated only — dialing/ringing use lifecycle agent with longer cutoffs. */
+const STALE_EARLY_STATUS_MS = Number(process.env.CALL_STALE_EARLY_STATUS_MS || 10 * 60 * 1000);
+const STALE_EARLY_STATUSES = ["initiated", "queued"];
 
 /**
  * Returns the user's most recent in-flight call within the age window, if any.
