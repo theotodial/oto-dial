@@ -18,17 +18,6 @@ export default defineConfig({
     assetsDir: 'assets',
     sourcemap: false,
     emptyOutDir: true,
-    chunkSizeWarningLimit: 2500,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined;
-          if (id.includes('@telnyx')) return 'telnyx';
-          if (id.includes('quill') || id.includes('react-quill')) return 'editor';
-          return 'vendor';
-        },
-      },
-    },
   },
   server: {
     port: 3000,
