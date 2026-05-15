@@ -1,30 +1,36 @@
 import { lazy } from 'react';
 
-/** Route-level lazy imports — keeps initial bundle small; Suspense wraps usage sites */
-export const Home = lazy(() => import('../pages/Home.jsx'));
-export const Signup = lazy(() => import('../pages/Signup.jsx'));
-export const Login = lazy(() => import('../pages/Login.jsx'));
-export const ForgotPassword = lazy(() => import('../pages/ForgotPassword.jsx'));
-export const ResetPassword = lazy(() => import('../pages/ResetPassword.jsx'));
-export const OAuthConsent = lazy(() => import('../pages/OAuthConsent.jsx'));
-export const OAuthSuccess = lazy(() => import('../pages/OAuthSuccess.jsx'));
-export const Recents = lazy(() => import('../pages/Recents.jsx'));
+/** Core product surfaces — eager (no extra chunk round-trip on /recents, /dashboard). */
+export { default as Recents } from '../pages/Recents.jsx';
+export { default as Dashboard } from '../pages/Dashboard.jsx';
+export { default as Home } from '../pages/Home.jsx';
+export { default as Login } from '../pages/Login.jsx';
+export { default as Signup } from '../pages/Signup.jsx';
+
+/** Secondary authenticated — lazy OK */
 export const Campaign = lazy(() => import('../pages/Campaign.jsx'));
-export const Dashboard = lazy(() => import('../pages/Dashboard.jsx'));
 export const Contacts = lazy(() => import('../pages/Contacts.jsx'));
 export const Billing = lazy(() => import('../pages/Billing.jsx'));
 export const BuyNumber = lazy(() => import('../pages/BuyNumber.jsx'));
 export const SubscriptionDetails = lazy(() => import('../pages/SubscriptionDetails.jsx'));
 export const Profile = lazy(() => import('../pages/Profile.jsx'));
 export const Support = lazy(() => import('../pages/Support.jsx'));
+export const ForgotPassword = lazy(() => import('../pages/ForgotPassword.jsx'));
+export const ResetPassword = lazy(() => import('../pages/ResetPassword.jsx'));
+export const OAuthConsent = lazy(() => import('../pages/OAuthConsent.jsx'));
+export const OAuthSuccess = lazy(() => import('../pages/OAuthSuccess.jsx'));
 export const Contact = lazy(() => import('../pages/Contact.jsx'));
 export const Privacy = lazy(() => import('../pages/Privacy.jsx'));
 export const Terms = lazy(() => import('../pages/Terms.jsx'));
+
+/** Affiliate */
 export const AffiliateLanding = lazy(() => import('../pages/AffiliateLanding.jsx'));
 export const AffiliateSignup = lazy(() => import('../pages/AffiliateSignup.jsx'));
 export const AffiliateLogin = lazy(() => import('../pages/AffiliateLogin.jsx'));
 export const AffiliateOAuthSuccess = lazy(() => import('../pages/AffiliateOAuthSuccess.jsx'));
 export const AffiliateDashboard = lazy(() => import('../pages/AffiliateDashboard.jsx'));
+
+/** Admin / site tools — lazy */
 export const AdminLogin = lazy(() => import('../pages/admin/AdminLogin.jsx'));
 export const AdminAnalytics = lazy(() => import('../pages/admin/AdminAnalytics.jsx'));
 export const AdminAnalyticsDetail = lazy(() => import('../pages/admin/AdminAnalyticsDetail.jsx'));
@@ -47,5 +53,7 @@ export const AdminUsers = lazy(() => import('../pages/admin/AdminUsers.jsx'));
 export const SiteBuilder = lazy(() => import('../pages/admin/site/SiteBuilder.jsx'));
 export const SiteEnvironment = lazy(() => import('../pages/admin/site/SiteEnvironment.jsx'));
 export const SiteSeo = lazy(() => import('../pages/admin/site/SiteSeo.jsx'));
+
+/** Marketing blog */
 export const Blog = lazy(() => import('../pages/Blog.jsx'));
 export const BlogPost = lazy(() => import('../pages/BlogPost.jsx'));

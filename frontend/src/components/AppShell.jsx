@@ -68,11 +68,7 @@ import {
 function HomeOrRedirect() {
   const { token, user } = useAuth();
   if (!token) {
-    return (
-      <Suspense fallback={<RouteFallback />}>
-        <Home />
-      </Suspense>
-    );
+    return <Home />;
   }
   const f = user?.features || { voiceEnabled: true, campaignEnabled: false };
   const voice = f.voiceEnabled !== false;
@@ -96,9 +92,7 @@ export default function AppShell() {
           element={
             <PublicRoute>
               <Navbar />
-              <Suspense fallback={<RouteFallback belowNav />}>
-                <Login />
-              </Suspense>
+              <Login />
             </PublicRoute>
           }
         />
@@ -107,9 +101,7 @@ export default function AppShell() {
           element={
             <PublicRoute>
               <Navbar />
-              <Suspense fallback={<RouteFallback belowNav />}>
-                <Signup />
-              </Suspense>
+              <Signup />
             </PublicRoute>
           }
         />

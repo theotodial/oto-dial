@@ -5,6 +5,7 @@ import { OTODIAL_SMS_OUTBOUND_EVENT } from "../constants/smsOutboundEvents";
 import { clearCachedFetch, removeStorageKey } from "../utils/appCache";
 import { viteApiOriginForSockets } from "../utils/viteApiBase";
 import { bootMark } from "../utils/bootTiming";
+import { runtimeSetBootstrapState, runtimeSetSocketState } from "../utils/otodialRuntime";
 import {
   BOOTSTRAP_REFRESH_EVENT,
   BOOTSTRAP_REFRESH_STORAGE_KEY,
@@ -164,8 +165,11 @@ export function AppStateProvider({ children }) {
     if (!activeToken) {
       clearAppState();
       setIsReady(true);
+      runtimeSetBootstrapState("no_token");
       return null;
     }
+
+    runtimeSetBootstrapState("fetching");
 
     if (force) {
       clearCachedFetch("auth:/api/app/bootstrap");
@@ -181,6 +185,7 @@ export function AppStateProvider({ children }) {
         err.status = status;
         throw err;
       }
+      runtimeSetBootstrapState("ok");
       return applyBootstrapData(res.data, activeToken);
     } catch (error) {
       const status = Number(error?.status || 0);
@@ -189,6 +194,7 @@ export function AppStateProvider({ children }) {
         setToken(null);
         clearAppState();
       }
+      runtimeSetBootstrapState(status === 401 || status === 403 ? "unauthorized" : "error");
       setIsReady(true);
       throw error;
     } finally {
@@ -278,6 +284,7 @@ export function AppStateProvider({ children }) {
 
     const connect = () => {
       if (cancelled) return;
+      runtimeSetSocketState("connecting");
       const base = viteApiOriginForSockets(import.meta.env.VITE_API_URL || "");
       socket = io(`${base}/user`, {
         path: "/socket.io",
@@ -338,6 +345,8 @@ export function AppStateProvider({ children }) {
         );
       };
       socket.on("call:authoritative_state", onAuthoritativeCall);
+      socket.on("connect", () => runtimeSetSocketState("connected"));
+      socket.on("disconnect", () => runtimeSetSocketState("disconnected"));
     };
 
     const scheduleId = schedule(connect);

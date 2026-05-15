@@ -8,6 +8,7 @@ import {
   useAppState,
 } from "./AppStateContext";
 import { ensureOtodialDebug } from "../utils/otodialDebug";
+import { runtimeSetAuthState } from "../utils/otodialRuntime";
 
 const AuthContext = createContext(null);
 
@@ -25,9 +26,11 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     try {
       const d = ensureOtodialDebug();
-      if (d) {
-        d.authReady = Boolean(isReady && (!token || (user && user._id !== BOOTSTRAP_PENDING_USER_ID)));
-      }
+      const ready = Boolean(isReady && (!token || (user && user._id !== BOOTSTRAP_PENDING_USER_ID)));
+      if (d) d.authReady = ready;
+      runtimeSetAuthState(
+        !token ? "anonymous" : ready ? "session" : user?._id === BOOTSTRAP_PENDING_USER_ID ? "pending" : "session"
+      );
     } catch (_) {
       /* ignore */
     }
