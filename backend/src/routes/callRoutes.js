@@ -20,6 +20,7 @@ import {
   CALL_STATES,
   canTransitionTo,
   isTerminalStatus,
+  mapHangupToTerminalStatus,
   normalizeCallStatus,
 } from "../utils/callStateMachine.js";
 import { normalizeThreadPhone } from "../utils/smsThreadKey.js";
@@ -624,7 +625,8 @@ router.get("/", async (req, res) => {
           normalizedStatus === CALL_STATES.FAILED ||
           normalizedStatus === CALL_STATES.BUSY ||
           normalizedStatus === CALL_STATES.REJECTED ||
-          normalizedStatus === CALL_STATES.CANCELED
+          normalizedStatus === CALL_STATES.CANCELED ||
+          normalizedStatus === CALL_STATES.NO_ANSWER
         ) {
           callType = 'failed';
         } else {
@@ -775,10 +777,44 @@ router.patch("/:id", async (req, res) => {
           });
         }
 
+        /** Never treat callStartedAt alone as "answered" — prevents false completed/successful. */
+        const hadAnsweredPrior =
+          current === CALL_STATES.ACTIVE ||
+          current === CALL_STATES.ANSWERED ||
+          Boolean(call.callAnsweredAt);
+
+        let effectiveRequested = requested;
+        if (
+          isTerminalStatus(requested) &&
+          requested === CALL_STATES.COMPLETED &&
+          !hadAnsweredPrior
+        ) {
+          effectiveRequested = mapHangupToTerminalStatus({
+            hangupCause: hangupCause || call.hangupCause,
+            hangupCauseCode: hangupCauseCode ?? call.hangupCauseCode,
+            callAnsweredAt: null,
+            callStartedAt: null,
+          });
+          if (!canTransitionTo(current, effectiveRequested)) {
+            effectiveRequested = CALL_STATES.FAILED;
+          }
+          console.warn("[CALL STATUS TRANSITION]", {
+            tag: "coerced_completed_without_answer",
+            previousStatus: current,
+            requested,
+            effectiveRequested,
+            callId: String(call._id),
+            callControlId: call.telnyxCallControlId || null,
+            hadAnsweredPrior,
+            source: "client_patch_webrtc",
+          });
+        }
+
         const set = {};
         if (hangupCause != null && hangupCause !== "") {
           set.hangupCause = String(hangupCause);
-          set.failReason = requested === CALL_STATES.FAILED ? String(hangupCause) : null;
+          set.failReason =
+            effectiveRequested === CALL_STATES.FAILED ? String(hangupCause) : null;
         }
         if (hangupCauseCode != null && hangupCauseCode !== "") {
           set.hangupCauseCode = String(hangupCauseCode);
@@ -788,7 +824,14 @@ router.patch("/:id", async (req, res) => {
           set.lastClientSyncAt = set.lastHeartbeatAt;
         }
         if (callStartedAt) {
-          set.callStartedAt = new Date(callStartedAt);
+          const trustClientStartedAt =
+            !isTerminalStatus(effectiveRequested) ||
+            hadAnsweredPrior ||
+            effectiveRequested === CALL_STATES.ACTIVE ||
+            effectiveRequested === CALL_STATES.ANSWERED;
+          if (trustClientStartedAt) {
+            set.callStartedAt = new Date(callStartedAt);
+          }
         }
         if (requested === CALL_STATES.RINGING && !call.callInitiatedAt) {
           set.callInitiatedAt = new Date();
@@ -808,10 +851,10 @@ router.patch("/:id", async (req, res) => {
         if (durationSeconds !== undefined) {
           set.durationSeconds = Number(durationSeconds) || 0;
         }
-        if (isTerminalStatus(requested)) {
+        if (isTerminalStatus(effectiveRequested)) {
           const ended = set.callEndedAt || call.callEndedAt || new Date();
           set.callEndedAt = ended;
-          const hadAnswered = Boolean(set.callStartedAt || call.callStartedAt);
+          const hadAnswered = hadAnsweredPrior;
           let billable = Number(durationSeconds);
           if (!Number.isFinite(billable) || billable < 0) {
             billable = 0;
@@ -840,7 +883,7 @@ router.patch("/:id", async (req, res) => {
           } else {
             set.durationSeconds = 0;
           }
-          if (requested === CALL_STATES.FAILED && !set.failReason && !call.failReason) {
+          if (effectiveRequested === CALL_STATES.FAILED && !set.failReason && !call.failReason) {
             set.failReason = set.hangupCause || call.hangupCause || "call_connection_failed";
           }
 
@@ -849,7 +892,7 @@ router.patch("/:id", async (req, res) => {
             eventAt: patchEventAt,
             source: "client_patch_webrtc",
             eventType: status || "heartbeat",
-            targetStatus: requested,
+            targetStatus: effectiveRequested,
             guard: { currentStatus: call.status },
             set,
             reason: "client_patch_webrtc",
@@ -875,7 +918,7 @@ router.patch("/:id", async (req, res) => {
                 direction: call.direction,
                 ringingSeconds: 0,
                 answeredSeconds:
-                  requested === CALL_STATES.COMPLETED && call.callStartedAt
+                  effectiveRequested === CALL_STATES.COMPLETED && call.callStartedAt
                     ? Math.max(
                         0,
                         Math.floor((ended - call.callStartedAt) / 1000)
@@ -884,7 +927,7 @@ router.patch("/:id", async (req, res) => {
                 billedSeconds: billable,
                 callStartTime: call.callInitiatedAt || call.callStartedAt,
                 callEndTime: ended,
-                callStatus: requested,
+                callStatus: effectiveRequested,
               });
             } catch (costErr) {
               console.warn(
@@ -896,7 +939,7 @@ router.patch("/:id", async (req, res) => {
 
           console.log("[CALL ENDED]", {
             callId: String(call._id),
-            status: call.status,
+            status: effectiveRequested,
             billableSeconds: hadAnswered ? billable : 0,
             answered: hadAnswered,
           });

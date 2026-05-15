@@ -214,6 +214,25 @@ export async function applyCallTransition({
     call.$locals.transitionSource = source || "unknown";
     await call.save();
 
+    try {
+      const fromS = normalizeCallStatus(from);
+      const toS = to ? normalizeCallStatus(to) : fromS;
+      console.warn("[CALL STATUS TRANSITION]", {
+        previousStatus: fromS,
+        nextStatus: toS,
+        source: source || null,
+        eventType: eventType || null,
+        callControlId: call.telnyxCallControlId || null,
+        callId: String(call._id),
+        userId: call.user ? String(call.user) : null,
+        answered: Boolean(call.callAnsweredAt),
+        durationSeconds:
+          call.durationSeconds != null ? Number(call.durationSeconds) : null,
+      });
+    } catch (_) {
+      /* ignore logging failures */
+    }
+
     await logLifecycle({
       callId: call._id,
       userId: call.user,

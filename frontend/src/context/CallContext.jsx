@@ -702,11 +702,11 @@ export const CallProvider = ({ children }) => {
             ? String(meta.cause).trim()
             : '';
         const causeNorm = causeRaw.replace(/\s+/g, '_').toUpperCase();
+        const qCode = Number(meta?.causeCode);
         const hadAnswered =
           wasActive ||
-          webRtcDbSyncRef.current.active ||
-          Boolean(currentCallRef.current?._sawActive) ||
-          dur > 0;
+          callStateRef.current === CALL_STATES.HELD ||
+          webRtcDbSyncRef.current.active;
         // Telnyx/SIP often use these for hangup before or after answer — not a "broken" call.
         const completedHangupCauses = new Set([
           'NORMAL_CLEARING',
@@ -718,15 +718,24 @@ export const CallProvider = ({ children }) => {
           'SYSTEM_SHUTDOWN',
           'MEDIA_TIMEOUT',
         ]);
-        let terminalStatus = hadAnswered ? 'completed' : 'failed';
+        let terminalStatus = 'completed';
         if (!hadAnswered) {
-          terminalStatus = 'failed';
+          if (
+            causeNorm === 'USER_BUSY' ||
+            causeNorm === 'BUSY' ||
+            qCode === 486
+          ) {
+            terminalStatus = 'busy';
+          } else if (sawRinging) {
+            terminalStatus = 'no-answer';
+          } else {
+            terminalStatus = 'failed';
+          }
         } else if (completedHangupCauses.has(causeNorm)) {
           terminalStatus = 'completed';
         } else if (!causeRaw && wasActive) {
           terminalStatus = 'completed';
         } else if (!causeRaw && dur <= 2 && !sawRinging) {
-          const qCode = Number(meta?.causeCode);
           const sipReject = new Set([403, 404, 486, 487, 603, 604, 606]);
           const q850Reject = new Set([
             17, 19, 20, 21, 34, 38, 41, 42, 47, 50, 57, 58, 63, 65, 69, 87, 88,
@@ -741,7 +750,10 @@ export const CallProvider = ({ children }) => {
           }
         }
         const hangupCauseDb =
-          causeRaw || (terminalStatus === 'failed' ? 'UNKNOWN' : null);
+          causeRaw ||
+          (terminalStatus === 'failed' || terminalStatus === 'no-answer'
+            ? 'UNKNOWN'
+            : null);
         const hangupCauseCodeDb =
           meta?.causeCode != null && meta?.causeCode !== ''
             ? String(meta.causeCode)

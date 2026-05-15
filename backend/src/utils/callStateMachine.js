@@ -120,9 +120,10 @@ export function mapHangupToTerminalStatus({
   hangupCause,
   hangupCauseCode,
   callAnsweredAt,
-  callStartedAt,
+  callStartedAt: _legacyCallStartedAtIgnored = null,
 } = {}) {
-  const answered = Boolean(callAnsweredAt || callStartedAt);
+  /** Only a persisted answer timestamp counts — callStartedAt alone caused false "completed". */
+  const answered = Boolean(callAnsweredAt);
   const cause = String(hangupCause || "")
     .trim()
     .toUpperCase();

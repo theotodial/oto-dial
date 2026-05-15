@@ -45,12 +45,13 @@ test("maps pre-answer hangups into deterministic terminal statuses", () => {
 });
 
 test("maps answered hangups to completed unless explicitly canceled", () => {
+  const answeredAt = new Date();
   assert.equal(
-    mapHangupToTerminalStatus({ hangupCause: "NORMAL_CLEARING", callStartedAt: new Date() }),
+    mapHangupToTerminalStatus({ hangupCause: "NORMAL_CLEARING", callAnsweredAt: answeredAt }),
     CALL_STATES.COMPLETED
   );
   assert.equal(
-    mapHangupToTerminalStatus({ hangupCause: "ORIGINATOR_CANCEL", callStartedAt: new Date() }),
+    mapHangupToTerminalStatus({ hangupCause: "ORIGINATOR_CANCEL", callAnsweredAt: answeredAt }),
     CALL_STATES.CANCELED
   );
 });

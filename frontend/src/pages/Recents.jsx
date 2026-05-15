@@ -438,7 +438,7 @@ function Recents() {
             timestamp: call.createdAt || call.created_at || call.timestamp || call.date,
             duration: call.durationSeconds ?? call.duration ?? call.call_duration ?? null,
             durationSeconds: call.durationSeconds ?? call.duration ?? call.call_duration ?? null,
-            status: call.status || 'completed',
+            status: call.status || null,
             direction: call.direction || (call.from_number || call.fromNumber ? 'outbound' : 'inbound')
           }));
         allItems.push(...filteredCalls);
@@ -621,7 +621,7 @@ function Recents() {
 
       if (!isMountedRef.current) return;
       if (callsResponse.error) {
-        setCalls([]);
+        console.warn('[Recents] calls fetch error — keeping prior call list', callsResponse);
       } else {
         setCalls(callsResponse.data?.calls || callsResponse.data || []);
       }
@@ -672,8 +672,7 @@ function Recents() {
       if (isMountedRef.current) fetchReadStateAndUnread();
     } catch (err) {
       if (isMountedRef.current) {
-        setCalls([]);
-        setChats([]);
+        console.warn('[Recents] fetchRecents failed — preserving lists', err);
       }
     } finally {
       if (isMountedRef.current) setLoading(false);
@@ -848,32 +847,35 @@ function Recents() {
     [archiveUserKey, archiveTick]
   );
 
-  // Combine calls and chats into chronological timeline (backend: callType, createdAt, durationFormatted)
-  const combinedRecents = [
-    ...filteredCalls.map(call => ({
-      id: call.id || call._id,
-      type: 'call',
-      phoneNumber: call.phoneNumber || call.to_number || call.toNumber,
-      date: call.createdAt || call.created_at || call.date,
-      direction: call.direction,
-      callType: call.callType || call.type,
-      durationFormatted: call.durationFormatted,
-      durationSeconds: call.durationSeconds,
-      data: call
-    })),
-    ...filteredChats.map(chat => ({
-      id: chat.id || chat._id,
-      type: 'sms',
-      phoneNumber: chat.phoneNumber || chat.phone_number,
-      date: chat.date || chat.created_at || chat.createdAt || chat.timestamp,
-      lastMessage: chat.lastMessage || chat.message,
-      data: chat
-    }))
-  ].sort((a, b) => {
-    const dateA = new Date(a.date || 0);
-    const dateB = new Date(b.date || 0);
-    return dateB - dateA; // Most recent first
-  });
+  const combinedRecents = useMemo(() => {
+    const rows = [
+      ...filteredCalls.map((call) => ({
+        id: `call-${String(call.id || call._id)}`,
+        type: 'call',
+        phoneNumber: call.phoneNumber || call.to_number || call.toNumber,
+        date: call.createdAt || call.created_at || call.date,
+        direction: call.direction,
+        callType: call.callType || call.type,
+        durationFormatted: call.durationFormatted,
+        durationSeconds: call.durationSeconds,
+        data: call,
+      })),
+      ...filteredChats.map((chat) => ({
+        id: `sms-${String(chat.id || chat._id || '')}-${String(chat.phoneNumber || chat.phone_number || '').replace(/\D/g, '') || 'unknown'}`,
+        type: 'sms',
+        phoneNumber: chat.phoneNumber || chat.phone_number,
+        date: chat.date || chat.created_at || chat.createdAt || chat.timestamp,
+        lastMessage: chat.lastMessage || chat.message,
+        data: chat,
+      })),
+    ];
+    return rows.sort((a, b) => {
+      const tb = new Date(b.date || 0).getTime();
+      const ta = new Date(a.date || 0).getTime();
+      if (tb !== ta) return tb - ta;
+      return String(a.id).localeCompare(String(b.id));
+    });
+  }, [filteredCalls, filteredChats]);
 
   // Recent contacts from call logs and chats for suggestions
   const recentContacts = [

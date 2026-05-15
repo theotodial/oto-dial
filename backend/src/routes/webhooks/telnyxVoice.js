@@ -1007,27 +1007,29 @@ router.post("/", async (req, res) => {
       let billableSeconds = 0;
       let cost = 0;
 
-      if (callPayload.billable_time !== undefined) {
+      const trulyAnswered =
+        Boolean(call.callAnsweredAt) ||
+        normalizeCallStatus(call.status) === CALL_STATES.ACTIVE ||
+        normalizeCallStatus(call.status) === CALL_STATES.ANSWERED;
+
+      if (callPayload.billable_time !== undefined && trulyAnswered) {
         billableSeconds = Number(callPayload.billable_time) || 0;
         durationSeconds = billableSeconds;
         console.log(`[CALL ENDED] Telnyx billable_time: ${billableSeconds}s`);
-      } else if (callPayload.duration_seconds !== undefined) {
+      } else if (callPayload.duration_seconds !== undefined && trulyAnswered) {
         durationSeconds = Number(callPayload.duration_seconds) || 0;
         billableSeconds = durationSeconds;
         console.log(`[CALL ENDED] Telnyx duration_seconds: ${durationSeconds}s`);
-      } else if (call.callInitiatedAt) {
-        const totalSeconds = Math.floor((endedAt - call.callInitiatedAt) / 1000);
-        durationSeconds = totalSeconds;
-        billableSeconds = totalSeconds;
-        console.log(`[CALL ENDED] duration from initiation: ${durationSeconds}s`);
-      } else if (call.callStartedAt) {
-        durationSeconds = Math.floor((endedAt - call.callStartedAt) / 1000);
+      } else if (trulyAnswered && call.callStartedAt) {
+        durationSeconds = Math.max(0, Math.floor((endedAt - call.callStartedAt) / 1000));
         billableSeconds = durationSeconds;
         console.log(`[CALL ENDED] duration from answer: ${durationSeconds}s`);
       } else {
-        durationSeconds = 1;
-        billableSeconds = 1;
-        console.log(`[CALL ENDED] no timestamps — minimum 1s billing`);
+        durationSeconds = 0;
+        billableSeconds = 0;
+        console.log(
+          `[CALL ENDED] zero billable duration (answered=${trulyAnswered}, status=${call.status})`
+        );
       }
 
       if (billableSeconds > 0) {
@@ -1041,7 +1043,7 @@ router.post("/", async (req, res) => {
         hangupCause,
         hangupCauseCode: callPayload.hangup_cause_code,
         callAnsweredAt: call.callAnsweredAt,
-        callStartedAt: call.callStartedAt,
+        callStartedAt: null,
       });
       if (!call.callAnsweredAt) {
         console.warn("[CALL ANSWER CHECK] call.hangup received without prior call.answered", {
