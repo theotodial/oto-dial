@@ -6,6 +6,7 @@ import { AuthProvider } from './context/AuthContext';
 import { SubscriptionProvider } from './context/SubscriptionContext';
 import { CallProvider } from './context/CallContext';
 import ErrorBoundary from './components/ErrorBoundary';
+import BootSplash from './components/BootSplash';
 import AppShell from './components/AppShell';
 
 function App() {
@@ -22,6 +23,7 @@ function App() {
 
   return (
     <ErrorBoundary>
+      <BootSplash />
       <ThemeProvider>
         <BrowserRouter>
           <AppStateProvider>

@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback, useMemo } from "react";
+import { createContext, useContext, useCallback, useMemo, useEffect } from "react";
 import API from "../api";
 import {
   buildLoginFallbackPayload,
@@ -19,6 +19,16 @@ export function AuthProvider({ children }) {
     clearAppState,
     refetchBootstrap,
   } = useAppState();
+
+  useEffect(() => {
+    try {
+      if (window.__OTODIAL_DEBUG__) {
+        window.__OTODIAL_DEBUG__.authReady = isReady;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }, [isReady]);
 
   const login = useCallback(async (email, password) => {
     const response = await API.post("/api/auth/login", { email, password });

@@ -1,9 +1,13 @@
 import axios from "axios";
+import { normalizeViteApiBaseUrl } from "./utils/viteApiBase";
 
 // Use VITE_API_URL from environment variables
 // In development: uses Vite proxy (empty string = relative URLs)
 // In production: uses VITE_API_URL if set, otherwise relative URLs
-const baseURL = import.meta.env.VITE_API_URL || "";
+const baseURL = normalizeViteApiBaseUrl(import.meta.env.VITE_API_URL || "");
+
+/** Resolved base after /api suffix normalization (for diagnostics only). */
+export const resolvedApiBaseURL = baseURL;
 
 /** Parsed client timeout; never below `floorMs` so telecom paths (WebRTC token/repair) are not clipped at 5s. */
 const rawTimeout = Number.parseInt(String(import.meta.env.VITE_API_TIMEOUT_MS || "").trim(), 10);

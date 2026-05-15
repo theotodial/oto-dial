@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { normalizeViteApiBaseUrl } from '../utils/viteApiBase';
 
 const GoogleIcon = () => (
   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
@@ -25,7 +26,7 @@ const EyeOffIcon = () => (
 );
 
 const buildGoogleOAuthUrl = () => {
-  const apiBase = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+  const apiBase = normalizeViteApiBaseUrl(import.meta.env.VITE_API_URL || '');
   return apiBase ? `${apiBase}/api/auth/google` : '/api/auth/google';
 };
 

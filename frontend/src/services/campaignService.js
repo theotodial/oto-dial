@@ -1,4 +1,5 @@
 import API from '../api';
+import { normalizeViteApiBaseUrl } from '../utils/viteApiBase';
 
 export async function listCampaigns() {
   const res = await API.get('/api/campaign');
@@ -157,7 +158,7 @@ export async function patchMessagingAutomation(payload) {
 }
 
 export async function downloadOptOutCsv() {
-  const base = String(import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+  const base = normalizeViteApiBaseUrl(String(import.meta.env.VITE_API_URL || ''));
   const token = localStorage.getItem('token');
   const url = base ? `${base}/api/campaign/opt-outs/export` : '/api/campaign/opt-outs/export';
   const res = await fetch(url, {

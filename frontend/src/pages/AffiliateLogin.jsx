@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import API from '../api';
 import { setAffiliateToken } from '../utils/affiliateAuth';
+import { normalizeViteApiBaseUrl } from '../utils/viteApiBase';
 
 const GoogleIcon = () => (
   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
@@ -13,7 +14,7 @@ const GoogleIcon = () => (
 );
 
 function buildAffiliateGoogleOAuthUrl() {
-  const apiBase = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+  const apiBase = normalizeViteApiBaseUrl(import.meta.env.VITE_API_URL || '');
   return apiBase ? `${apiBase}/api/affiliate/auth/google` : '/api/affiliate/auth/google';
 }
 

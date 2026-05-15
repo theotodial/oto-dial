@@ -63,10 +63,100 @@
       #root {
         min-height: 100vh;
       }
+      #otodial-boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483646;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0f172a;
+        color: #94a3b8;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 15px;
+        text-align: center;
+        padding: 24px;
+      }
+      #otodial-boot-splash.otodial-boot--warn {
+        color: #fcd34d;
+      }
     </style>
   </head>
   <body>
+    <div id="otodial-boot-splash" class="otodial-boot-splash">Loading OTODIAL…</div>
     <div id="root"></div>
+    <script>
+      (function () {
+        try {
+          window.__OTODIAL_DEBUG__ = window.__OTODIAL_DEBUG__ || {};
+          window.__OTODIAL_DEBUG__.bootState = window.__OTODIAL_DEBUG__.bootState || 'html';
+          console.log('[APP BOOT] html shell');
+        } catch (e) {}
+
+        function showSplashWarning(html) {
+          try {
+            var el = document.getElementById('otodial-boot-splash');
+            if (!el) return;
+            el.className = 'otodial-boot-splash otodial-boot--warn';
+            el.innerHTML = html;
+            el.style.display = 'flex';
+          } catch (_) {}
+        }
+
+        window.addEventListener(
+          'error',
+          function (event) {
+            try {
+              var msg = (event && event.message) || '';
+              var t = event && event.target;
+              if (t && t.tagName === 'SCRIPT' && t.src && /\/assets\/.+\.js(\?|$)/i.test(String(t.src))) {
+                console.error('[CHUNK LOAD ERROR]', t.src, msg);
+                try {
+                  if (!sessionStorage.getItem('otodial_chunk_reload_once')) {
+                    sessionStorage.setItem('otodial_chunk_reload_once', '1');
+                    window.location.reload();
+                    return;
+                  }
+                } catch (_) {}
+                showSplashWarning(
+                  '<div style="max-width:420px"><strong>Update available.</strong><br/><br/>Press <kbd>Ctrl+Shift+R</kbd> (hard refresh) to load the latest app.</div>'
+                );
+                return;
+              }
+              console.error('[WINDOW onerror]', msg, event && event.filename, event && event.lineno);
+            } catch (_) {}
+          },
+          true
+        );
+
+        window.addEventListener('unhandledrejection', function (event) {
+          try {
+            var r = event && event.reason;
+            console.error('[unhandledrejection]', r && r.message ? r.message : r);
+            if (r && String(r.message || r).toLowerCase().indexOf('dynamically imported module') !== -1) {
+              try {
+                if (!sessionStorage.getItem('otodial_chunk_reload_once')) {
+                  sessionStorage.setItem('otodial_chunk_reload_once', '1');
+                  window.location.reload();
+                }
+              } catch (_) {}
+            }
+          } catch (_) {}
+        });
+
+        window.addEventListener('load', function () {
+          try {
+            window.setTimeout(function () {
+              var splash = document.getElementById('otodial-boot-splash');
+              if (!splash || !splash.isConnected) return;
+              splash.className = 'otodial-boot-splash otodial-boot--warn';
+              splash.innerHTML =
+                '<div style="max-width:440px">OTODIAL is still starting…<br/><br/>If nothing appears, try a <strong>hard refresh</strong> (Ctrl+Shift+R).</div>';
+            }, 10000);
+          } catch (_) {}
+        });
+      })();
+    </script>
     <script type="text/javascript">
       (function (l) {
         if (l.search[1] === "/") {

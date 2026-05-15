@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import API from '../../api';
+import { viteApiOriginForSockets } from '../../utils/viteApiBase';
 
 const LIVE_LIMIT = 12;
 
@@ -53,7 +54,7 @@ function AdminUsers() {
     const token = localStorage.getItem('adminToken');
     if (!token) return undefined;
 
-    const socket = io(import.meta.env.VITE_API_URL || window.location.origin, {
+    const socket = io(viteApiOriginForSockets(import.meta.env.VITE_API_URL || ''), {
       path: '/socket.io',
       transports: ['websocket', 'polling'],
       auth: { token }

@@ -3,6 +3,7 @@ import { io } from "socket.io-client";
 import API from "../api";
 import { OTODIAL_SMS_OUTBOUND_EVENT } from "../constants/smsOutboundEvents";
 import { clearCachedFetch, removeStorageKey } from "../utils/appCache";
+import { viteApiOriginForSockets } from "../utils/viteApiBase";
 import {
   BOOTSTRAP_REFRESH_EVENT,
   BOOTSTRAP_REFRESH_STORAGE_KEY,
@@ -250,7 +251,7 @@ export function AppStateProvider({ children }) {
       return undefined;
     }
 
-    const base = (import.meta.env.VITE_API_URL || window.location.origin || "").replace(/\/$/, "");
+    const base = viteApiOriginForSockets(import.meta.env.VITE_API_URL || "");
     const socket = io(`${base}/user`, {
       path: "/socket.io",
       auth: { token: activeToken },
