@@ -18,6 +18,25 @@ import {
   markAuthoritativeAccepted,
   shouldAcceptAuthoritativePayload,
 } from '../services/callStateParityService';
+import {
+  createOutboundSession,
+  extractTelnyxIds,
+  markSessionTerminal,
+  reconcileMongoCallId,
+  registerRtcLeg,
+  resolveSdkCallFromClientMap,
+  rtcLog,
+  scheduleRtcReconcile,
+  snapshotEntry,
+  syncCallFromLeg,
+} from '../utils/rtcCallRegistry';
+import {
+  getLiveSdkLegs,
+  isOutboundSetupProtected,
+  isPreAnswerProgressLeg,
+  logCallLifecycle,
+  shouldBlockAutomaticCleanup,
+} from '../utils/callLifecycleGuards';
 
 const CallContext = createContext(null);
 
@@ -41,9 +60,21 @@ const isCallMinimalClient =
   import.meta.env.VITE_CALL_MINIMAL_MODE === 'true' ||
   import.meta.env.VITE_CALL_MINIMAL_MODE === '1';
 
-function safeHangupTelnyxCall(call) {
+/** Set from CallProvider — blocks hangup during outbound setup unless user-initiated. */
+const hangupGuardRef = { current: null };
+
+function safeHangupTelnyxCall(call, reason = 'unknown') {
   if (!call) return;
   try {
+    console.log('[HANGUP]', {
+      reason,
+      rtcCallId: call?.id ?? null,
+      callControlId: call?.callControlId ?? null,
+    });
+    if (typeof hangupGuardRef.current === 'function' && hangupGuardRef.current(reason)) {
+      console.warn('[HANGUP] blocked during protected outbound setup', { reason });
+      return;
+    }
     if (typeof call.hangup === 'function') call.hangup();
   } catch (e) {
     console.warn('[CALL EXECUTION] hangup_failed', e?.message || e);
@@ -550,6 +581,13 @@ export const CallProvider = ({ children }) => {
   const outboundRingbackStartedRef = useRef(false);
   /** DB row id for this outbound session — copy onto any adopted Telnyx leg */
   const outboundCallRecordIdRef = useRef(null);
+  /** Canonical frontend session id (registered before SDK newCall) */
+  const outboundLocalCallIdRef = useRef(null);
+  /** Stable Telnyx SDK call.id for the active UI leg (survives React rerenders). */
+  const activeCallIdRef = useRef(null);
+  /** Telnyx call session id for the active outbound dial. */
+  const activeSessionIdRef = useRef(null);
+  const lifecycleGuardRefsRef = useRef(null);
   const authoritativeBackendSeqRef = useRef(0);
   /** `newCall()` return value — often not the leg that actually rings PSTN */
   const outboundNewCallLegRef = useRef(null);
@@ -668,16 +706,92 @@ export const CallProvider = ({ children }) => {
     outboundDialStartedAtRef.current = 0;
     outboundRingbackStartedRef.current = false;
     outboundCallRecordIdRef.current = null;
+    outboundLocalCallIdRef.current = null;
+    activeCallIdRef.current = null;
+    activeSessionIdRef.current = null;
     outboundNewCallLegRef.current = null;
     outboundLegArrivalMsRef.current = {};
     webRtcDbSyncRef.current = { ringing: false, active: false, terminal: false };
   }, []);
 
+  lifecycleGuardRefsRef.current = {
+    outboundDialActiveRef,
+    outboundDialStartedAtRef,
+    callStateRef,
+    telnyxClientRef,
+    manualHangupRef,
+    userEndedFullCallRef,
+  };
+
+  hangupGuardRef.current = (reason) =>
+    shouldBlockAutomaticCleanup(
+      reason,
+      lifecycleGuardRefsRef.current,
+      isTelnyxTerminalCall
+    );
+
+  const attachActiveCallRefs = useCallback((call) => {
+    if (!call) return;
+    const ids = extractTelnyxIds(call);
+    if (ids.rtcCallId) activeCallIdRef.current = ids.rtcCallId;
+    if (ids.telnyxSessionId) activeSessionIdRef.current = ids.telnyxSessionId;
+    logCallLifecycle('[CALL REF]', {
+      activeCallId: activeCallIdRef.current,
+      activeSessionId: activeSessionIdRef.current,
+      localCallId: outboundLocalCallIdRef.current,
+      mongoCallId: outboundCallRecordIdRef.current,
+    });
+  }, []);
+
+  const patchCallProviderIds = useCallback(async (mongoCallId, call) => {
+    if (!mongoCallId || !call) return;
+    const ids = extractTelnyxIds(call);
+    const body = {};
+    if (ids.telnyxCallControlId) body.telnyxCallControlId = ids.telnyxCallControlId;
+    if (ids.telnyxSessionId) body.telnyxCallSessionId = ids.telnyxSessionId;
+    if (ids.rtcCallId) body.webrtcRtcCallId = ids.rtcCallId;
+    if (outboundLocalCallIdRef.current) {
+      body.webrtcLocalCallId = outboundLocalCallIdRef.current;
+    }
+    if (Object.keys(body).length === 0) return;
+    try {
+      await API.patch(`/api/calls/${mongoCallId}`, body);
+    } catch (e) {
+      console.warn('[RTC CALL RECONCILE] provider id PATCH:', e?.message || e);
+    }
+  }, []);
+
   // Handle call end
   const handleCallEnd = useCallback(
     async ({ preserveError = false, finalStatus = "completed", dropSource = null } = {}) => {
+    const cleanupReason = dropSource?.reason || 'handleCallEnd';
+    if (
+      shouldBlockAutomaticCleanup(
+        cleanupReason,
+        lifecycleGuardRefsRef.current,
+        isTelnyxTerminalCall
+      )
+    ) {
+      logCallLifecycle('[CLEANUP]', {
+        blocked: true,
+        reason: cleanupReason,
+        uiCallState: callStateRef.current,
+        activeCallId: activeCallIdRef.current,
+        liveSdkLegs: getLiveSdkLegs(telnyxClientRef.current, isTelnyxTerminalCall).map(
+          (l) => l?.id
+        ),
+      });
+      return;
+    }
+
     let userVisibleFailMessage = null;
     try {
+      logCallLifecycle('[CLEANUP]', {
+        blocked: false,
+        reason: cleanupReason,
+        activeCallId: activeCallIdRef.current,
+        mongoCallId: outboundCallRecordIdRef.current,
+      });
       const clientSnap = telnyxClientRef.current;
       const legSnap = currentCallRef.current;
       logCallDropSource(
@@ -794,6 +908,11 @@ export const CallProvider = ({ children }) => {
         });
       }
       lastOutboundHangupMetaRef.current = null;
+
+      const localId = outboundLocalCallIdRef.current;
+      if (localId) {
+        markSessionTerminal(localId);
+      }
 
       pollBypassUntilRef.current = Date.now() + 60000;
       ignoreGhostIncomingUntilRef.current = Date.now() + 120000;
@@ -916,6 +1035,22 @@ export const CallProvider = ({ children }) => {
           ['completed', 'failed', 'no-answer', 'busy', 'rejected', 'canceled'].includes(st) &&
           callStateRef.current !== CALL_STATES.IDLE
         ) {
+          const liveLegs = getLiveSdkLegs(
+            telnyxClientRef.current,
+            isTelnyxTerminalCall
+          );
+          if (
+            outboundDialActiveRef.current &&
+            liveLegs.length > 0 &&
+            isOutboundSetupProtected(lifecycleGuardRefsRef.current, isTelnyxTerminalCall)
+          ) {
+            logCallLifecycle('[CALL FLOW]', {
+              stage: 'server_terminal_deferred_during_sdk_setup',
+              serverStatus: st,
+              liveSdkLegIds: liveLegs.map((l) => l?.id),
+            });
+            return;
+          }
           console.warn('[CALL FLOW] server reports terminal call; syncing UI', st);
           handleCallEndRef.current?.({
             preserveError: true,
@@ -949,13 +1084,60 @@ export const CallProvider = ({ children }) => {
   }, [callState]);
 
   // Handle call state updates from Telnyx
-  const handleCallStateChange = useCallback(async (call) => {
-    if (!call) return;
+  const handleCallStateChange = useCallback(async (incomingCall) => {
+    if (!incomingCall) return;
     
     // Wrap entire function in try-catch to prevent any errors from propagating
     try {
+      let call = incomingCall;
+      const legIds = extractTelnyxIds(call);
+      const client = telnyxClientRef.current;
+      if (
+        legIds.rtcCallId &&
+        client?.calls &&
+        !client.calls[legIds.rtcCallId]
+      ) {
+        const resolved = resolveSdkCallFromClientMap(client, legIds);
+        if (resolved) {
+          logCallLifecycle('[CALL REF]', {
+            stage: 'resolved_stale_call_ref',
+            fromRtcCallId: legIds.rtcCallId,
+            toRtcCallId: resolved.id ?? null,
+          });
+          call = resolved;
+        }
+      }
+
+      logCallLifecycle('[SDK EVENT]', {
+        ...extractTelnyxIds(call),
+        sdkState: normalizeTelnyxCallState(getRawTelnyxCallState(call)),
+        direction: call.direction ?? null,
+        clientCallIds: client?.calls ? Object.keys(client.calls) : [],
+      });
+
+      const sync = syncCallFromLeg(call, outboundLocalCallIdRef.current);
+      if (!sync.entry && outboundDialActiveRef.current) {
+        const ids = extractTelnyxIds(call);
+        scheduleRtcReconcile('call_state_change', ids, () => {
+          syncCallFromLeg(call, outboundLocalCallIdRef.current);
+          handleCallStateChangeRef.current(call);
+        });
+      }
+      if (sync.entry?.mongoCallId && !call._dbCallId) {
+        call._dbCallId = sync.entry.mongoCallId;
+      }
+
+      attachActiveCallRefs(call);
+
       const rawState = getRawTelnyxCallState(call);
       const state = normalizeTelnyxCallState(rawState);
+      rtcLog('[RTC CALL STATE]', {
+        ...snapshotEntry(sync.entry),
+        ...extractTelnyxIds(call),
+        sdkState: state,
+        uiCallState: callStateRef.current,
+        direction: call.direction ?? null,
+      });
       console.log('📱 Call state changed:', state, '(raw:', rawState, ') direction:', call.direction, call);
 
       // Inbound ringing: handle BEFORE currentCallRef. Skip if this is our outbound PSTN leg (often mis-tagged inbound).
@@ -1191,10 +1373,17 @@ export const CallProvider = ({ children }) => {
             void API.patch(`/api/calls/${call._dbCallId}`, {
               status: "ringing",
             }).catch((e) => console.warn("[WEBRTC] ringing PATCH:", e));
+            void patchCallProviderIds(call._dbCallId, audioSource);
           }
-          setCallState(CALL_STATES.RINGING);
-          setCallPhaseLabel('Ringing...');
-          console.log('[CALL FLOW] STATE UPDATED → ringing (Telnyx ringing/early)');
+          if (state === 'early' && outboundDialActiveRef.current && call._sawRinging) {
+            setCallState(CALL_STATES.CONNECTING);
+            setCallPhaseLabel('Connecting...');
+            console.log('[CALL FLOW] STATE UPDATED → connecting (early media after ring)');
+          } else {
+            setCallState(CALL_STATES.RINGING);
+            setCallPhaseLabel('Ringing...');
+            console.log('[CALL FLOW] STATE UPDATED → ringing (Telnyx ringing/early)');
+          }
           if (!outboundRingbackStartedRef.current) {
             outboundRingbackStartedRef.current = true;
             try {
@@ -1272,6 +1461,7 @@ export const CallProvider = ({ children }) => {
               status: "in-progress",
               callStartedAt: new Date().toISOString(),
             }).catch((e) => console.warn("[WEBRTC] active PATCH:", e));
+            void patchCallProviderIds(audioSource._dbCallId, audioSource);
           }
           setCallPhaseLabel(null);
           setCallState(CALL_STATES.ACTIVE);
@@ -1422,7 +1612,34 @@ export const CallProvider = ({ children }) => {
               return false;
             });
 
-          if (sessionStillAlive) {
+          const preAnswerSiblingAlive =
+            outboundDialActiveRef.current &&
+            !hadConnectedPhase &&
+            remaining.some((x) =>
+              isPreAnswerProgressLeg(
+                x,
+                (c) => normalizeTelnyxCallState(getRawTelnyxCallState(c)),
+                callHasLiveRemoteAudio
+              )
+            );
+
+          const outboundGracePeriod =
+            outboundDialActiveRef.current &&
+            !userEndedFullCallRef.current &&
+            Number(outboundDialStartedAtRef.current || 0) > 0 &&
+            Date.now() - Number(outboundDialStartedAtRef.current) < 12_000 &&
+            remaining.length === 0;
+
+          if (outboundGracePeriod) {
+            logCallLifecycle('[CALL FLOW]', {
+              stage: 'ignored_terminal_during_outbound_grace',
+              eventName: state,
+              rtcCallId: call?.id ?? null,
+            });
+            break;
+          }
+
+          if (sessionStillAlive || preAnswerSiblingAlive) {
             logCallDropSource('ignored_terminal_on_secondary_leg', {
               ...snapshotTelnyxLegForDropLog(
                 call,
@@ -1512,7 +1729,7 @@ export const CallProvider = ({ children }) => {
         }
       }
     }
-  }, [startDurationTimer, handleCallEnd]);
+  }, [startDurationTimer, handleCallEnd, patchCallProviderIds, attachActiveCallRefs]);
 
   // Handle incoming call
   const handleIncomingCallEvent = useCallback((call) => {
@@ -1541,6 +1758,9 @@ export const CallProvider = ({ children }) => {
       console.log('📱 Outbound dial in progress — treating inbound-tagged leg as same session (not incoming UI)');
       if (call?.id != null && outboundLegArrivalMsRef.current[call.id] == null) {
         outboundLegArrivalMsRef.current[call.id] = Date.now();
+      }
+      if (call && outboundLocalCallIdRef.current) {
+        registerRtcLeg(outboundLocalCallIdRef.current, call);
       }
       handleCallStateChangeRef.current(call);
       return;
@@ -1897,8 +2117,48 @@ export const CallProvider = ({ children }) => {
           loginToken ? '(minted)' : creds.sipUsername
         );
 
-        // Disconnect existing client if any
+        const protectedSession =
+          outboundDialActiveRef.current ||
+          callStateRef.current !== CALL_STATES.IDLE ||
+          getLiveSdkLegs(telnyxClientRef.current, isTelnyxTerminalCall).length > 0;
+
+        if (telnyxClientRef.current && protectedSession) {
+          logCallLifecycle('[CALL FLOW]', {
+            stage: 'initializeClient_reuse_client_active_session',
+            refReady: isClientReadyRef.current,
+            uiCallState: callStateRef.current,
+            liveLegs: getLiveSdkLegs(telnyxClientRef.current, isTelnyxTerminalCall).map(
+              (l) => l?.id
+            ),
+          });
+          if (isClientReadyRef.current && isInitializedRef.current) {
+            setIsInitializing(false);
+            return true;
+          }
+          if (initializationPromiseRef.current) {
+            return initializationPromiseRef.current;
+          }
+          return new Promise((resolve) => {
+            const started = Date.now();
+            const tick = setInterval(() => {
+              if (isClientReadyRef.current && isInitializedRef.current) {
+                clearInterval(tick);
+                setIsInitializing(false);
+                resolve(true);
+              } else if (Date.now() - started > 30_000) {
+                clearInterval(tick);
+                setIsInitializing(false);
+                resolve(false);
+              }
+            }, 200);
+          });
+        }
+
+        // Disconnect existing client only when no live call session
         if (telnyxClientRef.current) {
+          logCallLifecycle('[CLEANUP]', {
+            stage: 'initializeClient_disconnect_previous_client',
+          });
           try {
             telnyxClientRef.current.disconnect();
           } catch (e) {
@@ -2102,6 +2362,9 @@ export const CallProvider = ({ children }) => {
         client.on('telnyx.rtc.incoming', (call) => {
           logTelnyxSdkEvent('telnyx.rtc.incoming', { id: call?.id, direction: call?.direction });
           console.log('📱 telnyx.rtc.incoming:', call);
+          if (outboundDialActiveRef.current && call && outboundLocalCallIdRef.current) {
+            registerRtcLeg(outboundLocalCallIdRef.current, call);
+          }
           handleIncomingCallEventRef.current(call);
         });
 
@@ -2112,12 +2375,21 @@ export const CallProvider = ({ children }) => {
           });
           const call = notification?.call;
           const type = notification?.type;
+          rtcLog('[RTC EVENT]', {
+            eventType: type || null,
+            ...extractTelnyxIds(call),
+            localCallId: outboundLocalCallIdRef.current,
+            mongoCallId: outboundCallRecordIdRef.current,
+          });
           // callUpdate is how @telnyx/webrtc signals state changes — there is no call.on('stateChange')
           const isCallUpdate =
             type === 'callUpdate' ||
             type === 'verticast.callUpdate' ||
             String(type || '').endsWith('callUpdate');
           if (call && isCallUpdate) {
+            if (outboundDialActiveRef.current && outboundLocalCallIdRef.current) {
+              registerRtcLeg(outboundLocalCallIdRef.current, call);
+            }
             handleCallStateChangeRef.current(call);
           }
           if (type === 'incomingCall' && call) {
@@ -2138,6 +2410,9 @@ export const CallProvider = ({ children }) => {
         client.on('call', (call) => {
           if (!call) return;
           logTelnyxSdkEvent('call', { id: call?.id, direction: call?.direction });
+          if (outboundDialActiveRef.current && outboundLocalCallIdRef.current) {
+            registerRtcLeg(outboundLocalCallIdRef.current, call);
+          }
           if (outboundDialActiveRef.current && call.id != null && outboundLegArrivalMsRef.current[call.id] == null) {
             outboundLegArrivalMsRef.current[call.id] = Date.now();
           }
@@ -2444,6 +2719,13 @@ export const CallProvider = ({ children }) => {
 
       let callRecordId = null;
 
+      const localSession = createOutboundSession({
+        traceId,
+        destination: destE164,
+        caller: callerE164,
+      });
+      outboundLocalCallIdRef.current = localSession.localCallId;
+
       console.log('[CALL FLOW] WebRTC newCall next', { from: callerE164, to: destE164 });
 
       execTrace(traceId, 'makeCall:before_SDK_newCall', {
@@ -2522,13 +2804,20 @@ export const CallProvider = ({ children }) => {
 
       outboundDialActiveRef.current = true;
       outboundDialStartedAtRef.current = Date.now();
+      registerRtcLeg(localSession.localCallId, call);
+      attachActiveCallRefs(call);
       currentCallRef.current = call;
       outboundNewCallLegRef.current = call;
       outboundLegArrivalMsRef.current = { [call.id]: Date.now() };
       call._dbCallId = callRecordId;
+      call._localCallId = localSession.localCallId;
       call._usedDefaultCallerFallback = false;
 
-      console.log("[WEBRTC] CALL INIT", { callId: callRecordId, legId: call.id });
+      console.log("[WEBRTC] CALL INIT", {
+        callId: callRecordId,
+        legId: call.id,
+        localCallId: localSession.localCallId,
+      });
       if (typeof call.on === "function") {
         try {
           call.on("error", (err) => {
@@ -2595,36 +2884,60 @@ export const CallProvider = ({ children }) => {
       }
 
       void (async () => {
+        const persistDelaysMs = [0, 2000, 5000, 10000];
         try {
           execTrace(traceId, 'persist:after_newCall:start', {});
-          const saved = await saveCallRecord(
-            destE164,
-            callerE164,
-            'outbound',
-            'initiated',
-            traceId
-          );
-          execTrace(traceId, 'persist:after_newCall:saveCallRecord', {
-            ok: saved.ok,
-            callId: saved.callId || null,
-            err: saved.error || null,
-          });
+          let saved = { ok: false, error: 'not_attempted' };
+          for (let attempt = 0; attempt < persistDelaysMs.length; attempt++) {
+            if (persistDelaysMs[attempt] > 0) {
+              await new Promise((r) => setTimeout(r, persistDelaysMs[attempt]));
+            }
+            if (!outboundDialActiveRef.current) return;
+            saved = await saveCallRecord(
+              destE164,
+              callerE164,
+              'outbound',
+              'initiated',
+              traceId
+            );
+            execTrace(traceId, 'persist:after_newCall:saveCallRecord', {
+              attempt,
+              ok: saved.ok,
+              callId: saved.callId || null,
+              err: saved.error || null,
+            });
+            if (saved.ok) break;
+          }
           if (!saved.ok) {
             console.error('[CALL EXECUTION] persist_after_newCall_failed', saved);
-            safeHangupTelnyxCall(currentCallRef.current);
-            outboundDialActiveRef.current = false;
-            outboundCallRecordIdRef.current = null;
-            setError(saved.error || 'Could not register call — disconnected');
-            setCallState(CALL_STATES.IDLE);
-            setCallPhaseLabel(null);
-            resetOutboundRetryState();
+            rtcLog('[RTC CALL ERROR]', {
+              reason: 'persist_failed_rtc_continues',
+              ...snapshotEntry(localSession),
+              error: saved.error || null,
+            });
+            setError(
+              (saved.error || 'Could not register call with server') +
+                ' — call continues; billing may sync when connected.'
+            );
             return;
           }
           const id = saved.callId;
           callRecordId = id;
           outboundCallRecordIdRef.current = id;
-          call._dbCallId = id;
-          console.log('[CALL FLOW] CALL CREATED (DB async)', { callId: id, legId: call.id });
+          reconcileMongoCallId(localSession.localCallId, id);
+          const liveLeg = currentCallRef.current || call;
+          liveLeg._dbCallId = id;
+          if (telnyxClientRef.current?.calls) {
+            for (const leg of Object.values(telnyxClientRef.current.calls)) {
+              if (leg) leg._dbCallId = id;
+            }
+          }
+          void patchCallProviderIds(id, liveLeg);
+          console.log('[CALL FLOW] CALL CREATED (DB async)', {
+            callId: id,
+            legId: call.id,
+            localCallId: localSession.localCallId,
+          });
 
           if (isCallMinimalClient) {
             console.log('[CALL FLOW] VITE_CALL_MINIMAL_MODE: skipped repair-outbound');
@@ -2663,13 +2976,15 @@ export const CallProvider = ({ children }) => {
           }
         } catch (e) {
           console.error('[CALL EXECUTION] persist_after_newCall_throw', e);
-          safeHangupTelnyxCall(currentCallRef.current);
-          outboundDialActiveRef.current = false;
-          outboundCallRecordIdRef.current = null;
-          setError(e?.message || 'Call registration failed');
-          setCallState(CALL_STATES.IDLE);
-          setCallPhaseLabel(null);
-          resetOutboundRetryState();
+          rtcLog('[RTC CALL ERROR]', {
+            reason: 'persist_throw_rtc_continues',
+            localCallId: localSession.localCallId,
+            message: e?.message || String(e),
+          });
+          setError(
+            (e?.message || 'Call registration failed') +
+              ' — call continues locally.'
+          );
         }
       })();
 
@@ -2685,9 +3000,14 @@ export const CallProvider = ({ children }) => {
         if (outboundDialActiveRef.current && callsMap) {
           const list = Object.values(callsMap).filter(Boolean);
           if (list.length === 0) {
-            if (sdkCallStatePollRef.current != null) {
-              clearInterval(sdkCallStatePollRef.current);
-              sdkCallStatePollRef.current = null;
+            const startedAt = Number(outboundDialStartedAtRef.current || 0);
+            const youngSession =
+              startedAt > 0 && Date.now() - startedAt < 120_000;
+            if (!youngSession) {
+              if (sdkCallStatePollRef.current != null) {
+                clearInterval(sdkCallStatePollRef.current);
+                sdkCallStatePollRef.current = null;
+              }
             }
             return;
           }
@@ -2713,6 +3033,14 @@ export const CallProvider = ({ children }) => {
             if (shouldAdopt) {
               console.log('[CALL FLOW] Adopting better outbound leg for UI (no hangup on sibling leg)');
               outboundNewCallLegRef.current = c;
+              if (outboundLocalCallIdRef.current) {
+                registerRtcLeg(outboundLocalCallIdRef.current, c);
+              }
+            }
+          }
+          for (const leg of list) {
+            if (leg && outboundLocalCallIdRef.current) {
+              registerRtcLeg(outboundLocalCallIdRef.current, leg);
             }
           }
         }
@@ -2744,7 +3072,7 @@ export const CallProvider = ({ children }) => {
       const recordIdToFail = outboundCallRecordIdRef.current;
       const liveLeg = currentCallRef.current;
       if (liveLeg) {
-        safeHangupTelnyxCall(liveLeg);
+        safeHangupTelnyxCall(liveLeg, 'makeCall_catch_before_leg');
       }
       outboundDialActiveRef.current = false;
       outboundDialStartedAtRef.current = 0;
@@ -2775,7 +3103,9 @@ export const CallProvider = ({ children }) => {
     saveCallRecord,
     ensureMicrophonePermission,
     fixPhoneConfiguration,
-    resetOutboundRetryState
+    resetOutboundRetryState,
+    patchCallProviderIds,
+    attachActiveCallRefs,
   ]); // Removed frequently changing deps
 
   const hangupAllSessionCalls = useCallback(() => {
@@ -3074,6 +3404,7 @@ export const CallProvider = ({ children }) => {
     if (!hasUserToken) return;
     if (isClientReadyRef.current || isInitializingRef.current) return;
     if (callStateRef.current !== CALL_STATES.IDLE) return;
+    if (outboundDialActiveRef.current) return;
 
     const timer = window.setTimeout(() => {
       initializeClient().catch((e) => {
@@ -3179,6 +3510,17 @@ export const CallProvider = ({ children }) => {
       unmountDisconnectTimerRef.current = window.setTimeout(() => {
         unmountDisconnectTimerRef.current = null;
         if (callProviderAliveRef.current) {
+          return;
+        }
+        if (
+          outboundDialActiveRef.current ||
+          callStateRef.current !== CALL_STATES.IDLE ||
+          getLiveSdkLegs(telnyxClientRef.current, isTelnyxTerminalCall).length > 0
+        ) {
+          logCallLifecycle('[CLEANUP]', {
+            stage: 'skip_unmount_disconnect_active_call',
+            uiCallState: callStateRef.current,
+          });
           return;
         }
         if (telnyxClientRef.current) {

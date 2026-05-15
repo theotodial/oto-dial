@@ -744,6 +744,9 @@ router.patch("/:id", async (req, res) => {
       callEndedAt,
       callStartedAt,
       telnyxCallControlId,
+      telnyxCallSessionId,
+      webrtcRtcCallId,
+      webrtcLocalCallId,
       hangupCause,
       hangupCauseCode,
       lastHeartbeatAt,
@@ -1127,6 +1130,15 @@ router.patch("/:id", async (req, res) => {
     if (callStartedAt) metadataSet.callStartedAt = new Date(callStartedAt);
     if (telnyxCallControlId !== undefined) {
       metadataSet.telnyxCallControlId = telnyxCallControlId || null;
+    }
+    if (telnyxCallSessionId !== undefined) {
+      metadataSet.telnyxCallSessionId = telnyxCallSessionId || null;
+    }
+    if (webrtcRtcCallId !== undefined) {
+      metadataSet.webrtcRtcCallId = webrtcRtcCallId || null;
+    }
+    if (webrtcLocalCallId !== undefined) {
+      metadataSet.webrtcLocalCallId = webrtcLocalCallId || null;
     }
     if (lastHeartbeatAt) {
       metadataSet.lastHeartbeatAt = new Date(lastHeartbeatAt);

@@ -15,6 +15,18 @@ const callSchema = new mongoose.Schema(
       index: true,
     },
 
+    /** WebRTC client @telnyx/webrtc Call.id (Verto leg) — reconciles SDK events to DB row. */
+    webrtcRtcCallId: {
+      type: String,
+      default: null,
+    },
+
+    /** Frontend rtcCallRegistry localCallId — correlates dial trace across legs. */
+    webrtcLocalCallId: {
+      type: String,
+      default: null,
+    },
+
     /** Additional leg control IDs seen on webhooks (answered/hangup may not match primary). */
     telnyxLegControlIds: {
       type: [String],
