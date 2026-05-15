@@ -67,6 +67,52 @@ function execTrace(traceId, stage, fields = {}) {
   }
 }
 
+/**
+ * Production disconnect forensics — pair with Telnyx + backend logs.
+ * @param {string} reason
+ * @param {Record<string, unknown>} fields
+ */
+function logCallDropSource(reason, fields = {}) {
+  try {
+    console.warn('[CALL DROP SOURCE]', {
+      reason,
+      t: new Date().toISOString(),
+      ...fields,
+    });
+  } catch {
+    console.warn('[CALL DROP SOURCE]', reason, fields);
+  }
+}
+
+/** Snapshot for [CALL DROP SOURCE] lines (no React refs — pass values in). */
+function snapshotTelnyxLegForDropLog(call, telnyxClient, durationSec, uiCallState, extra = {}) {
+  const pc = call?.peer?.instance;
+  let websocketState = null;
+  try {
+    websocketState =
+      telnyxClient?.connection?.state ??
+      telnyxClient?.session?.connection?.state ??
+      (typeof telnyxClient?.connected === 'boolean'
+        ? telnyxClient.connected
+          ? 'client_connected_true'
+          : 'client_connected_false'
+        : null);
+  } catch (_) {
+    websocketState = 'unknown';
+  }
+  return {
+    ...extra,
+    sdkState: call ? normalizeTelnyxCallState(getRawTelnyxCallState(call)) : null,
+    callState: uiCallState ?? null,
+    peerConnectionState: pc?.connectionState ?? null,
+    iceConnectionState: pc?.iceConnectionState ?? null,
+    websocketState,
+    activeCallDurationSec: durationSec ?? 0,
+    callControlId: call?.callControlId ?? null,
+    callId: call?.id ?? null,
+  };
+}
+
 function traceHeaders(traceId) {
   return traceId && typeof traceId === 'string'
     ? { headers: { 'x-oto-exec-trace': traceId } }
@@ -629,9 +675,19 @@ export const CallProvider = ({ children }) => {
 
   // Handle call end
   const handleCallEnd = useCallback(
-    async ({ preserveError = false, finalStatus = "completed" } = {}) => {
+    async ({ preserveError = false, finalStatus = "completed", dropSource = null } = {}) => {
     let userVisibleFailMessage = null;
     try {
+      const clientSnap = telnyxClientRef.current;
+      const legSnap = currentCallRef.current;
+      logCallDropSource(
+        dropSource?.reason || 'handleCallEnd',
+        snapshotTelnyxLegForDropLog(legSnap, clientSnap, callDurationRef.current, callStateRef.current, {
+          eventName: dropSource?.eventName ?? null,
+          userId: null,
+          note: dropSource?.note ?? null,
+        })
+      );
       console.log('📱 Call ended, cleaning up...');
 
       const oid = outboundCallRecordIdRef.current;
@@ -849,7 +905,14 @@ export const CallProvider = ({ children }) => {
           callStateRef.current !== CALL_STATES.IDLE
         ) {
           console.warn('[CALL FLOW] server reports terminal call; syncing UI', st);
-          handleCallEndRef.current?.({ preserveError: true });
+          handleCallEndRef.current?.({
+            preserveError: true,
+            dropSource: {
+              reason: 'server_call_document_terminal',
+              eventName: st,
+              note: 'GET /api/calls/:id reconciliation poll',
+            },
+          });
         }
       } catch (_) {
         /* ignore */
@@ -1060,7 +1123,7 @@ export const CallProvider = ({ children }) => {
               }).catch((e) => console.warn('[WEBRTC] ringing PATCH:', e));
             }
             setCallState(CALL_STATES.RINGING);
-            setCallPhaseLabel('Waiting for answer...');
+            setCallPhaseLabel('Ringing...');
             console.log(
               '[CALL FLOW] STATE UPDATED → ringing (outbound trying/recovering — PSTN in progress)'
             );
@@ -1075,7 +1138,7 @@ export const CallProvider = ({ children }) => {
           } catch (err) {
             console.error('Error in outbound trying→ringing UI (handled):', err);
             setCallState(CALL_STATES.RINGING);
-            setCallPhaseLabel('Waiting for answer...');
+            setCallPhaseLabel('Ringing...');
           }
         } else {
           if (shouldHoldOutboundUiRank(callStateRef)) {
@@ -1118,7 +1181,7 @@ export const CallProvider = ({ children }) => {
             }).catch((e) => console.warn("[WEBRTC] ringing PATCH:", e));
           }
           setCallState(CALL_STATES.RINGING);
-          setCallPhaseLabel('Waiting for answer...');
+          setCallPhaseLabel('Ringing...');
           console.log('[CALL FLOW] STATE UPDATED → ringing (Telnyx ringing/early)');
           if (!outboundRingbackStartedRef.current) {
             outboundRingbackStartedRef.current = true;
@@ -1131,7 +1194,7 @@ export const CallProvider = ({ children }) => {
         } catch (err) {
           console.error('Error in ringing state (handled):', err);
           setCallState(CALL_STATES.RINGING);
-          setCallPhaseLabel('Waiting for answer...');
+          setCallPhaseLabel('Ringing...');
         }
         break;
       case 'answering':
@@ -1170,7 +1233,7 @@ export const CallProvider = ({ children }) => {
                 callStateRef.current !== CALL_STATES.HELD
               ) {
                 setCallState(CALL_STATES.RINGING);
-                setCallPhaseLabel('Waiting for answer...');
+                setCallPhaseLabel('Ringing...');
                 if (!outboundRingbackStartedRef.current) {
                   outboundRingbackStartedRef.current = true;
                   try {
@@ -1329,12 +1392,47 @@ export const CallProvider = ({ children }) => {
           const hadConnectedPhase =
             webRtcDbSyncRef.current.active ||
             Boolean(call?._sawActive) ||
+            Boolean(currentCallRef.current?._sawActive) ||
             callStateRef.current === CALL_STATES.ACTIVE ||
+            callStateRef.current === CALL_STATES.HELD ||
             (callDurationRef.current || 0) > 0;
           const client = telnyxClientRef.current;
-          const remaining = Object.values(client?.calls || {}).filter(
-            (x) => x && x !== call && !isTelnyxTerminalCall(x)
-          );
+          const allLegs = Object.values(client?.calls || {}).filter(Boolean);
+          const remaining = allLegs.filter((x) => x !== call && !isTelnyxTerminalCall(x));
+
+          const sessionStillAlive =
+            outboundDialActiveRef.current &&
+            hadConnectedPhase &&
+            remaining.some((x) => {
+              const s = normalizeTelnyxCallState(getRawTelnyxCallState(x));
+              if (s === 'active' || s === 'held' || s === 'answering') return true;
+              if (callHasLiveRemoteAudio(x)) return true;
+              return false;
+            });
+
+          if (sessionStillAlive) {
+            logCallDropSource('ignored_terminal_on_secondary_leg', {
+              ...snapshotTelnyxLegForDropLog(
+                call,
+                client,
+                callDurationRef.current,
+                callStateRef.current,
+                { eventName: state }
+              ),
+              remainingLegIds: remaining.map((x) => x?.id).filter((id) => id != null),
+            });
+            lastCallUiFingerprintRef.current = '';
+            const best = pickBestOutboundLeg(remaining, outboundLegArrivalMsRef.current);
+            if (best) {
+              currentCallRef.current = best;
+              if (!best._dbCallId && outboundCallRecordIdRef.current) {
+                best._dbCallId = outboundCallRecordIdRef.current;
+              }
+              handleCallStateChangeRef.current(best);
+            }
+            break;
+          }
+
           // Only hand off to sibling legs during pre-answer races.
           // After any connected phase, sibling legs are often stale parked/ringing ghosts.
           if (outboundDialActiveRef.current && remaining.length > 0 && !hadConnectedPhase) {
@@ -1356,7 +1454,22 @@ export const CallProvider = ({ children }) => {
               fromCall
             );
           }
-          handleCallEnd();
+          logCallDropSource('sdk_leg_terminal_invoking_handleCallEnd', {
+            ...snapshotTelnyxLegForDropLog(
+              call,
+              client,
+              callDurationRef.current,
+              callStateRef.current,
+              { eventName: state }
+            ),
+          });
+          handleCallEnd({
+            dropSource: {
+              reason: 'sdk_leg_terminal',
+              eventName: state,
+              call,
+            },
+          });
         } catch (err) {
           console.error('Error in handleCallEnd (handled):', err);
         }
@@ -1821,6 +1934,13 @@ export const CallProvider = ({ children }) => {
             logTelnyxSdkEvent('telnyx.ready', { connected: client?.connected });
             console.log('✅ Telnyx WebRTC client ready!');
             execTrace(traceId, 'initializeClient:telnyx.ready', {});
+            try {
+              if (callStateRef.current !== CALL_STATES.IDLE) {
+                setCallPhaseLabel(null);
+              }
+            } catch (_) {
+              /* ignore */
+            }
             syncClientReady(true);
             setError(null);
             setIsInitializing(false);
@@ -1852,6 +1972,20 @@ export const CallProvider = ({ children }) => {
 
         client.on('telnyx.socket.close', () => {
           logTelnyxSdkEvent('telnyx.socket.close', { connected: client?.connected });
+          const cs = callStateRef.current;
+          if (
+            cs === CALL_STATES.ACTIVE ||
+            cs === CALL_STATES.RINGING ||
+            cs === CALL_STATES.CONNECTING ||
+            cs === CALL_STATES.DIALING ||
+            cs === CALL_STATES.HELD
+          ) {
+            try {
+              setCallPhaseLabel('Reconnecting...');
+            } catch (_) {
+              /* ignore */
+            }
+          }
           telecomStructuredLog('[WS FLOW]', {
             sourcePath: 'CallContext.jsx:telnyx.socket.close',
             eventType: 'telnyx_socket_close',
@@ -1893,6 +2027,15 @@ export const CallProvider = ({ children }) => {
         // Monitor connection health
         client.on('telnyx.socket.open', () => {
           logTelnyxSdkEvent('telnyx.socket.open', { connected: client?.connected });
+          try {
+            if (callStateRef.current === CALL_STATES.ACTIVE) {
+              setCallPhaseLabel(null);
+            } else if (callStateRef.current !== CALL_STATES.IDLE) {
+              setCallPhaseLabel(null);
+            }
+          } catch (_) {
+            /* ignore */
+          }
           console.log('📱 Telnyx socket opened - connection active');
           execTrace(traceId, 'initializeClient:telnyx.socket.open', {});
           telecomStructuredLog('[WS FLOW]', {
@@ -1989,7 +2132,6 @@ export const CallProvider = ({ children }) => {
           } else {
             handleCallStateChangeRef.current(call);
           }
-          handleCallStateChangeRef.current(call);
         });
 
         client.on('incoming', (call) => {
@@ -2396,6 +2538,19 @@ export const CallProvider = ({ children }) => {
             const c = event?.cause ?? event?.hangup_cause;
             const cc = event?.cause_code ?? event?.causeCode;
             console.log("[CALL HANGUP EVENT] hangup.cause:", c, "hangup.cause_code:", cc);
+            logCallDropSource('telnyx_call_on_hangup', {
+              ...snapshotTelnyxLegForDropLog(
+                call,
+                telnyxClientRef.current,
+                callDurationRef.current,
+                callStateRef.current,
+                {
+                  eventName: 'call.on(hangup)',
+                  hangupCause: c ?? null,
+                  hangupCauseCode: cc ?? null,
+                }
+              ),
+            });
             lastOutboundHangupMetaRef.current = mergeHangupMetaPrefer(
               lastOutboundHangupMetaRef.current,
               mergeHangupMetaFromTelnyx(call, event)
@@ -2747,7 +2902,9 @@ export const CallProvider = ({ children }) => {
       console.warn('📱 Inbound reject hangup:', e);
     }
 
-    handleCallEnd();
+    handleCallEnd({
+      dropSource: { reason: 'user_reject_incoming', eventName: 'rejectCall' },
+    });
   }, [handleCallEnd, hangupAllSessionCalls]);
 
   // Hang up current call
@@ -2759,7 +2916,9 @@ export const CallProvider = ({ children }) => {
       causeCode: null,
     };
     hangupAllSessionCalls();
-    handleCallEnd();
+    handleCallEnd({
+      dropSource: { reason: 'user_hangup', eventName: 'hangUp' },
+    });
   }, [handleCallEnd, hangupAllSessionCalls]);
 
   // Toggle mute

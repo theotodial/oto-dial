@@ -8,10 +8,13 @@ class SoundManager {
     this.audioContext = null;
     this.ringtoneOscillators = [];
     this.ringbackOscillators = [];
+    this.endedOscillators = [];
     this.isPlayingRingtone = false;
     this.isPlayingRingback = false;
     this.ringtoneInterval = null;
     this.ringbackInterval = null;
+    /** Debounce overlapping end tones (rapid SDK + UI cleanup). */
+    this._endedPlayGuardUntil = 0;
   }
 
   getContext() {
@@ -154,8 +157,8 @@ class SoundManager {
           oscillator.type = 'sine';
           oscillator.frequency.setValueAtTime(freq, now);
           
-          gainNode.gain.setValueAtTime(0.15, now);
-          gainNode.gain.setValueAtTime(0.15, now + duration - 0.05);
+          gainNode.gain.setValueAtTime(0.06, now);
+          gainNode.gain.setValueAtTime(0.06, now + duration - 0.05);
           gainNode.gain.linearRampToValueAtTime(0, now + duration);
           
           oscillator.start(now);
@@ -214,63 +217,83 @@ class SoundManager {
     this.ringbackOscillators = [];
   }
 
-  // Call connected sound - pleasant double beep
+  // Call connected — single soft chime (telecom UX; keep ≤ 0.25 peak)
   playConnected() {
     try {
       const ctx = this.getContext();
       if (!ctx) return; // Can't play without context
       
       const now = ctx.currentTime;
-      
-      [0, 0.12].forEach((offset, i) => {
-        try {
-          const oscillator = ctx.createOscillator();
-          const gainNode = ctx.createGain();
-          
-          oscillator.connect(gainNode);
-          gainNode.connect(ctx.destination);
-          
-          oscillator.type = 'sine';
-          oscillator.frequency.setValueAtTime(i === 0 ? 1200 : 1500, now + offset);
-          
-          gainNode.gain.setValueAtTime(0, now + offset);
-          gainNode.gain.linearRampToValueAtTime(0.3, now + offset + 0.02);
-          gainNode.gain.linearRampToValueAtTime(0, now + offset + 0.1);
-          
-          oscillator.start(now + offset);
-          oscillator.stop(now + offset + 0.1);
-        } catch (err) {
-          console.warn('Error creating connected sound oscillator (non-critical):', err);
-        }
-      });
+      const peak = 0.1;
+
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, now);
+
+      gainNode.gain.setValueAtTime(0.0001, now);
+      gainNode.gain.linearRampToValueAtTime(peak, now + 0.02);
+      gainNode.gain.linearRampToValueAtTime(0.0001, now + 0.14);
+
+      oscillator.start(now);
+      oscillator.stop(now + 0.15);
     } catch (err) {
       console.warn('Error playing connected sound (non-critical):', err);
     }
   }
 
-  // Call ended sound - descending tone
+  stopEndedTone() {
+    this.endedOscillators.forEach((osc) => {
+      try {
+        osc.stop();
+      } catch (e) {
+        /* ignore */
+      }
+    });
+    this.endedOscillators = [];
+  }
+
+  // Call ended — short, low, faded (peak ≤ 0.25; debounced)
   playEnded() {
     try {
+      const wall = Date.now();
+      if (wall < this._endedPlayGuardUntil) return;
+      this._endedPlayGuardUntil = wall + 480;
+
       const ctx = this.getContext();
-      if (!ctx) return; // Can't play without context
-      
+      if (!ctx) return;
+
+      this.stopEndedTone();
+
       const now = ctx.currentTime;
-      
+      const peak = 0.12;
+      const dur = 0.22;
+
       const oscillator = ctx.createOscillator();
       const gainNode = ctx.createGain();
-      
+
       oscillator.connect(gainNode);
       gainNode.connect(ctx.destination);
-      
+
       oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(600, now);
-      oscillator.frequency.linearRampToValueAtTime(300, now + 0.4);
-      
-      gainNode.gain.setValueAtTime(0.25, now);
-      gainNode.gain.linearRampToValueAtTime(0, now + 0.4);
-      
+      oscillator.frequency.setValueAtTime(520, now);
+      oscillator.frequency.exponentialRampToValueAtTime(330, now + dur);
+
+      gainNode.gain.setValueAtTime(0.0001, now);
+      gainNode.gain.linearRampToValueAtTime(peak, now + 0.035);
+      gainNode.gain.linearRampToValueAtTime(0.0001, now + dur);
+
       oscillator.start(now);
-      oscillator.stop(now + 0.4);
+      oscillator.stop(now + dur + 0.02);
+      this.endedOscillators.push(oscillator);
+      oscillator.onended = () => {
+        const idx = this.endedOscillators.indexOf(oscillator);
+        if (idx > -1) this.endedOscillators.splice(idx, 1);
+      };
     } catch (err) {
       console.warn('Error playing ended sound (non-critical):', err);
     }
@@ -314,6 +337,7 @@ class SoundManager {
   stopAll() {
     this.stopRingtone();
     this.stopRingback();
+    this.stopEndedTone();
   }
 }
 

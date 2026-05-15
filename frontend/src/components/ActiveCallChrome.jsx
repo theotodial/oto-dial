@@ -41,11 +41,13 @@ export default function ActiveCallChrome({ isDesktop, dockMode = false }) {
       case CALL_STATES.RINGING:
         return 'Ringing...';
       case CALL_STATES.ACTIVE:
-        return formatDuration(callDuration);
+        return callDuration > 0 ? formatDuration(callDuration) : 'Connected';
       case CALL_STATES.HELD:
         return 'On Hold';
+      case CALL_STATES.ENDING:
+        return 'Call ended';
       default:
-        return 'In Call';
+        return 'Connecting...';
     }
   };
 

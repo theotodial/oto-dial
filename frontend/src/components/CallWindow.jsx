@@ -60,8 +60,8 @@ const MinimizeIcon = () => (
   </svg>
 );
 
-// Get call status text
-const getStatusText = (callState, phaseLabel) => {
+// Get call status text (telecom-grade labels)
+const getStatusText = (callState, phaseLabel, durationSec, formatDuration) => {
   if (phaseLabel && callState !== CALL_STATES.ACTIVE) {
     return phaseLabel;
   }
@@ -73,13 +73,13 @@ const getStatusText = (callState, phaseLabel) => {
     case CALL_STATES.RINGING:
       return 'Ringing...';
     case CALL_STATES.ACTIVE:
-      return null; // Will show duration instead
+      return durationSec > 0 ? formatDuration(durationSec) : 'Connected';
     case CALL_STATES.HELD:
       return 'On Hold';
     case CALL_STATES.ENDING:
-      return 'Call Ended';
+      return 'Call ended';
     default:
-      return 'Calling...';
+      return 'Connecting...';
   }
 };
 
@@ -174,7 +174,7 @@ export default function CallWindow({ contactName, contactAvatar, onCallEnd, onMi
   const isIncoming = callState === CALL_STATES.INCOMING;
 
   const [showDialpad, setShowDialpad] = useState(false);
-  const statusText = getStatusText(callState, callPhaseLabel);
+  const statusText = getStatusText(callState, callPhaseLabel, callDuration, formatDuration);
   const displayName = contactName || remoteNumber || 'Unknown';
 
   const handleDialpadDigit = (digit) => {
