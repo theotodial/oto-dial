@@ -5,6 +5,12 @@ import {
   getCachedJson,
   setCachedJson,
 } from "../services/cache.service.js";
+import {
+  isCallsApiRequest,
+  logMiddlewareBlock,
+  logMiddlewareEnter,
+  logMiddlewarePass,
+} from "../utils/callsApiMiddlewareAudit.js";
 
 const USER_CACHE_TTL_SECONDS = 300;
 const USER_SELECT =
@@ -35,11 +41,21 @@ async function getCachedUserById(userId) {
 }
 
 const authenticateUser = async (req, res, next) => {
+  if (isCallsApiRequest(req)) {
+    logMiddlewareEnter("authenticateUser", req);
+  }
+
   const authHeader = req.headers.authorization;
 
   // Fail fast if no auth header
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Unauthorized" });
+    const body = { error: "Unauthorized" };
+    logMiddlewareBlock("authenticateUser", req, {
+      status: 401,
+      reason: "missing_or_invalid_authorization_header",
+      body,
+    });
+    return res.status(401).json(body);
   }
 
   const token = authHeader.split(" ")[1];
@@ -51,7 +67,13 @@ const authenticateUser = async (req, res, next) => {
 
     if (!user) {
       console.warn("[auth] User not found for token userId:", String(req.userId));
-      return res.status(401).json({ error: "User not found" });
+      const body = { error: "User not found" };
+      logMiddlewareBlock("authenticateUser", req, {
+        status: 401,
+        reason: "user_not_found_for_token",
+        body,
+      });
+      return res.status(401).json(body);
     }
 
     if (user.status !== "active") {
@@ -59,9 +81,13 @@ const authenticateUser = async (req, res, next) => {
         userId: String(req.userId),
         status: user.status ?? null,
       });
-      return res.status(403).json({
-        error: "User is suspended or banned"
+      const body = { error: "User is suspended or banned" };
+      logMiddlewareBlock("authenticateUser", req, {
+        status: 403,
+        reason: `user_status_${String(user.status || "unknown")}`,
+        body,
       });
+      return res.status(403).json(body);
     }
 
     console.log("[auth] AUTH USER:", {
@@ -71,13 +97,20 @@ const authenticateUser = async (req, res, next) => {
     });
     req.user = user;
 
+    logMiddlewarePass("authenticateUser", req);
     next();
   } catch (err) {
     // Only log actual errors, not expired tokens (common case)
     if (err.name !== 'TokenExpiredError' && err.name !== 'JsonWebTokenError') {
       console.error("Auth middleware error:", err.message);
     }
-    return res.status(401).json({ error: "Unauthorized" });
+    const body = { error: "Unauthorized" };
+    logMiddlewareBlock("authenticateUser", req, {
+      status: 401,
+      reason: err?.name === "TokenExpiredError" ? "token_expired" : err?.name === "JsonWebTokenError" ? "token_invalid" : "jwt_verify_failed",
+      body,
+    });
+    return res.status(401).json(body);
   }
 };
 

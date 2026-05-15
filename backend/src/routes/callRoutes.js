@@ -33,8 +33,18 @@ import {
 } from "../services/callCreditBillingService.js";
 import { applyOutboundProfitThrottle, getUserProfitGuardrails } from "../services/profitGuardrailService.js";
 import { assertOutboundCreditExposureForNewCall } from "../services/economicExposureGuard.js";
+import {
+  logMiddlewareEnter,
+  logMiddlewarePass,
+} from "../utils/callsApiMiddlewareAudit.js";
 
 const router = express.Router();
+
+/** Emergency: skip profit throttle, telecom policy, fraud delay — keep auth/subscription/credits/reservation. */
+function isCallMinimalMode() {
+  const v = String(process.env.CALL_MINIMAL_MODE || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
 
 function logCallFlow(fields) {
   telecomStructuredLog("[CALL FLOW]", {
@@ -121,9 +131,14 @@ const skipSubscriptionForCallCreate =
 
 function requireActiveSubscriptionUnlessDebug(req, res, next) {
   if (skipSubscriptionForCallCreate) {
+    logMiddlewareEnter("requireActiveSubscriptionUnlessDebug", req);
     console.warn(
       "[CALL DEBUG] CALL_DEBUG_SKIP_SUBSCRIPTION=true — skipping requireActiveSubscription for POST /api/calls"
     );
+    logMiddlewarePass("requireActiveSubscriptionUnlessDebug", req, {
+      skipped: true,
+      reason: "CALL_DEBUG_SKIP_SUBSCRIPTION",
+    });
     return next();
   }
   return requireActiveSubscription(req, res, next);
@@ -164,6 +179,7 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       execTraceHeader,
       userId: req.userId ? String(req.userId) : null,
       at: new Date().toISOString(),
+      callMinimalMode: isCallMinimalMode(),
     });
     if (req.user?.mode === "campaign") {
       return res.status(403).json({
@@ -227,7 +243,11 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
 
     let profitGuardrails = null;
     if (direction === "outbound" && source === "webrtc") {
-      profitGuardrails = await applyOutboundProfitThrottle({ userId: req.userId });
+      if (!isCallMinimalMode()) {
+        profitGuardrails = await applyOutboundProfitThrottle({ userId: req.userId });
+      } else {
+        console.warn("[CALL_MINIMAL_MODE] skipping applyOutboundProfitThrottle");
+      }
       const rateLimit = enforceUsageRateLimit({ userId: req.userId, channel: "call" });
       if (!rateLimit.allowed) {
         return res.status(429).json({
@@ -253,44 +273,48 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       phoneNumber = destE164;
       toNumber = destE164;
 
-      const policyCheck = await enforceTelecomPolicy({
-        userId: req.userId,
-        channel: "call",
-        destinationNumber: destE164,
-      });
-      if (!policyCheck.allowed) {
-        await persistFailedCallAttempt(
-          req,
-          { phoneNumber: destE164, fromNumber, toNumber: destE164 },
-          policyCheck.error
-        );
-        return res.status(403).json({
-          success: false,
-          error: policyCheck.error,
+      if (!isCallMinimalMode()) {
+        const policyCheck = await enforceTelecomPolicy({
+          userId: req.userId,
+          channel: "call",
+          destinationNumber: destE164,
         });
-      }
+        if (!policyCheck.allowed) {
+          await persistFailedCallAttempt(
+            req,
+            { phoneNumber: destE164, fromNumber, toNumber: destE164 },
+            policyCheck.error
+          );
+          return res.status(403).json({
+            success: false,
+            error: policyCheck.error,
+          });
+        }
 
-      const fraudCheck = await evaluateFraudEvent({
-        userId: req.userId,
-        channel: "call",
-        destinationNumber: destE164,
-      });
-      if (!fraudCheck.allowed) {
-        await persistFailedCallAttempt(
-          req,
-          { phoneNumber: destE164, fromNumber, toNumber: destE164 },
-          fraudCheck.reason
-        );
-        return res.status(fraudCheck.statusCode || 403).json({
-          success: false,
-          error: fraudCheck.reason || "Call blocked.",
-          ...(Number.isFinite(fraudCheck.retryAfterMs)
-            ? { retryAfterMs: fraudCheck.retryAfterMs }
-            : {}),
+        const fraudCheck = await evaluateFraudEvent({
+          userId: req.userId,
+          channel: "call",
+          destinationNumber: destE164,
         });
-      }
-      if (fraudCheck.throttleDelayMs > 0) {
-        await new Promise((r) => setTimeout(r, fraudCheck.throttleDelayMs));
+        if (!fraudCheck.allowed) {
+          await persistFailedCallAttempt(
+            req,
+            { phoneNumber: destE164, fromNumber, toNumber: destE164 },
+            fraudCheck.reason
+          );
+          return res.status(fraudCheck.statusCode || 403).json({
+            success: false,
+            error: fraudCheck.reason || "Call blocked.",
+            ...(Number.isFinite(fraudCheck.retryAfterMs)
+              ? { retryAfterMs: fraudCheck.retryAfterMs }
+              : {}),
+          });
+        }
+        if (fraudCheck.throttleDelayMs > 0) {
+          await new Promise((r) => setTimeout(r, fraudCheck.throttleDelayMs));
+        }
+      } else {
+        console.warn("[CALL_MINIMAL_MODE] skipping enforceTelecomPolicy + evaluateFraudEvent");
       }
 
       const callerRaw = fromNumber;
@@ -366,18 +390,20 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       fromOwnedByCaller: true,
       toOwnership: toNumberOwnership,
     });
-    emitAdminCallDebugEvent({
-      eventType: "call.preflight",
-      callControlId: null,
-      callSessionId: null,
-      from: normalizeThreadPhone(fromNumber),
-      to: normalizeThreadPhone(toNumber || phoneNumber),
-      state: "validated",
-      callerUser: String(req.userId),
-      calleeUser: calleeOwnedUser,
-      fromOwnedByCaller: true,
-      toOwnership: toNumberOwnership,
-    });
+    if (!isCallMinimalMode()) {
+      emitAdminCallDebugEvent({
+        eventType: "call.preflight",
+        callControlId: null,
+        callSessionId: null,
+        from: normalizeThreadPhone(fromNumber),
+        to: normalizeThreadPhone(toNumber || phoneNumber),
+        state: "validated",
+        callerUser: String(req.userId),
+        calleeUser: calleeOwnedUser,
+        fromOwnedByCaller: true,
+        toOwnership: toNumberOwnership,
+      }).catch(() => {});
+    }
 
     const existing = await findRecentActiveCallForUser(req.userId);
     if (existing) {
