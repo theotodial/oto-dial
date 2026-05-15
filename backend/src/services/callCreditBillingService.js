@@ -8,6 +8,7 @@ import {
   finalizeEconomicTimelineForCall,
 } from "./economicSerializationService.js";
 import { allowOutboundCreditDebugBypass } from "../utils/outboundCreditDebugBypass.js";
+import { telecomStructuredLog } from "../utils/telecomStructuredLog.js";
 
 const ACTIVE_STATES = new Set(["answered", "in-progress"]);
 const TERMINAL_STATES = new Set([
@@ -19,14 +20,47 @@ const TERMINAL_STATES = new Set([
   "no-answer",
 ]);
 
+function attemptKey(callId) {
+  return `call:${String(callId)}:attempt`;
+}
+
+async function markAttemptChargedOnCall(call, billing, context = {}) {
+  const key = attemptKey(call._id);
+  const ledgerId = billing?.ledger?._id || billing?.ledger?.id || null;
+  const now = new Date();
+  await Call.updateOne(
+    { _id: call._id },
+    {
+      $set: {
+        attemptCharged: true,
+        attemptChargedAt: call.attemptChargedAt || now,
+        attemptChargeIdempotencyKey: key,
+        attemptChargeTransactionId: ledgerId ? String(ledgerId) : key,
+        durationBillingCursorAt:
+          call.durationBillingCursorAt || call.callAnsweredAt || call.callStartedAt || null,
+      },
+    }
+  );
+  telecomStructuredLog("[TELECOM CHARGE]", {
+    sourcePath: context.sourcePath || "callCreditBillingService.js",
+    phase: "attempt_charge",
+    callId: String(call._id),
+    userId: call.user ? String(call.user) : null,
+    duplicate: Boolean(billing?.duplicate),
+    eventType: context.eventType || null,
+    credits: CREDIT_RULES.outboundAttemptCharge,
+  });
+}
+
 export async function reserveCreditsForOutboundCall(call, options = {}) {
   if (!call?._id || !call?.user || call.direction !== "outbound") {
     return { ok: true, skipped: true };
   }
   if (allowOutboundCreditDebugBypass()) {
-    console.warn("[CALL DEBUG] CALL_DEBUG_ALLOW_OUTBOUND_WITHOUT_CREDITS — skipping reserveCreditsForOutboundCall", {
-      callId: String(call._id),
-    });
+    console.warn(
+      "[CALL DEBUG] CALL_DEBUG_ALLOW_OUTBOUND_WITHOUT_CREDITS — skipping reserveCreditsForOutboundCall",
+      { callId: String(call._id) }
+    );
     return { ok: true, skipped: true, debugBypass: true };
   }
   const result = await reserveCreditsForOutboundCallSerialized(call, options);
@@ -46,33 +80,42 @@ export async function reserveCreditsForOutboundCall(call, options = {}) {
   return billing || result;
 }
 
-export async function chargeOutboundAttempt(call) {
+/**
+ * Deduct 1 credit when the carrier accepts the outbound dial (ringing / provider leg live).
+ * Idempotent per call — never double-charge the same attempt.
+ */
+export async function chargeProviderAcceptedAttempt(call, context = {}) {
   if (!call?._id || !call?.user || call.direction !== "outbound") {
     return { ok: true, skipped: true };
   }
   if (allowOutboundCreditDebugBypass()) {
-    console.warn("[CALL DEBUG] CALL_DEBUG_ALLOW_OUTBOUND_WITHOUT_CREDITS — skipping chargeOutboundAttempt", {
-      callId: String(call._id),
-    });
+    console.warn(
+      "[CALL DEBUG] CALL_DEBUG_ALLOW_OUTBOUND_WITHOUT_CREDITS — skipping chargeProviderAcceptedAttempt",
+      { callId: String(call._id) }
+    );
     return { ok: true, skipped: true, debugBypass: true };
   }
-  const key = `call:${String(call._id)}:attempt`;
-  const result = await chargeOutboundAttemptSerialized(call);
-  const billing = result?.billing;
-  if (result?.ok && billing && !billing.duplicate) {
-    await Call.updateOne(
-      { _id: call._id },
-      {
-        $set: {
-          attemptChargedAt: new Date(),
-          attemptChargeIdempotencyKey: key,
-          durationBillingCursorAt: call.callAnsweredAt || call.callStartedAt || null,
-        },
-      }
-    );
+
+  if (call.attemptChargedAt || call.attemptCharged === true) {
+    return { ok: true, duplicate: true, skipped: true, reason: "already_charged" };
   }
-  return billing || result;
+
+  const result = await chargeOutboundAttemptSerialized(call);
+  if (!result?.ok) {
+    return result;
+  }
+
+  const billing = result?.billing;
+  if (billing?.ok === false && billing?.code === "INSUFFICIENT_CREDITS") {
+    return billing;
+  }
+
+  await markAttemptChargedOnCall(call, billing, context);
+  return { ok: true, billing, duplicate: Boolean(billing?.duplicate) };
 }
+
+/** @deprecated Use chargeProviderAcceptedAttempt — kept for imports */
+export const chargeOutboundAttempt = chargeProviderAcceptedAttempt;
 
 export async function billConnectedDurationIntervals(call) {
   if (!call?._id || !call?.user) return { ok: true, skipped: true };
@@ -81,7 +124,15 @@ export async function billConnectedDurationIntervals(call) {
   }
   const answeredAt = call.callAnsweredAt || call.callStartedAt;
   if (!answeredAt) return { ok: true, skipped: true, reason: "not_answered" };
-  return billConnectedDurationIntervalsSerialized(call);
+  if (allowOutboundCreditDebugBypass()) {
+    return { ok: true, skipped: true, debugBypass: true };
+  }
+
+  const result = await billConnectedDurationIntervalsSerialized(call);
+  if (result?.ok && Number(result.chargedNow) > 0) {
+    await Call.updateOne({ _id: call._id }, { $set: { lastBillingAt: new Date() } });
+  }
+  return result;
 }
 
 export async function releaseUnusedCallReservation(call) {

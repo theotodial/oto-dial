@@ -8,6 +8,7 @@ const STALE_MS = Number(process.env.CALL_HEARTBEAT_STALE_MS || 120000);
 
 /**
  * Marks outbound WebRTC calls failed when the client stops sending heartbeats.
+ * Pre-answer phases (ringing / early-media) are excluded — carrier webhooks own those.
  * Only affects rows where `lastHeartbeatAt` was set (new clients); legacy sessions are untouched.
  */
 export function startCallHeartbeatMonitor() {
@@ -18,7 +19,7 @@ export function startCallHeartbeatMonitor() {
         direction: "outbound",
         source: "webrtc",
         status: {
-          $in: ["queued", "initiated", "dialing", "ringing", "in-progress", "answered"],
+          $in: ["queued", "initiated", "dialing", "in-progress", "answered"],
         },
         lastHeartbeatAt: { $exists: true, $ne: null, $lte: cutoff },
       })
@@ -43,11 +44,13 @@ export function startCallHeartbeatMonitor() {
           reason: "server_heartbeat_timeout",
         });
         if (result.ok) {
-          telecomStructuredLog("[CLEANUP FLOW]", {
+          telecomStructuredLog("[CALL TERMINATION]", {
             callId: String(v._id),
             userId: v.user ? String(v.user) : null,
             callControlId: v.telnyxCallControlId || null,
-            currentStatus: v.status || null,
+            previousStatus: v.status || null,
+            nextStatus: CALL_STATES.FAILED,
+            terminationSource: "heartbeat_monitor",
             eventType: "heartbeat_timeout",
             sourcePath: "callHeartbeatMonitor.js:startCallHeartbeatMonitor",
             hangupCause: "server_heartbeat_timeout",

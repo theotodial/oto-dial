@@ -86,6 +86,8 @@ function Dialer() {
         Number(subscription?.limits?.creditsTotal ?? subscription?.limits?.minutesTotal ?? 0) > 0)
   );
   const subscriptionUsable = billingUiActive || isManuallyEnabled;
+  const insufficientCredits =
+    projectedAvailable != null && Number(projectedAvailable) <= 0;
 
   const dialCountries = useMemo(
     () => getDialCountriesForUser(user?.allowedCallCountries),
@@ -218,6 +220,11 @@ function Dialer() {
       return;
     }
 
+    if (insufficientCredits) {
+      setError('Insufficient telecom credits. Add credits or upgrade your plan to place calls.');
+      return;
+    }
+
     if (!canUseService) {
       console.warn(
         '[CALL FLOW] No subscription id in UI state — makeCall may fail; server enforces subscription'
@@ -331,6 +338,11 @@ function Dialer() {
             {canUseService && !subscriptionUsable && (
               <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded">
                 Subscription inactive — remaining balance available
+              </div>
+            )}
+            {canUseService && insufficientCredits && (
+              <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 px-2 py-1 rounded">
+                Insufficient telecom credits — add credits to dial
               </div>
             )}
             {canUseService && (projectedLoading || projectedAvailable != null) && (
@@ -503,7 +515,11 @@ function Dialer() {
               </button>
               <button
                 onClick={handleCall}
-                disabled={(!phoneNumber.trim() && !getLastDialableNumber()) || dialerDisabled}
+                disabled={
+                  (!phoneNumber.trim() && !getLastDialableNumber()) ||
+                  dialerDisabled ||
+                  insufficientCredits
+                }
                 className="flex-[2] py-2 sm:py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg
                            flex items-center justify-center gap-2 font-semibold shadow-md
                            disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none

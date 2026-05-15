@@ -16,6 +16,8 @@ test("normalizes legacy missed to no-answer", () => {
 test("allows valid non-terminal progression", () => {
   assert.equal(canTransitionTo(CALL_STATES.INITIATED, CALL_STATES.DIALING), true);
   assert.equal(canTransitionTo(CALL_STATES.DIALING, CALL_STATES.RINGING), true);
+  assert.equal(canTransitionTo(CALL_STATES.RINGING, CALL_STATES.EARLY_MEDIA), true);
+  assert.equal(canTransitionTo(CALL_STATES.EARLY_MEDIA, CALL_STATES.ANSWERED), true);
   assert.equal(canTransitionTo(CALL_STATES.RINGING, CALL_STATES.ANSWERED), true);
   assert.equal(canTransitionTo(CALL_STATES.ANSWERED, CALL_STATES.ACTIVE), true);
   assert.equal(canTransitionTo(CALL_STATES.ACTIVE, CALL_STATES.COMPLETED), true);

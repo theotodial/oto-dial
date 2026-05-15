@@ -37,8 +37,10 @@ import { telecomStructuredLog } from "../../utils/telecomStructuredLog.js";
 import { resolveInboundOwner } from "../../utils/inboundOwnership.js";
 import {
   billConnectedDurationIntervals,
+  chargeProviderAcceptedAttempt,
   releaseUnusedCallReservation,
 } from "../../services/callCreditBillingService.js";
+import { finalizeTelecomCallAccounting } from "../../services/telecomCallAccountingService.js";
 import { recordTelecomEventSequence } from "../../services/telecomSequenceService.js";
 import { persistWebhookLatencySample } from "../../services/webhookLatencyService.js";
 import { recordWebhookReceived, bumpRedisWebhookClusterCounter } from "../../services/telecomBackpressureService.js";
@@ -52,6 +54,7 @@ const router = express.Router();
 const HANDLED_EVENTS = new Set([
   "call.initiated",
   "call.ringing",
+  "call.progress",
   "call.answered",
   "call.bridged",
   "call.hangup",
@@ -725,6 +728,59 @@ router.post("/", async (req, res) => {
         callSessionId,
         callPayload,
         extraSet: {
+          callRingingAt: fresh.callRingingAt || new Date(occurredAtMs),
+          callInitiatedAt: fresh.callInitiatedAt || new Date(occurredAtMs),
+          lastProcessedEventAt: new Date(occurredAtMs),
+        },
+      });
+      try {
+        const afterRing = await Call.findById(call._id).select(
+          "_id user direction attemptChargedAt attemptCharged status"
+        );
+        if (afterRing?.direction === "outbound") {
+          await chargeProviderAcceptedAttempt(afterRing, {
+            sourcePath: "telnyxVoice.js:call.ringing",
+            eventType: event,
+          });
+        }
+      } catch (ringBillErr) {
+        console.warn("[VOICE BILLING] ringing charge step failed:", ringBillErr?.message || ringBillErr);
+      }
+      return res.sendStatus(200);
+    }
+
+    // ===============================
+    // call.progress — early media (183 / carrier audio before answer)
+    // ===============================
+    if (event === "call.progress") {
+      let call = await findCallForTelnyxEvent({ callControlId, callPayload });
+      if (!call) {
+        return res.sendStatus(200);
+      }
+      trackVoiceWebhookUserSignals(call, callControlId, callSessionId);
+      await mergeTelnyxCallIdentifiers(call, {
+        callControlId,
+        callSessionId: callPayload.call_session_id,
+        occurredAtMs,
+      });
+      const fresh = await Call.findById(call._id);
+      const current = normalizeCallStatus(fresh?.status);
+      const target =
+        current === CALL_STATES.RINGING || current === CALL_STATES.DIALING
+          ? CALL_STATES.EARLY_MEDIA
+          : current === CALL_STATES.EARLY_MEDIA
+            ? CALL_STATES.EARLY_MEDIA
+            : CALL_STATES.RINGING;
+      await transitionCallStatus({
+        call: fresh,
+        toStatus: target,
+        event,
+        callControlId,
+        callSessionId,
+        callPayload,
+        extraSet: {
+          callEarlyMediaAt: fresh.callEarlyMediaAt || new Date(occurredAtMs),
+          callRingingAt: fresh.callRingingAt || fresh.callInitiatedAt || new Date(occurredAtMs),
           lastProcessedEventAt: new Date(occurredAtMs),
         },
       });
@@ -1220,6 +1276,16 @@ router.post("/", async (req, res) => {
         await releaseUnusedCallReservation(call);
       } catch (releaseErr) {
         console.warn("[VOICE BILLING] reservation release failed:", releaseErr?.message || releaseErr);
+      }
+
+      try {
+        await finalizeTelecomCallAccounting(call._id, {
+          sourcePath: "telnyxVoice.js:call.hangup",
+          terminationSource: "telnyx_voice_webhook",
+          eventType: event,
+        });
+      } catch (acctErr) {
+        console.warn("[VOICE BILLING] telecom accounting finalize failed:", acctErr?.message || acctErr);
       }
 
       return res.sendStatus(200);

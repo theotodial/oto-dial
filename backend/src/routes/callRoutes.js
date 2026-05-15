@@ -29,11 +29,11 @@ import { applyCallTransition } from "../services/callTransitionService.js";
 import { telecomStructuredLog } from "../utils/telecomStructuredLog.js";
 import {
   reserveCreditsForOutboundCall,
-  chargeOutboundAttempt,
+  chargeProviderAcceptedAttempt,
   releaseUnusedCallReservation,
 } from "../services/callCreditBillingService.js";
+import { assertUserHasOutboundDialCredits } from "../services/telecomCreditGuard.js";
 import { applyOutboundProfitThrottle, getUserProfitGuardrails } from "../services/profitGuardrailService.js";
-import { assertOutboundCreditExposureForNewCall } from "../services/economicExposureGuard.js";
 import {
   logMiddlewareEnter,
   logMiddlewarePass,
@@ -439,21 +439,23 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
     // All outbound directions hit this guard (not only WebRTC-shaped bodies); profit multiplier
     // is null only if the outbound preflight block above did not run — currently unreachable for outbound.
     if (direction === "outbound") {
-      const exposure = await assertOutboundCreditExposureForNewCall(
+      const creditGate = await assertUserHasOutboundDialCredits(
         req.userId,
         profitGuardrails?.reservationMultiplier
       );
-      if (!exposure.ok) {
+      if (!creditGate.ok) {
         await persistFailedCallAttempt(
           req,
           { phoneNumber, fromNumber, toNumber },
-          exposure.code || "INSUFFICIENT_PROJECTED_CREDITS"
+          creditGate.code || "INSUFFICIENT_CREDITS"
         );
         return res.status(403).json({
           success: false,
           error:
-            "Insufficient credits given active calls and reservations (projected balance).",
-          code: exposure.code || "INSUFFICIENT_PROJECTED_CREDITS",
+            creditGate.code === "INSUFFICIENT_PROJECTED_CREDITS"
+              ? "Insufficient credits given active calls and reservations (projected balance)."
+              : "Insufficient telecom credits to place outbound call.",
+          code: creditGate.code || "INSUFFICIENT_CREDITS",
         });
       }
       console.log("[OUTBOUND CALL]", {
@@ -513,16 +515,6 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
         return res.status(403).json({
           success: false,
           error: "Insufficient telecom credits to reserve outbound attempt.",
-          code: "INSUFFICIENT_CREDITS",
-        });
-      }
-      const attempt = await chargeOutboundAttempt(call);
-      if (!attempt?.ok) {
-        await releaseUnusedCallReservation(call).catch(() => {});
-        await Call.deleteOne({ _id: call._id }).catch(() => {});
-        return res.status(403).json({
-          success: false,
-          error: "Insufficient telecom credits for outbound attempt charge.",
           code: "INSUFFICIENT_CREDITS",
         });
       }
@@ -836,6 +828,17 @@ router.patch("/:id", async (req, res) => {
         if (requested === CALL_STATES.RINGING && !call.callInitiatedAt) {
           set.callInitiatedAt = new Date();
         }
+        if (requested === CALL_STATES.RINGING) {
+          set.callRingingAt = call.callRingingAt || new Date();
+        }
+        const chargeOnRinging =
+          requested === CALL_STATES.RINGING &&
+          !call.attemptChargedAt &&
+          call.attemptCharged !== true;
+        if (requested === CALL_STATES.EARLY_MEDIA) {
+          set.callEarlyMediaAt = call.callEarlyMediaAt || new Date();
+          set.callRingingAt = call.callRingingAt || call.callInitiatedAt || new Date();
+        }
         if (requested === CALL_STATES.ACTIVE || requested === CALL_STATES.ANSWERED) {
           set.callInitiatedAt = call.callInitiatedAt || new Date();
           if (!call.callStartedAt) {
@@ -961,6 +964,18 @@ router.patch("/:id", async (req, res) => {
             });
           }
           call = transitioned.call || call;
+          if (chargeOnRinging) {
+            const freshRing = await Call.findById(call._id);
+            await chargeProviderAcceptedAttempt(freshRing, {
+              sourcePath: "callRoutes.js:PATCH",
+              eventType: "client_ringing",
+            }).catch((err) => {
+              console.warn(
+                "[TELECOM CHARGE] attempt on client ringing failed:",
+                err?.message || err
+              );
+            });
+          }
         }
 
         logTelecomCallTransition({

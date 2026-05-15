@@ -11,6 +11,7 @@ import { telecomStructuredLog } from "../utils/telecomStructuredLog.js";
 import { recordTelecomEventSequence } from "./telecomSequenceService.js";
 import { broadcastAuthoritativeCallState } from "./socketConsistencyService.js";
 import { recordCallTransition } from "./telecomBackpressureService.js";
+import { finalizeTelecomCallAccounting } from "./telecomCallAccountingService.js";
 
 function toDate(value) {
   if (!value) return null;
@@ -229,6 +230,25 @@ export async function applyCallTransition({
         durationSeconds:
           call.durationSeconds != null ? Number(call.durationSeconds) : null,
       });
+      if (to && isTerminalStatus(toS)) {
+        telecomStructuredLog("[CALL TERMINATION]", {
+          sourcePath: "callTransitionService.js:applyCallTransition",
+          callId: String(call._id),
+          userId: call.user ? String(call.user) : null,
+          callControlId: call.telnyxCallControlId || null,
+          previousStatus: fromS,
+          nextStatus: toS,
+          terminationSource: source || null,
+          eventType: eventType || null,
+          hangupCause: call.hangupCause || null,
+          reason: reason || null,
+        });
+        void finalizeTelecomCallAccounting(call._id, {
+          sourcePath: "callTransitionService.js:applyCallTransition",
+          terminationSource: source || null,
+          eventType: eventType || null,
+        }).catch(() => {});
+      }
     } catch (_) {
       /* ignore logging failures */
     }

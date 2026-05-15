@@ -16,6 +16,7 @@ import User from "../models/User.js";
 import { getRedisClient } from "./cache.service.js";
 import { applyBillingEvent } from "./billingEnforcementGateway.js";
 import { CREDIT_RULES } from "../config/creditConfig.js";
+import { TELECOM_PRICING } from "../config/telecomPricingConfig.js";
 import {
   getUserProfitGuardrails,
   getReservationMultiplierFromGuardrails,
@@ -570,6 +571,115 @@ export async function applyEconomicMutation(params) {
 /**
  * Bill all newly completed interval indices (floor rule) under a single economic lock + transaction.
  */
+/** Interval index namespace for pre-answer buckets (avoids collision with connected indexes). */
+export const PRE_ANSWER_INTERVAL_INDEX_OFFSET = 10_000;
+
+export async function billPreAnswerIntervalCreditsSerialized(call) {
+  if (!call?._id || !call?.user || call.direction !== "outbound") {
+    return { ok: true, skipped: true };
+  }
+  if (!TELECOM_PRICING.preAnswerIntervalBillingEnabled) {
+    return { ok: true, skipped: true, reason: "preanswer_billing_disabled" };
+  }
+
+  const anchor = call.callRingingAt || call.callInitiatedAt || call.createdAt;
+  if (!anchor) return { ok: true, skipped: true, reason: "no_anchor" };
+
+  const endAt = call.callAnsweredAt || call.callEndedAt || new Date();
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((new Date(endAt).getTime() - new Date(anchor).getTime()) / 1000)
+  );
+  if (elapsedSeconds <= 0) return { ok: true, skipped: true, reason: "zero_elapsed" };
+
+  const bucketSec = TELECOM_PRICING.perPreAnswerIntervalSeconds;
+  const maxIdx = maxCompletedBillableIntervalIndex(elapsedSeconds, bucketSec);
+  if (maxIdx <= 0) return { ok: true, skipped: true, reason: "no_buckets" };
+
+  const lock = await withEconomicCallLock(call._id, async () => {
+    if (mongoose.connection.readyState !== 1) {
+      return runPreAnswerIntervalBillingBatch(null, call, maxIdx, bucketSec);
+    }
+    const session = await mongoose.startSession();
+    try {
+      return await session.withTransaction(() =>
+        runPreAnswerIntervalBillingBatch(session, call, maxIdx, bucketSec)
+      );
+    } catch (err) {
+      if (isTransactionUnsupportedError(err)) {
+        return runPreAnswerIntervalBillingBatch(null, call, maxIdx, bucketSec);
+      }
+      throw err;
+    } finally {
+      await session.endSession().catch(() => {});
+    }
+  });
+  if (!lock.ok) return { ok: false, code: lock.reason };
+  return lock.value;
+}
+
+async function runPreAnswerIntervalBillingBatch(session, call, maxIdx, bucketSec) {
+  const cid = call._id;
+  const uid = call.user;
+  const fresh = await Call.findById(cid)
+    .select(
+      "user status direction callRingingAt callInitiatedAt callAnsweredAt callEndedAt durationCreditsCharged attemptChargedAt creditReservationHeld createdAt"
+    )
+    .session(session || null)
+    .lean();
+  if (!fresh) return { ok: false, code: "CALL_NOT_FOUND" };
+
+  let timeline = await ensureTimeline(session, uid, cid, fresh);
+  if (timeline.finalizedAt) {
+    return { ok: true, skipped: true, reason: "finalized" };
+  }
+
+  const billed = new Set((timeline.billedIntervalIndexes || []).map(Number));
+  let chargedNow = 0;
+
+  for (let idx = 1; idx <= maxIdx; idx += 1) {
+    const timelineIdx = PRE_ANSWER_INTERVAL_INDEX_OFFSET + idx;
+    if (billed.has(timelineIdx)) continue;
+    const step = await applyEconomicMutationOnce(session, {
+      callId: cid,
+      userId: uid,
+      mutation: ECONOMIC_MUTATION.INTERVAL_CHARGE,
+      payload: {
+        intervalIndex: timelineIdx,
+        reason: "pre_answer_carrier_interval",
+        metadata: { phase: "pre_answer", bucketSeconds: bucketSec, localIndex: idx },
+      },
+      sourceService: "economicSerializationService.billPreAnswerIntervalCreditsSerialized",
+    });
+    if (!step.ok && step.code === "INSUFFICIENT_CREDITS") {
+      return { ok: false, code: "INSUFFICIENT_CREDITS", chargedNow };
+    }
+    if (step.ok && step.reason === "interval_already_billed") {
+      timeline = await loadTimeline(session, cid);
+      continue;
+    }
+    if (step.ok && !step.duplicate) chargedNow += 1;
+    timeline = await loadTimeline(session, cid);
+    if (timeline?.finalizedAt) break;
+  }
+
+  if (chargedNow > 0) {
+    await Call.updateOne(
+      { _id: cid },
+      {
+        $inc: { durationCreditsCharged: chargedNow },
+        $set: {
+          durationBillingCursorAt: new Date(),
+          durationBillingLastEventAt: new Date(),
+        },
+      },
+      session ? { session } : {}
+    );
+  }
+
+  return { ok: true, chargedNow, maxIdx };
+}
+
 export async function billConnectedDurationIntervalsSerialized(call) {
   if (!call?._id || !call?.user) return { ok: true, skipped: true };
   const ACTIVE_STATES = new Set(["answered", "in-progress"]);

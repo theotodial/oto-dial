@@ -99,6 +99,7 @@ const callSchema = new mongoose.Schema(
         "initiated",
         "dialing",
         "ringing",
+        "early-media",
         "answered",
         "in-progress",
         "completed",
@@ -114,6 +115,16 @@ const callSchema = new mongoose.Schema(
     callInitiatedAt: {
       type: Date,
       default: null
+    },
+
+    callRingingAt: {
+      type: Date,
+      default: null,
+    },
+
+    callEarlyMediaAt: {
+      type: Date,
+      default: null,
     },
 
     callStartedAt: {
@@ -199,6 +210,10 @@ const callSchema = new mongoose.Schema(
       type: Number,
       default: 0
     },
+    attemptCharged: {
+      type: Boolean,
+      default: false,
+    },
     attemptChargedAt: {
       type: Date,
       default: null,
@@ -208,6 +223,34 @@ const callSchema = new mongoose.Schema(
       type: String,
       default: null,
       index: true,
+    },
+    attemptChargeTransactionId: {
+      type: String,
+      default: null,
+    },
+    attemptCredits: {
+      type: Number,
+      default: 0,
+    },
+    durationCredits: {
+      type: Number,
+      default: 0,
+    },
+    activeCreditsCharged: {
+      type: Number,
+      default: 0,
+    },
+    totalCreditsCharged: {
+      type: Number,
+      default: 0,
+    },
+    lastBillingAt: {
+      type: Date,
+      default: null,
+    },
+    finalDurationSeconds: {
+      type: Number,
+      default: 0,
     },
     durationCreditsCharged: {
       type: Number,
@@ -262,6 +305,36 @@ const callSchema = new mongoose.Schema(
     costSyncedAt: {
       type: Date,
       default: null
+    },
+
+    /** Telecom credit accounting (authoritative backend snapshot). */
+    callCost: {
+      type: Number,
+      default: 0,
+    },
+    carrierCost: {
+      type: Number,
+      default: 0,
+    },
+    billedAttempts: {
+      type: Number,
+      default: 0,
+    },
+    billingReason: {
+      type: String,
+      default: null,
+    },
+    finalCharge: {
+      type: Number,
+      default: 0,
+    },
+    terminationSource: {
+      type: String,
+      default: null,
+    },
+    telecomAccountingFinalizedAt: {
+      type: Date,
+      default: null,
     },
 
     /** Client PATCH heartbeat while outbound WebRTC is in flight (server watchdog). */
