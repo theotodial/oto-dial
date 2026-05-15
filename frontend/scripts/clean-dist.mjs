@@ -3,11 +3,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const dist = join(root, 'dist');
+const sub = (process.env.OTODIAL_DIST_DIR || 'dist').replace(/\\/g, '/').replace(/^\/+/, '');
+const dist = join(root, sub);
 
 if (existsSync(dist)) {
   rmSync(dist, { recursive: true, force: true });
   console.log('[prebuild] removed', dist);
 } else {
-  console.log('[prebuild] no dist to remove');
+  console.log('[prebuild] no dir to remove:', dist);
 }
