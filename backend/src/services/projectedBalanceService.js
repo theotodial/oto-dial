@@ -1,12 +1,12 @@
 /**
- * Read-only projected telecom credit balance (User.remainingCredits is cached;
+ * Read-only projected telecom credit balance (Subscription is authoritative;
  * this layer estimates pending interval debits from active calls + timelines).
  */
 
 import mongoose from "mongoose";
-import User from "../models/User.js";
 import Call from "../models/Call.js";
 import EconomicTimeline from "../models/EconomicTimeline.js";
+import Subscription from "../models/Subscription.js";
 import { CREDIT_RULES } from "../config/creditConfig.js";
 import { maxCompletedBillableIntervalIndex } from "./economicSerializationService.js";
 
@@ -74,10 +74,11 @@ export async function computeProjectedUserBalance(userId) {
     };
   }
 
-  const user = await User.findById(uid)
+  const subscription = await Subscription.findOne({ userId: uid })
+    .sort({ createdAt: -1 })
     .select("remainingCredits reservedCredits")
     .lean();
-  if (!user) {
+  if (!subscription) {
     return {
       cachedBalance: null,
       reservedCredits: null,
@@ -86,12 +87,12 @@ export async function computeProjectedUserBalance(userId) {
       projectedAvailableCredits: null,
       activeCalls: [],
       calculatedAt,
-      error: "user_not_found",
+      error: "subscription_credit_wallet_not_found",
     };
   }
 
-  const cachedBalance = Number(user.remainingCredits || 0);
-  const reservedCredits = Number(user.reservedCredits || 0);
+  const cachedBalance = Number(subscription.remainingCredits || 0);
+  const reservedCredits = Number(subscription.reservedCredits || 0);
 
   const activeCalls = await Call.find({
     user: uid,

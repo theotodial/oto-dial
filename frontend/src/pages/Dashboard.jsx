@@ -113,7 +113,7 @@ function Dashboard() {
     const unlimitedSms = subscription.unlimitedSmsDisplay ?? legacyAll;
 
     setPackageDetails({
-      remainingCredits: unlimitedMinutes ? '∞' : Math.round(usage?.creditsRemaining ?? usage?.minutesRemaining ?? 0),
+      remainingCredits: unlimitedMinutes ? '∞' : Math.round(usage?.creditsRemaining ?? 0),
       remainingSMS: unlimitedSms ? '∞' : (usage?.smsRemaining ?? 0),
       planName: subscription.planName || 'No Plan',
       unlimitedMinutesDisplay: unlimitedMinutes,
@@ -332,22 +332,24 @@ function Dashboard() {
           <div className="space-y-3 mb-4">
             {!isSmsCampaignPlan && (
               <div className="flex items-center justify-between">
-                <span className="text-sm opacity-90">Remaining Credits</span>
+                <span className="text-sm opacity-90">Remaining Telecom Credits</span>
                 <span className="text-2xl font-bold">
                   {packageDetails.unlimitedMinutesDisplay
                     ? '∞'
-                    : Number(packageDetails?.remainingCredits || 0)}
+                    : Number(packageDetails?.remainingCredits || 0).toLocaleString()}
                 </span>
               </div>
             )}
-            <div className="flex items-center justify-between">
-              <span className="text-sm opacity-90">Remaining SMS</span>
-              <span className="text-2xl font-bold">
-                {packageDetails.unlimitedSmsDisplay
-                  ? '∞'
-                  : (packageDetails?.remainingSMS || 0).toLocaleString()}
-              </span>
-            </div>
+            {isSmsCampaignPlan && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm opacity-90">Remaining SMS</span>
+                <span className="text-2xl font-bold">
+                  {packageDetails.unlimitedSmsDisplay
+                    ? '∞'
+                    : (packageDetails?.remainingSMS || 0).toLocaleString()}
+                </span>
+              </div>
+            )}
           </div>
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/20">
             <span className="text-xs opacity-75">View Details →</span>

@@ -3,7 +3,9 @@ import Call from "../models/Call.js";
 import CreditLedger from "../models/CreditLedger.js";
 import { getUserCreditSnapshot } from "../services/creditLedgerService.js";
 import { computeProjectedUserBalance } from "../services/projectedBalanceService.js";
+import { getCustomerCreditTimeline } from "../services/creditReconciliationService.js";
 import Wallet from "../models/Wallet.js";
+import Subscription from "../models/Subscription.js";
 
 const router = express.Router();
 
@@ -19,14 +21,29 @@ const ACTIVE_CALL_STATUSES = [
 
 /**
  * GET /api/wallet
- * Telecom credit wallet (authoritative: User.remainingCredits + ledger).
+ * Telecom credit wallet (authoritative: Subscription credit wallet + ledger).
  */
 router.get("/", async (req, res) => {
   try {
     const userId = req.userId;
+    const latestSub = await Subscription.findOne({ userId })
+      .sort({ createdAt: -1 })
+      .select("_id planName planType status telecomCredits remainingCredits reservedCredits")
+      .lean();
+    if (!latestSub?._id) {
+      return res.status(403).json({
+        success: false,
+        error: "No active subscription credit wallet found",
+        code: "SUBSCRIPTION_CREDIT_WALLET_MISSING",
+      });
+    }
     const snap = await getUserCreditSnapshot(userId);
     if (!snap) {
-      return res.status(404).json({ success: false, error: "User not found" });
+      return res.status(404).json({
+        success: false,
+        error: "Subscription credit wallet not found",
+        code: "SUBSCRIPTION_CREDIT_WALLET_MISSING",
+      });
     }
 
     const remainingCredits = Math.max(0, Number(snap.remainingCredits || 0));
@@ -76,6 +93,9 @@ router.get("/", async (req, res) => {
 
     res.json({
       success: true,
+      authority: "subscription",
+      subscriptionId: String(latestSub._id),
+      planName: latestSub.planName || latestSub.planType || null,
       balance: remainingCredits,
       remainingCredits,
       reservedCredits,
@@ -89,6 +109,25 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error("[CALL ERROR] GET /api/wallet", err?.stack || err);
     res.status(500).json({ success: false, error: "Failed to load wallet" });
+  }
+});
+
+/**
+ * GET /api/wallet/timeline
+ * Customer credit usage timeline (grants + deductions with human labels).
+ */
+router.get("/timeline", async (req, res) => {
+  try {
+    const page = Number(req.query.page) || 1;
+    const pageSize = Number(req.query.pageSize) || 30;
+    const result = await getCustomerCreditTimeline(req.userId, { page, pageSize });
+    if (!result.ok) {
+      return res.status(400).json({ success: false, error: result.error });
+    }
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[CALL ERROR] GET /api/wallet/timeline", err?.stack || err);
+    res.status(500).json({ success: false, error: "Failed to load credit timeline" });
   }
 });
 

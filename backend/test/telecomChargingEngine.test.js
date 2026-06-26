@@ -11,16 +11,21 @@ test("expected credits: no-answer is 1 attempt only", () => {
   assert.equal(computeExpectedCallCredits({ answeredSeconds: 0, attemptCharged: true }), 1);
 });
 
-test("expected credits: 12s answered = 1 attempt + 2 intervals", () => {
+test("expected credits: 12s answered = 1 attempt + 2 intervals (v1)", () => {
+  const perInterval = CREDIT_RULES.connectedIntervalCharge;
   assert.equal(
     computeExpectedCallCredits({ answeredSeconds: 12, attemptCharged: true }),
-    1 + computeExpectedIntervalCredits(12, CREDIT_RULES.connectedIntervalSeconds, 1)
+    1 + computeExpectedIntervalCredits(12, CREDIT_RULES.connectedIntervalSeconds, perInterval)
   );
-  assert.equal(computeExpectedCallCredits({ answeredSeconds: 12, attemptCharged: true }), 3);
+  assert.equal(computeExpectedCallCredits({ answeredSeconds: 12, attemptCharged: true }), 4);
 });
 
-test("expected credits: 30s answered = 1 attempt + 5 intervals", () => {
-  assert.equal(computeExpectedCallCredits({ answeredSeconds: 30, attemptCharged: true }), 6);
+test("expected credits: 30s answered = 1 attempt + 5 intervals (v1)", () => {
+  assert.equal(computeExpectedCallCredits({ answeredSeconds: 30, attemptCharged: true }), 8.5);
+});
+
+test("expected credits: 18s answered = 1 attempt + 3 intervals (v1)", () => {
+  assert.equal(computeExpectedCallCredits({ answeredSeconds: 18, attemptCharged: true }), 5.5);
 });
 
 test("debug bypass is opt-in only (not auto development)", () => {

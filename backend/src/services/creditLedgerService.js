@@ -4,7 +4,7 @@
  * through economicSerializationService — prefer callCreditBillingService for call paths.
  */
 import mongoose from "mongoose";
-import User from "../models/User.js";
+import Subscription from "../models/Subscription.js";
 import { applyBillingEvent } from "./billingEnforcementGateway.js";
 
 function toObjectId(value) {
@@ -19,15 +19,35 @@ function toObjectId(value) {
 export async function getUserCreditSnapshot(userId) {
   const uid = toObjectId(userId);
   if (!uid) return null;
-  const user = await User.findById(uid)
+  const subscription = await Subscription.findOne({ userId: uid })
+    .sort({ createdAt: -1 })
     .select("remainingCredits totalCreditsUsed reservedCredits lifetimeCreditsPurchased")
     .lean();
-  if (!user) return null;
+  if (!subscription) return null;
+  const source = subscription;
   return {
-    remainingCredits: Number(user.remainingCredits || 0),
-    totalCreditsUsed: Number(user.totalCreditsUsed || 0),
-    reservedCredits: Number(user.reservedCredits || 0),
-    lifetimeCreditsPurchased: Number(user.lifetimeCreditsPurchased || 0),
+    remainingCredits: Number(source.remainingCredits || 0),
+    totalCreditsUsed: Number(source.totalCreditsUsed || 0),
+    reservedCredits: Number(source.reservedCredits || 0),
+    lifetimeCreditsPurchased: Number(source.lifetimeCreditsPurchased || 0),
+  };
+}
+
+export async function getLatestSubscriptionCreditSnapshot(userId) {
+  const uid = toObjectId(userId);
+  if (!uid) return null;
+  const subscription = await Subscription.findOne({ userId: uid })
+    .sort({ createdAt: -1 })
+    .select("_id remainingCredits reservedCredits totalCreditsUsed lifetimeCreditsPurchased telecomCredits")
+    .lean();
+  if (!subscription?._id) return null;
+  return {
+    subscriptionId: String(subscription._id),
+    remainingCredits: Number(subscription.remainingCredits || 0),
+    reservedCredits: Number(subscription.reservedCredits || 0),
+    totalCreditsUsed: Number(subscription.totalCreditsUsed || 0),
+    lifetimeCreditsPurchased: Number(subscription.lifetimeCreditsPurchased || 0),
+    telecomCredits: Number(subscription.telecomCredits || 0),
   };
 }
 
@@ -44,10 +64,13 @@ export async function reserveUserCredits({
   if (hold <= 0) return { ok: true, skipped: true };
   const idempotencyKey = `reserve:${reservationKey}`;
   const uid = toObjectId(userId);
-  const user = await User.findById(uid, null, session ? { session } : {});
-  if (!user) return { ok: false, code: "USER_NOT_FOUND" };
-  const remaining = Number(user.remainingCredits || 0);
-  const reserved = Number(user.reservedCredits || 0);
+  const sub = await Subscription.findOne({ userId: uid }, null, {
+    sort: { createdAt: -1 },
+    ...(session ? { session } : {}),
+  }).lean();
+  if (!sub) return { ok: false, code: "SUBSCRIPTION_CREDIT_WALLET_MISSING" };
+  const remaining = Number(sub.remainingCredits || 0);
+  const reserved = Number(sub.reservedCredits || 0);
   const available = remaining - reserved;
   if (available < hold) {
     return {
@@ -86,9 +109,12 @@ export async function releaseReservedCredits({
   if (release <= 0) return { ok: true, skipped: true };
   const idempotencyKey = `release:${reservationKey}`;
   const uid = toObjectId(userId);
-  const user = await User.findById(uid, null, session ? { session } : {});
-  if (!user) return { ok: false, code: "USER_NOT_FOUND" };
-  const safeRelease = Math.min(release, Math.max(0, Number(user?.reservedCredits || 0)));
+  const sub = await Subscription.findOne({ userId: uid }, null, {
+    sort: { createdAt: -1 },
+    ...(session ? { session } : {}),
+  }).lean();
+  if (!sub) return { ok: false, code: "SUBSCRIPTION_CREDIT_WALLET_MISSING" };
+  const safeRelease = Math.min(release, Math.max(0, Number(sub?.reservedCredits || 0)));
   if (safeRelease <= 0) {
     return applyBillingEvent({
       userId,
@@ -133,9 +159,12 @@ export async function settleReservedCredits({
   if (settle <= 0) return { ok: true, skipped: true };
   const idempotencyKey = `settle:${reservationKey}`;
   const uid = toObjectId(userId);
-  const user = await User.findById(uid, null, session ? { session } : {});
-  if (!user) return { ok: false, code: "USER_NOT_FOUND" };
-  const safeSettle = Math.min(settle, Math.max(0, Number(user?.reservedCredits || 0)));
+  const sub = await Subscription.findOne({ userId: uid }, null, {
+    sort: { createdAt: -1 },
+    ...(session ? { session } : {}),
+  }).lean();
+  if (!sub) return { ok: false, code: "SUBSCRIPTION_CREDIT_WALLET_MISSING" };
+  const safeSettle = Math.min(settle, Math.max(0, Number(sub?.reservedCredits || 0)));
   if (safeSettle <= 0) {
     return applyBillingEvent({
       userId,

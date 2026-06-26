@@ -12,11 +12,12 @@ import { randomUUID, createHash } from "crypto";
 import mongoose from "mongoose";
 import EconomicTimeline from "../models/EconomicTimeline.js";
 import Call from "../models/Call.js";
-import User from "../models/User.js";
+import Subscription from "../models/Subscription.js";
 import { getRedisClient } from "./cache.service.js";
 import { applyBillingEvent } from "./billingEnforcementGateway.js";
 import { CREDIT_RULES } from "../config/creditConfig.js";
 import { TELECOM_PRICING } from "../config/telecomPricingConfig.js";
+import { rateCallEvent } from "./telecomRatingEngine.js";
 import {
   getUserProfitGuardrails,
   getReservationMultiplierFromGuardrails,
@@ -32,6 +33,7 @@ export const ECONOMIC_MUTATION = {
   RISK_PRICING: "RISK_PRICING",
   RESERVE: "RESERVE",
   ATTEMPT_CHARGE: "ATTEMPT_CHARGE",
+  EVENT_CHARGE: "EVENT_CHARGE",
   INTERVAL_CHARGE: "INTERVAL_CHARGE",
   SETTLE_RESERVATION: "SETTLE_RESERVATION",
   RELEASE_RESERVATION: "RELEASE_RESERVATION",
@@ -185,7 +187,11 @@ export function validateEconomicMutationOrder(timelineLean, mutation) {
   if (mutation === ECONOMIC_MUTATION.RISK_PRICING) {
     return { ok: true };
   }
-  if (mutation === ECONOMIC_MUTATION.ATTEMPT_CHARGE || mutation === ECONOMIC_MUTATION.INTERVAL_CHARGE) {
+  if (
+    mutation === ECONOMIC_MUTATION.ATTEMPT_CHARGE ||
+    mutation === ECONOMIC_MUTATION.EVENT_CHARGE ||
+    mutation === ECONOMIC_MUTATION.INTERVAL_CHARGE
+  ) {
     return { ok: true };
   }
   if (mutation === ECONOMIC_MUTATION.SETTLE_RESERVATION) {
@@ -422,7 +428,7 @@ async function applyEconomicMutationOnce(session, params) {
       type: "outbound_attempt_charge",
       callId: cid,
       direction: "outbound",
-      reason: payload.reason || "outbound_dial_attempt",
+      reason: payload.reason || "outbound_attempt",
       metadata: payload.metadata || { rule: "attempt_charge" },
       idempotencyKey: key,
       allowNegative: false,
@@ -440,6 +446,49 @@ async function applyEconomicMutationOnce(session, params) {
     return { ok: true, billing: r, timeline: await reload() };
   }
 
+  if (mutation === ECONOMIC_MUTATION.EVENT_CHARGE) {
+    // v1 lifecycle milestone charge (routed/ringing/busy/no_answer/failed_after_routing/answered).
+    const eventName = String(payload.eventName || "").trim();
+    const amount = Math.max(0, Number(payload.amount ?? rateCallEvent(eventName)) || 0);
+    if (!eventName) {
+      return { ok: false, code: "INVALID_EVENT" };
+    }
+    if (amount <= 0) {
+      // Zero-rated event (e.g. carrier_reject_before_routing) — record nothing, no debit.
+      return { ok: true, skipped: true, reason: "zero_rated_event", eventName };
+    }
+    const key = `call:${String(cid)}:event:${eventName}`;
+    const r = await applyBillingEvent({
+      userId: uid,
+      amount: -amount,
+      type: "call_event_charge",
+      callId: cid,
+      direction: callLean.direction || "outbound",
+      reason: payload.reason || `call_event_${eventName}`,
+      metadata: { event: eventName, credits: amount, rule: "v1_call_event", ...(payload.metadata || {}) },
+      idempotencyKey: key,
+      allowNegative: Boolean(payload.allowNegative),
+      ...billingOpts,
+    });
+    if (!r.ok && r.code === "INSUFFICIENT_CREDITS") return r;
+    if (!r.duplicate) {
+      doc.consumedCredits = Number(doc.consumedCredits || 0) + amount;
+    }
+    doc.timelineState = "charging";
+    pushMutation(doc, {
+      mutation,
+      at: new Date(),
+      version: doc.economicVersion,
+      eventName,
+      amount,
+      ledgerDuplicate: Boolean(r.duplicate),
+    });
+    if (payload.clientMutationId) rememberProcessedId(doc, payload.clientMutationId);
+    stampDocHash(doc);
+    await EconomicTimeline.replaceOne({ _id: doc._id }, doc, opts);
+    return { ok: true, billing: r, eventName, amount, timeline: await reload() };
+  }
+
   if (mutation === ECONOMIC_MUTATION.INTERVAL_CHARGE) {
     const intervalIndex = Math.max(1, Math.floor(Number(payload.intervalIndex || 0)));
     const indexes = new Set((doc.billedIntervalIndexes || []).map(Number));
@@ -454,7 +503,7 @@ async function applyEconomicMutationOnce(session, params) {
       type: "connected_duration_charge",
       callId: cid,
       direction: callLean.direction || "outbound",
-      reason: payload.reason || "connected_interval_6s",
+      reason: payload.reason || "active_6_second_charge",
       metadata: {
         intervalIndex,
         intervalSeconds: CREDIT_RULES.connectedIntervalSeconds,
@@ -537,6 +586,10 @@ async function applyEconomicMutationOnce(session, params) {
     if (payload.clientMutationId) rememberProcessedId(doc, payload.clientMutationId);
     stampDocHash(doc);
     await EconomicTimeline.replaceOne({ _id: doc._id }, doc, opts);
+    const { syncSubscriptionReservedFromTimelines } = await import(
+      "./reservationReconciliationService.js"
+    );
+    await syncSubscriptionReservedFromTimelines(uid).catch(() => {});
     return { ok: true, billing: r, timeline: await reload() };
   }
 
@@ -842,12 +895,14 @@ async function runReserveBatch(session, call, options) {
   );
   const riskPremiumCredits = Math.max(0, hold - CREDIT_RULES.callReservationMinimum);
 
-  const uq = User.findById(uid).select("remainingCredits reservedCredits");
-  if (session) uq.session(session);
-  const u = await uq.lean();
-  if (!u) return { ok: false, code: "USER_NOT_FOUND" };
-  const remaining = Number(u.remainingCredits || 0);
-  const reserved = Number(u.reservedCredits || 0);
+  const sq = Subscription.findOne({ userId: uid })
+    .sort({ createdAt: -1 })
+    .select("remainingCredits reservedCredits");
+  if (session) sq.session(session);
+  const s = await sq.lean();
+  if (!s) return { ok: false, code: "SUBSCRIPTION_CREDIT_WALLET_MISSING" };
+  const remaining = Number(s.remainingCredits || 0);
+  const reserved = Number(s.reservedCredits || 0);
   const available = remaining - reserved;
 
   if (riskPremiumCredits > 0) {
@@ -928,6 +983,51 @@ export async function chargeOutboundAttemptSerialized(call) {
 }
 
 /**
+ * Serialized v1 call lifecycle milestone charge.
+ * Charges `rateCallEvent(eventName)` credits exactly once per (call, eventName),
+ * idempotent via ledger key `call:<id>:event:<eventName>`.
+ * @param {object} call
+ * @param {string} eventName - one of CALL_BILLING_EVENT values
+ * @param {object} [options] - { amount?, allowNegative?, reason?, metadata? }
+ */
+export async function chargeCallEventSerialized(call, eventName, options = {}) {
+  if (!call?._id || !call?.user) {
+    return { ok: true, skipped: true };
+  }
+  const params = {
+    callId: call._id,
+    userId: call.user,
+    mutation: ECONOMIC_MUTATION.EVENT_CHARGE,
+    payload: {
+      eventName,
+      amount: options.amount,
+      allowNegative: options.allowNegative,
+      reason: options.reason,
+      metadata: options.metadata,
+    },
+    sourceService: "economicSerializationService.chargeCallEventSerialized",
+  };
+  const lock = await withEconomicCallLock(call._id, async () => {
+    if (mongoose.connection.readyState !== 1) {
+      return applyEconomicMutationOnce(null, params);
+    }
+    const session = await mongoose.startSession();
+    try {
+      return await session.withTransaction(() => applyEconomicMutationOnce(session, params));
+    } catch (err) {
+      if (isTransactionUnsupportedError(err)) {
+        return applyEconomicMutationOnce(null, params);
+      }
+      throw err;
+    } finally {
+      await session.endSession().catch(() => {});
+    }
+  });
+  if (!lock.ok) return { ok: false, code: lock.reason };
+  return lock.value;
+}
+
+/**
  * Serialized terminal release of unused reservation credits.
  */
 export async function releaseUnusedCallReservationSerialized(call) {
@@ -965,14 +1065,24 @@ async function runReleaseBatch(session, call, releasable) {
   const cid = call._id;
   const uid = call.user;
   const reservationKey = `call:${String(cid)}:min-reserve`;
-  if (releasable <= 0) {
+
+  // Authoritative terminal cleanup: release whatever this call still holds in the timeline.
+  // Under the v1 rating model, lifecycle milestone charges (routed/ringing/answered/etc.) are
+  // direct debits that do NOT settle the reservation, so the caller-derived `releasable`
+  // (held - countersCharged) can be wrong. The timeline's remaining reservedCredits is the
+  // source of truth for what must be returned to the subscriber's available balance.
+  const timeline = await loadTimeline(session, cid);
+  const remainingReserved = Math.max(0, Number(timeline?.reservedCredits || 0));
+  const release = remainingReserved > 0 ? remainingReserved : Math.max(0, Number(releasable) || 0);
+
+  if (release <= 0) {
     return { ok: true, skipped: true, reason: "nothing_to_release" };
   }
   return applyEconomicMutationOnce(session, {
     callId: cid,
     userId: uid,
     mutation: ECONOMIC_MUTATION.RELEASE_RESERVATION,
-    payload: { release: releasable, reservationKey, reason: "call_terminal_release" },
+    payload: { release, reservationKey, reason: "call_terminal_release" },
     sourceService: "economicSerializationService.releaseUnusedCallReservationSerialized",
   });
 }

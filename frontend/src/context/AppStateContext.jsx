@@ -18,10 +18,15 @@ export function emptyUsageBootstrap() {
   return {
     smsUsed: 0,
     minutesUsed: 0,
+    creditsRemaining: 0,
+    telecomCredits: 0,
+    reservedCredits: 0,
+    totalCreditsUsed: 0,
     smsRemaining: 0,
     minutesRemaining: 0,
     smsLimit: 0,
     minutesLimit: 0,
+    creditsLimit: 0,
     isSmsEnabled: false,
     isCallEnabled: false,
   };

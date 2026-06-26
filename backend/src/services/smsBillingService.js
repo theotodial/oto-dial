@@ -7,6 +7,7 @@ import { computeSmsCreditsUsed } from "./usageComputationService.js";
 import { isUnlimitedSubscription } from "./unlimitedUsageService.js";
 import { applyBillingEvent } from "./billingEnforcementGateway.js";
 import { CREDIT_RULES } from "../config/creditConfig.js";
+import { rateSms, isRatingV1Enabled } from "./telecomRatingEngine.js";
 
 /** GSM 03.38 default alphabet (single septet each), excluding extension escape table. */
 const GSM_BASIC_CHARS = new Set(
@@ -373,9 +374,15 @@ export async function applySmsDeduction(userId, messageId, message, options = {}
         source: options.source ?? undefined,
       });
       if (direction === "outbound") {
+        // v1 rating: per-segment credits (GSM-7 15/segment, Unicode 20/segment).
+        // Legacy flat charge only applies when TELECOM_RATING_V1=false.
+        const v1 = isRatingV1Enabled();
+        const smsCredits = v1
+          ? rateSms({ encoding, segments: actualParts })
+          : CREDIT_RULES.smsOutboundCharge;
         const ledgerResult = await applyBillingEvent({
           userId: uid,
-          amount: -CREDIT_RULES.smsOutboundCharge,
+          amount: -smsCredits,
           type: "sms_charge",
           reason: "outbound_sms_send",
           smsId: oid,
@@ -383,6 +390,9 @@ export async function applySmsDeduction(userId, messageId, message, options = {}
           metadata: {
             smsParts: actualParts,
             billedParts,
+            encoding,
+            credits: smsCredits,
+            ratingVersion: v1 ? "v1" : "legacy",
             previousSmsQuotaCharge: billedParts,
           },
           idempotencyKey: `sms:${String(oid)}:charge`,

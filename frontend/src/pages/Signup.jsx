@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { trackSignUp } from '../utils/analytics';
+import { track } from '../utils/analyticsClient';
+import { ANALYTICS_EVENTS } from '../constants/analyticsEvents';
 import { normalizeViteApiBaseUrl } from '../utils/viteApiBase';
 
 const GoogleIcon = () => (
@@ -154,6 +156,7 @@ function Signup() {
     e.preventDefault();
     setLoading(true);
     setError('');
+    track(ANALYTICS_EVENTS.SIGNUP_STARTED, { method: 'email' });
 
     try {
       if (!agreedToTerms) {

@@ -4,6 +4,7 @@
 
 import mongoose from "mongoose";
 import User from "../models/User.js";
+import Subscription from "../models/Subscription.js";
 import EconomicTimeline from "../models/EconomicTimeline.js";
 import CreditLedger from "../models/CreditLedger.js";
 import Call from "../models/Call.js";
@@ -103,4 +104,41 @@ export async function reconcileUserReservations(userId) {
     openCallCount: openCallIds.length,
     timelineCount: timelines.length,
   };
+}
+
+/**
+ * Align Subscription.reservedCredits (and User cache) to open EconomicTimeline totals.
+ * Read-only source of truth: sum of timeline.reservedCredits for non-finalized timelines.
+ */
+export async function syncSubscriptionReservedFromTimelines(userId) {
+  const uid = toObjectId(userId);
+  if (!uid) return { ok: false, error: "invalid_user_id" };
+
+  const timelines = await EconomicTimeline.find({
+    user: uid,
+    finalizedAt: null,
+  })
+    .select("reservedCredits")
+    .lean();
+
+  let timelineReserved = 0;
+  for (const t of timelines) {
+    timelineReserved += num(t.reservedCredits);
+  }
+
+  const sub = await Subscription.findOne({ userId: uid }).sort({ createdAt: -1 });
+  if (!sub) return { ok: false, error: "subscription_not_found" };
+
+  const before = num(sub.reservedCredits);
+  if (Math.abs(before - timelineReserved) <= 5) {
+    return { ok: true, changed: false, before, after: before, timelineReserved };
+  }
+
+  sub.reservedCredits = timelineReserved;
+  await sub.save();
+
+  const { syncUserCacheFromSubscription } = await import("./billingEnforcementGateway.js");
+  await syncUserCacheFromSubscription(uid).catch(() => {});
+
+  return { ok: true, changed: true, before, after: timelineReserved, timelineReserved };
 }

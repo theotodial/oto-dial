@@ -12,6 +12,7 @@ import { deploymentSafetyAgent } from "./deployment/deploymentSafetyAgent.js";
 import { profitProtectionAgent } from "./telecom/profitProtectionAgent.js";
 import { ledgerConsistencyAgent } from "./telecom/ledgerConsistencyAgent.js";
 import { billingConsistencyAgent } from "./telecom/billingConsistencyAgent.js";
+import { creditReconciliationAgent } from "./telecom/creditReconciliationAgent.js";
 import { economicTimelineConsistencyAgent } from "./telecom/economicTimelineConsistencyAgent.js";
 import { economicRecoveryAgent } from "./telecom/economicRecoveryAgent.js";
 import { stuckBillingAgent } from "./telecom/stuckBillingAgent.js";
@@ -36,6 +37,7 @@ const registeredAgents = [
   profitProtectionAgent,
   ledgerConsistencyAgent,
   billingConsistencyAgent,
+  creditReconciliationAgent,
   economicTimelineConsistencyAgent,
   economicRecoveryAgent,
   stuckBillingAgent,

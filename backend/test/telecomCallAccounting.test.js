@@ -26,7 +26,7 @@ test("early-media state is reachable from ringing and dialing", () => {
 test("country multiplier defaults to US for +1 destinations", () => {
   assert.equal(resolveCountryMultiplier("+14155551212"), TELECOM_PRICING.countryMultipliers.US);
   assert.equal(scaledCredits(3, 1), 3);
-  assert.equal(scaledCredits(3, 1.5), 5);
+  assert.equal(scaledCredits(3, 1.5), 4.5);
 });
 
 test("pre-answer interval credit estimate uses 6-second buckets", () => {

@@ -30,8 +30,10 @@ import { telecomStructuredLog } from "../utils/telecomStructuredLog.js";
 import {
   reserveCreditsForOutboundCall,
   chargeProviderAcceptedAttempt,
+  chargeCallLifecycleEvent,
   releaseUnusedCallReservation,
 } from "../services/callCreditBillingService.js";
+import { isRatingV1Enabled, CALL_BILLING_EVENT } from "../services/telecomRatingEngine.js";
 import { assertUserHasOutboundDialCredits } from "../services/telecomCreditGuard.js";
 import { applyOutboundProfitThrottle, getUserProfitGuardrails } from "../services/profitGuardrailService.js";
 import {
@@ -975,6 +977,39 @@ router.patch("/:id", async (req, res) => {
             });
           }
           call = transitioned.call || call;
+          if (isRatingV1Enabled() && call.direction === "outbound") {
+            try {
+              const wasRouted =
+                Boolean(call.callRingingAt) ||
+                Boolean(call.callEarlyMediaAt) ||
+                Boolean(call.callAnsweredAt) ||
+                hadAnswered ||
+                (Array.isArray(call.billedCallEvents) &&
+                  (call.billedCallEvents.includes(CALL_BILLING_EVENT.ROUTED) ||
+                    call.billedCallEvents.includes(CALL_BILLING_EVENT.RINGING)));
+              let terminalEvent = null;
+              if (effectiveRequested === CALL_STATES.BUSY) terminalEvent = CALL_BILLING_EVENT.BUSY;
+              else if (effectiveRequested === CALL_STATES.NO_ANSWER)
+                terminalEvent = CALL_BILLING_EVENT.NO_ANSWER;
+              else if (effectiveRequested === CALL_STATES.FAILED && wasRouted)
+                terminalEvent = CALL_BILLING_EVENT.FAILED_AFTER_ROUTING;
+              if (terminalEvent) {
+                await chargeCallLifecycleEvent(call, CALL_BILLING_EVENT.ROUTED, {
+                  sourcePath: "callRoutes.js:PATCH",
+                  eventType: "client_terminal",
+                });
+                await chargeCallLifecycleEvent(call, terminalEvent, {
+                  sourcePath: "callRoutes.js:PATCH",
+                  eventType: "client_terminal",
+                });
+              }
+            } catch (v1TermErr) {
+              console.warn(
+                "[TELECOM CHARGE] v1 client terminal charge failed:",
+                v1TermErr?.message || v1TermErr
+              );
+            }
+          }
           if (hadAnswered && billable > 0) {
             await tryDeductVoiceUsageForCall(call, billable);
           }
@@ -1032,7 +1067,42 @@ router.patch("/:id", async (req, res) => {
             });
           }
           call = transitioned.call || call;
-          if (chargeOnRinging) {
+          if (isRatingV1Enabled()) {
+            try {
+              const freshV1 = await Call.findById(call._id).select(
+                "_id user direction billedCallEvents"
+              );
+              if (freshV1?.direction === "outbound") {
+                if (requested === CALL_STATES.RINGING) {
+                  await chargeCallLifecycleEvent(freshV1, CALL_BILLING_EVENT.ROUTED, {
+                    sourcePath: "callRoutes.js:PATCH",
+                    eventType: "client_ringing",
+                  });
+                  await chargeCallLifecycleEvent(freshV1, CALL_BILLING_EVENT.RINGING, {
+                    sourcePath: "callRoutes.js:PATCH",
+                    eventType: "client_ringing",
+                  });
+                } else if (
+                  requested === CALL_STATES.ACTIVE ||
+                  requested === CALL_STATES.ANSWERED
+                ) {
+                  await chargeCallLifecycleEvent(freshV1, CALL_BILLING_EVENT.ROUTED, {
+                    sourcePath: "callRoutes.js:PATCH",
+                    eventType: "client_answered",
+                  });
+                  await chargeCallLifecycleEvent(freshV1, CALL_BILLING_EVENT.ANSWERED, {
+                    sourcePath: "callRoutes.js:PATCH",
+                    eventType: "client_answered",
+                  });
+                }
+              }
+            } catch (v1Err) {
+              console.warn(
+                "[TELECOM CHARGE] v1 client lifecycle charge failed:",
+                v1Err?.message || v1Err
+              );
+            }
+          } else if (chargeOnRinging) {
             const freshRing = await Call.findById(call._id);
             await chargeProviderAcceptedAttempt(freshRing, {
               sourcePath: "callRoutes.js:PATCH",

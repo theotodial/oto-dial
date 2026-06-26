@@ -418,7 +418,25 @@ async function createOrUpdatePendingSubscription({
       periodEnd: computedPeriodEnd,
       usage: { minutesUsed: 0, smsUsed: 0 },
       addons: { minutes: 0, sms: 0 },
-      usageWindowDateKey: getServerDayKey()
+      usageWindowDateKey: getServerDayKey(),
+      telecomCredits: Math.max(
+        0,
+        Number(
+          plan.monthlyCreditsLimit ??
+            plan.limits?.creditsTotal ??
+            plan.limits?.minutesTotal ??
+            0
+        )
+      ),
+      remainingCredits: Math.max(
+        0,
+        Number(
+          plan.monthlyCreditsLimit ??
+            plan.limits?.creditsTotal ??
+            plan.limits?.minutesTotal ??
+            0
+        )
+      ),
     });
   } else {
     subscription.planId = plan._id;
@@ -462,6 +480,7 @@ async function activateSubscriptionAtomic({
       throw new Error("Subscription no longer exists");
     }
 
+    const previousInvoiceId = target.latestInvoiceId ? String(target.latestInvoiceId) : null;
     target.status = "active";
     if (stripeSubscriptionId) {
       target.stripeSubscriptionId = stripeSubscriptionId;
@@ -502,11 +521,21 @@ async function activateSubscriptionAtomic({
       { session }
     );
 
+    const isRenewal = Boolean(previousInvoiceId && invoiceId && previousInvoiceId !== String(invoiceId));
+    target.telecomCredits = planCredits;
+    if (!isRenewal || !Number.isFinite(Number(target.remainingCredits))) {
+      target.remainingCredits = planCredits;
+      target.totalCreditsUsed = 0;
+      target.lifetimeCreditsPurchased = 0;
+    }
+    target.reservedCredits = 0;
+    await target.save({ session });
+
     await session.commitTransaction();
     session.endSession();
 
     await updateAnalyticsForActivatedSubscription(user._id, target._id);
-    if (planCredits > 0 && invoiceId) {
+    if (planCredits > 0 && invoiceId && isRenewal) {
       await applyBillingEvent({
         userId: user._id,
         amount: planCredits,
@@ -713,7 +742,25 @@ async function syncSubscriptionFromStripeObject(stripeSubscription, stripe, sour
       periodEnd,
       usage: { minutesUsed: 0, smsUsed: 0 },
       addons: { minutes: 0, sms: 0 },
-      usageWindowDateKey: getServerDayKey()
+      usageWindowDateKey: getServerDayKey(),
+      telecomCredits: Math.max(
+        0,
+        Number(
+          plan.monthlyCreditsLimit ??
+            plan.limits?.creditsTotal ??
+            plan.limits?.minutesTotal ??
+            0
+        )
+      ),
+      remainingCredits: Math.max(
+        0,
+        Number(
+          plan.monthlyCreditsLimit ??
+            plan.limits?.creditsTotal ??
+            plan.limits?.minutesTotal ??
+            0
+        )
+      ),
     });
   } else {
     subscription.userId = user._id;
@@ -725,6 +772,20 @@ async function syncSubscriptionFromStripeObject(stripeSubscription, stripe, sour
     subscription.stripeCustomerId = customerId;
     subscription.stripePriceId = stripePriceId || plan.stripePriceId || subscription.stripePriceId;
     subscription.usageWindowDateKey = subscription.usageWindowDateKey || getServerDayKey();
+    if (!Number.isFinite(Number(subscription.telecomCredits)) || Number(subscription.telecomCredits) <= 0) {
+      subscription.telecomCredits = Math.max(
+        0,
+        Number(
+          plan.monthlyCreditsLimit ??
+            plan.limits?.creditsTotal ??
+            plan.limits?.minutesTotal ??
+            0
+        )
+      );
+    }
+    if (!Number.isFinite(Number(subscription.remainingCredits))) {
+      subscription.remainingCredits = Number(subscription.telecomCredits || 0);
+    }
   }
 
   applyPlanSnapshotToSubscription(subscription, plan);

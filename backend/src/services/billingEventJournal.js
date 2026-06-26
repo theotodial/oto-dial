@@ -80,7 +80,16 @@ export function mapCreditLedgerToJournalEvent(p) {
     eventType = "interval_charge";
   } else if (type === "sms_charge") {
     eventType = "sms_charge";
-  } else if (type === "subscription_credit_grant" || type === "add_on_purchase" || type === "migration_conversion") {
+  } else if (type === "call_event_charge") {
+    // v1 lifecycle milestone charge (routed/ringing/busy/no_answer/failed/answered).
+    // Neutral journal eventType; CreditLedger.type/ledgerType carries the precise semantics.
+    eventType = "adjustment";
+  } else if (
+    type === "subscription_credit_grant" ||
+    type === "add_on_purchase" ||
+    type === "migration_conversion" ||
+    type === "migration_reset"
+  ) {
     eventType = "grant";
   } else if (type === "refund") {
     eventType = "refund";

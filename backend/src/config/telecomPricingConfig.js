@@ -52,5 +52,6 @@ export function resolveCountryMultiplier(destinationE164) {
 export function scaledCredits(baseCredits, multiplier) {
   const m = Math.max(0, Number(multiplier) || 1);
   const b = Math.max(0, Number(baseCredits) || 0);
-  return Math.max(0, Math.ceil(b * m));
+  // Keep fractional precision (v1 bills 0.25 credits/second); round only to avoid float drift.
+  return Math.max(0, Math.round(b * m * 10000) / 10000);
 }

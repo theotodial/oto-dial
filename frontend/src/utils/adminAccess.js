@@ -132,7 +132,23 @@ export const getRequiredRoleForAdminPath = (pathname = "") => {
 export const canAccessAdminPath = (pathname, adminProfile) => {
   const requiredRole = getRequiredRoleForAdminPath(pathname);
   if (!requiredRole) return true;
+  if (requiredRole === "analytics") {
+    return (
+      hasAdminRole(adminProfile, "analytics") || hasAdminRole(adminProfile, "dashboard")
+    );
+  }
   return hasAdminRole(adminProfile, requiredRole);
+};
+
+/** Sidebar / nav: analytics section visible to dashboard admins too */
+export const canSeeAdminNavItem = (adminProfile, item) => {
+  if (!item?.role) return true;
+  if (item.role === "analytics") {
+    return (
+      hasAdminRole(adminProfile, "analytics") || hasAdminRole(adminProfile, "dashboard")
+    );
+  }
+  return hasAdminRole(adminProfile, item.role);
 };
 
 export const getFirstAccessibleAdminPath = (adminProfile) => {

@@ -59,10 +59,18 @@ const getSubscriptionHandler = async (req, res) => {
       planName: subscription.planName || "Active Plan",
       planType: subscription.planType || (unlimited ? "unlimited" : null),
       displayUnlimited: unlimited,
+      telecomCreditsAuthority: "subscription",
+      telecomCredits: unlimited
+        ? "∞"
+        : Number(subscription.telecomCredits ?? subscription.creditsLimit ?? 0),
       minutesRemaining: unlimited ? "∞" : subscription.minutesRemaining,
       creditsRemaining: unlimited
         ? "∞"
-        : Number(subscription.creditsRemaining ?? subscription.minutesRemaining ?? 0),
+        : Number(
+            subscription.remainingCredits ??
+              subscription.telecomCredits ??
+              0
+          ),
       smsRemaining: unlimited ? "∞" : subscription.smsRemaining,
       status: subscription.status || "active",
       isActive: subscription.status === "active",
@@ -212,6 +220,23 @@ router.post("/buy", async (req, res) => {
     });
 
     applyPlanSnapshotToSubscription(subscription, plan);
+    subscription.telecomCredits = Math.max(
+      0,
+      Number(
+        plan.monthlyCreditsLimit ??
+          plan.limits?.creditsTotal ??
+          plan.limits?.minutesTotal ??
+          subscription.telecomCredits ??
+          0
+      )
+    );
+    subscription.remainingCredits = Math.max(
+      0,
+      Number(subscription.remainingCredits ?? subscription.telecomCredits)
+    );
+    subscription.reservedCredits = Number(subscription.reservedCredits || 0);
+    subscription.totalCreditsUsed = Number(subscription.totalCreditsUsed || 0);
+    subscription.lifetimeCreditsPurchased = Number(subscription.lifetimeCreditsPurchased || 0);
     await subscription.save();
     await invalidateUserSubscriptionCache(userId);
     await applyUserEntitlementsForPlan(userId, plan);

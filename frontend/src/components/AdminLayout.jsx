@@ -1,6 +1,50 @@
 import { Suspense, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { AdminPageFallback } from './loadingFallbacks';
 import AdminSidebar from './AdminSidebar';
+import { canSeeAdminNavItem, readStoredAdminProfile } from '../utils/adminAccess';
+
+const overviewTabs = [
+  { path: '/adminbobby/dashboard', label: 'Dashboard', role: 'dashboard' },
+  { path: '/adminbobby/analytics', label: 'Analytics', role: 'analytics' },
+  { path: '/adminbobby/analytics/profitability-tools', label: 'Profit tools', role: 'analytics' },
+];
+
+function AdminOverviewTabs() {
+  const location = useLocation();
+  const adminProfile = readStoredAdminProfile();
+  const tabs = overviewTabs.filter((tab) => canSeeAdminNavItem(adminProfile, tab));
+  if (tabs.length < 2) return null;
+
+  return (
+    <div className="sticky top-0 z-20 border-b border-gray-200 dark:border-slate-700 bg-gray-50/95 dark:bg-slate-900/95 backdrop-blur px-4 sm:px-6 lg:px-8 py-3">
+      <div className="flex flex-wrap gap-2">
+        {tabs.map((tab) => {
+          const isActive =
+            tab.path === '/adminbobby/analytics/profitability-tools'
+              ? location.pathname.startsWith('/adminbobby/analytics/profitability-tools')
+              : location.pathname === tab.path ||
+                (tab.path === '/adminbobby/analytics' &&
+                  location.pathname.startsWith('/adminbobby/analytics/') &&
+                  !location.pathname.startsWith('/adminbobby/analytics/profitability-tools'));
+          return (
+            <Link
+              key={tab.path}
+              to={tab.path}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                isActive
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-slate-600 hover:bg-gray-100 dark:hover:bg-slate-700'
+              }`}
+            >
+              {tab.label}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 const MenuIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -32,6 +76,7 @@ function AdminLayout({ children }) {
 
       <AdminSidebar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
       <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-gray-50 dark:bg-slate-900 lg:ml-0 pt-0 antialiased">
+        <AdminOverviewTabs />
         <Suspense fallback={<AdminPageFallback />}>{children}</Suspense>
       </div>
     </div>

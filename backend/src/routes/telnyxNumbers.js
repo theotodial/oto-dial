@@ -1876,6 +1876,36 @@ router.post(
       
       console.log(`✅ Number ${phoneNumber} purchased successfully for user ${user._id}`);
 
+      try {
+        const { recordServerEvent } = await import("../services/analytics/serverEventService.js");
+        const { ANALYTICS_EVENTS } = await import("../constants/analyticsEvents.js");
+        const { sendCustomEvent } = await import("../services/analytics/gaMeasurementProtocolService.js");
+        await recordServerEvent({
+          name: ANALYTICS_EVENTS.NUMBER_PURCHASED,
+          userId: String(user._id),
+          value: Number(phoneNumberDoc.oneTimeFees || phoneNumberDoc.monthlyCost || 0),
+          props: {
+            phoneNumber,
+            country: resolvedCountryInfo?.code,
+            phoneNumberId: String(phoneNumberDoc._id),
+            transactionId: String(phoneNumberDoc._id)
+          },
+          eventId: `srv:number:${phoneNumberDoc._id}`
+        });
+        await sendCustomEvent({
+          userId: String(user._id),
+          name: "number_purchase",
+          transactionId: String(phoneNumberDoc._id),
+          params: {
+            phone_number: phoneNumber,
+            country: resolvedCountryInfo?.code,
+            value: Number(phoneNumberDoc.oneTimeFees || phoneNumberDoc.monthlyCost || 0)
+          }
+        });
+      } catch (analyticsErr) {
+        console.warn("[analytics] number purchase event:", analyticsErr?.message);
+      }
+
       // SYNC REAL COST FROM TELNYX (CRITICAL)
       // This ensures we have the most accurate cost data from Telnyx
       try {

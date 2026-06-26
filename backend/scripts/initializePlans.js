@@ -21,6 +21,7 @@ import {
   SMS_CAMPAIGN_STRIPE_PRICE_ID,
   SMS_CAMPAIGN_1000_STRIPE_PRICE_ID
 } from "../src/constants/smsCampaignPlan.js";
+import { PLAN_CREDITS } from "../src/config/creditConfig.js";
 
 // Load environment variables
 dotenv.config();
@@ -45,16 +46,19 @@ async function initializePlans() {
         currency: "USD",
         stripeProductId: "prod_Tj3I37A5KEUqJG",
         stripePriceId: STRIPE_PLAN_PRICE_IDS.basic,
+        // Telecom Credit plan: included credits power calls + SMS via the v1 rating engine.
+        // minutesTotal/smsTotal kept >0 so legacy gating + "calling/SMS included" checks pass.
         limits: {
-          minutesTotal: 1500,
-          creditsTotal: 1500,
+          minutesTotal: PLAN_CREDITS.basic,
+          creditsTotal: PLAN_CREDITS.basic,
           smsTotal: 100,
           numbersTotal: 1
         },
-        monthlyCreditsLimit: 1500,
+        monthlyCreditsLimit: PLAN_CREDITS.basic,
         dailyCreditsLimit: 300,
         dedicatedNumbers: 1,
         displayUnlimited: false,
+        comingSoon: false,
         active: true
       },
       {
@@ -66,15 +70,16 @@ async function initializePlans() {
         stripeProductId: "prod_Tj3I37A5KEUqJG",
         stripePriceId: STRIPE_PLAN_PRICE_IDS.super,
         limits: {
-          minutesTotal: 2500,
-          creditsTotal: 2500,
+          minutesTotal: PLAN_CREDITS.super,
+          creditsTotal: PLAN_CREDITS.super,
           smsTotal: 200,
           numbersTotal: 1
         },
-        monthlyCreditsLimit: 2500,
+        monthlyCreditsLimit: PLAN_CREDITS.super,
         dailyCreditsLimit: 500,
         dedicatedNumbers: 1,
         displayUnlimited: false,
+        comingSoon: false,
         active: true
       },
       {
@@ -99,6 +104,8 @@ async function initializePlans() {
         dailyCreditsLimit: UNLIMITED_INTERNAL_LIMITS.dailyMinutesLimit,
         dedicatedNumbers: UNLIMITED_INTERNAL_LIMITS.dedicatedNumbers,
         displayUnlimited: true,
+        // Paused: "Unlimited Call" is Coming Soon. Existing subscribers keep working; new checkout blocked.
+        comingSoon: true,
         active: true
       },
       {
@@ -166,6 +173,27 @@ async function initializePlans() {
         voiceCallsEnabled: false,
         smsCampaignPlan: true,
         active: true
+      },
+      {
+        // Enterprise: Coming Soon / Contact Sales. No Stripe checkout, no public purchase.
+        type: "enterprise",
+        name: "Enterprise",
+        planName: "Enterprise",
+        price: 0,
+        currency: "USD",
+        stripeProductId: null,
+        stripePriceId: null,
+        limits: {
+          minutesTotal: 0,
+          creditsTotal: 0,
+          smsTotal: 0,
+          numbersTotal: 0
+        },
+        monthlyCreditsLimit: 0,
+        dedicatedNumbers: 0,
+        displayUnlimited: false,
+        comingSoon: true,
+        active: true
       }
     ];
 
@@ -200,6 +228,7 @@ async function initializePlans() {
         plan.dedicatedNumbers = planData.dedicatedNumbers ?? planData.limits?.numbersTotal ?? 1;
         plan.displayUnlimited = Boolean(planData.displayUnlimited);
         plan.adminOnly = Boolean(planData.adminOnly);
+        plan.comingSoon = Boolean(planData.comingSoon);
         plan.voiceCallsEnabled = planData.voiceCallsEnabled !== false;
         plan.smsCampaignPlan = Boolean(planData.smsCampaignPlan);
         plan.active = planData.active;

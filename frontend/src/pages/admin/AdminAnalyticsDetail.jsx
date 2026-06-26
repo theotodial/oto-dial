@@ -249,6 +249,14 @@ function AdminAnalyticsDetail() {
     topOutboundAttemptUsers: [],
     negativeMarginUsers: []
   };
+  const credits = data?.credits || {
+    totalGranted: 0,
+    totalConsumed: 0,
+    outboundAttemptCharges: 0,
+    callEventCharges: 0,
+    connectedDurationCharges: 0,
+    smsCharges: 0
+  };
   const buildSourceDisplayLabel = (source, channel, handle = null) => {
     const icon = getSourceIcon(source, channel);
     const base = formatSourceLabel(source || 'direct');
@@ -1194,6 +1202,48 @@ function AdminAnalyticsDetail() {
                 <div className="text-sm text-orange-600 dark:text-orange-400 mb-1">Rejected Attempt Burn</div>
                 <div className="text-3xl font-bold text-orange-600 dark:text-orange-400">
                   {Number(voice.creditsBurnedOnRejectedCalls || 0).toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Telecom Credits Consumed</h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-4">
+                  <div className="text-xs text-indigo-600 dark:text-indigo-400 mb-1">Total Consumed</div>
+                  <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
+                    {Number(credits.totalConsumed || 0).toLocaleString()}
+                  </div>
+                </div>
+                <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg p-4">
+                  <div className="text-xs text-emerald-600 dark:text-emerald-400 mb-1">Total Granted</div>
+                  <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                    {Number(credits.totalGranted || 0).toLocaleString()}
+                  </div>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-900/40 rounded-lg p-4">
+                  <div className="text-xs text-gray-600 dark:text-gray-400 mb-1">Call Events</div>
+                  <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                    {Number(credits.callEventCharges || 0).toLocaleString()}
+                  </div>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-900/40 rounded-lg p-4">
+                  <div className="text-xs text-gray-600 dark:text-gray-400 mb-1">Connected Duration</div>
+                  <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                    {Number(credits.connectedDurationCharges || 0).toLocaleString()}
+                  </div>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-900/40 rounded-lg p-4">
+                  <div className="text-xs text-gray-600 dark:text-gray-400 mb-1">SMS</div>
+                  <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                    {Number(credits.smsCharges || 0).toLocaleString()}
+                  </div>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-900/40 rounded-lg p-4">
+                  <div className="text-xs text-gray-600 dark:text-gray-400 mb-1">Legacy Attempts</div>
+                  <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                    {Number(credits.outboundAttemptCharges || 0).toLocaleString()}
+                  </div>
                 </div>
               </div>
             </div>

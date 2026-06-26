@@ -16,6 +16,9 @@ import {
   maybeSendInvoicePaymentFailedEmail,
   maybeSendInvoicePaymentSuccessEmail
 } from "../services/transactionalInvoiceEmailService.js";
+import { recordServerEvent } from "../services/analytics/serverEventService.js";
+import { sendPurchaseEvent, sendCustomEvent } from "../services/analytics/gaMeasurementProtocolService.js";
+import { ANALYTICS_EVENTS } from "../constants/analyticsEvents.js";
 
 const router = express.Router();
 
@@ -142,6 +145,28 @@ router.post("/", async (req, res) => {
             console.warn("⚠️ Payment failed email helper error:", err.message);
           });
         }
+        await recordServerEvent({
+          name: ANALYTICS_EVENTS.PAYMENT_FAILED,
+          userId: mid.userId || null,
+          value: Number(invoice?.amount_due || 0) / 100,
+          currency: invoice?.currency || "usd",
+          props: {
+            invoiceId: invoice?.id || null,
+            stripeCustomerId: invoice?.customer || null,
+            transactionId: invoice?.id || null
+          },
+          eventId: invoice?.id ? `srv:payment_failed:${invoice.id}` : null
+        }).catch(() => {});
+        await sendCustomEvent({
+          userId: mid.userId || null,
+          name: "payment_failed",
+          transactionId: invoice?.id || null,
+          params: {
+            value: Number(invoice?.amount_due || 0) / 100,
+            currency: String(invoice?.currency || "usd").toUpperCase(),
+            invoice_id: invoice?.id || null
+          }
+        }).catch(() => {});
         result = { success: true };
         break;
       }
@@ -203,6 +228,44 @@ router.post("/", async (req, res) => {
           console.warn("⚠️ Payment success email helper error:", err.message);
         });
       }
+
+      // --- Analytics: canonical purchase conversion (source of truth) ---
+      const purchaseAmount = Number(invoiceObject?.amount_paid || 0) / 100;
+      const purchaseCurrency = invoiceObject?.currency || "usd";
+      const transactionId = invoiceObject?.id || eventId;
+      const planId =
+        invoiceObject?.lines?.data?.[0]?.price?.id ||
+        invoiceObject?.metadata?.planId ||
+        null;
+      const planName =
+        invoiceObject?.lines?.data?.[0]?.description ||
+        invoiceObject?.metadata?.planName ||
+        null;
+
+      await recordServerEvent({
+        name: ANALYTICS_EVENTS.SUBSCRIPTION_PURCHASED,
+        userId: userId || null,
+        value: purchaseAmount,
+        currency: purchaseCurrency,
+        props: {
+          transactionId,
+          subscriptionId: subscriptionId ? String(subscriptionId) : null,
+          stripeCustomerId: invoiceObject?.customer || null,
+          planId,
+          planName,
+          invoiceId: transactionId
+        },
+        eventId: transactionId ? `srv:purchase:${transactionId}` : null
+      }).catch((err) => console.warn("⚠️ analytics purchase event failed:", err.message));
+
+      await sendPurchaseEvent({
+        userId: userId || null,
+        transactionId,
+        value: purchaseAmount,
+        currency: purchaseCurrency,
+        planId,
+        planName
+      }).catch((err) => console.warn("⚠️ GA4 MP purchase failed:", err.message));
     }
 
     if (result.success) {

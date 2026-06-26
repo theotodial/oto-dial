@@ -1,5 +1,17 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import { recordLiveCallIntel, recordLiveSmsIntel } from "./analytics/analyticsLiveService.js";
+import { recordServerEvent } from "./analytics/serverEventService.js";
+import { ANALYTICS_EVENTS } from "../constants/analyticsEvents.js";
+
+const TERMINAL_CALL_STATUSES = new Set([
+  "completed",
+  "failed",
+  "no-answer",
+  "busy",
+  "rejected",
+  "canceled"
+]);
 
 const ADMIN_ROOM = "admins";
 const MAX_EVENTS = 50;
@@ -113,7 +125,43 @@ export async function emitAdminLiveCall(event = {}) {
   };
 
   pushEvent("calls", payload);
+  recordLiveCallIntel({
+    userId: event.userId,
+    label: event.destination || event.from,
+    status: event.status
+  });
   ioInstance?.to(ADMIN_ROOM).emit("admin:live_calls", payload);
+
+  // Record a first-class analytics event only for terminal call states to
+  // avoid counting every intermediate update.
+  const status = String(event.status || "").toLowerCase();
+  if (TERMINAL_CALL_STATUSES.has(status)) {
+    const isFailed = status !== "completed";
+    recordServerEvent({
+      name: isFailed ? ANALYTICS_EVENTS.CALL_FAILED : ANALYTICS_EVENTS.CALL_COMPLETED,
+      userId: event.userId || null,
+      props: {
+        callId: event.callId ? String(event.callId) : null,
+        direction: event.direction || "outbound",
+        status,
+        durationSeconds: Number(event.durationSeconds || 0),
+        transactionId: event.callId ? String(event.callId) : null
+      },
+      eventId: event.callId ? `srv:call:${event.callId}:${status}` : null
+    });
+    import("./analytics/gaMeasurementProtocolService.js").then(({ sendCustomEvent }) =>
+      sendCustomEvent({
+        userId: event.userId || null,
+        name: isFailed ? "call_failed" : "call_completed",
+        transactionId: event.callId ? `call:${event.callId}` : null,
+        params: {
+          direction: event.direction || "outbound",
+          duration_seconds: Number(event.durationSeconds || 0),
+          status
+        }
+      }).catch(() => {})
+    );
+  }
 }
 
 export function emitAdminCallDebugEvent(event = {}) {
@@ -168,7 +216,25 @@ export async function emitAdminLiveSms(event = {}) {
   };
 
   pushEvent("sms", payload);
+  recordLiveSmsIntel({
+    userId: event.userId,
+    label: event.destination || event.from,
+    status: event.status
+  });
   ioInstance?.to(ADMIN_ROOM).emit("admin:live_sms", payload);
+
+  const eventType = String(event.eventType || "sent").toLowerCase();
+  if (eventType === "sent" || eventType === "outbound") {
+    recordServerEvent({
+      name: ANALYTICS_EVENTS.SMS_SENT,
+      userId: event.userId || null,
+      props: {
+        messageId: event.messageId ? String(event.messageId) : null,
+        status: event.status || null,
+        direction: "outbound"
+      }
+    });
+  }
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   getActiveCustomPackage,
   isCustomPackageActive,
 } from "./customPackageService.js";
+import { getLatestSubscriptionCreditSnapshot } from "./creditLedgerService.js";
 
 export function buildEffectiveUsage({ subscription, customPackage, activityUsage = null }) {
   if (subscription) {
@@ -67,13 +68,15 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
       ),
       creditsRemaining: Math.max(
         0,
-        Number(subscription.creditsRemaining ?? creditsLimit - minutesUsed)
+        Number(subscription.remainingCredits ?? subscription.telecomCredits ?? 0)
       ),
       smsLimit,
       minutesLimit,
       creditsLimit,
-      isSmsEnabled: unlimited || smsLimit > 0,
-      isCallEnabled: !voiceOff && (unlimited || minutesLimit > 0),
+      isSmsEnabled: unlimited || smsLimit > 0 || creditsLimit > 0,
+      // v1 telecom-credit plans: calling is enabled by a credit grant (or legacy minutes) and the
+      // plan's voice policy. creditsLimit>0 covers the new credit plans; minutesLimit kept for legacy.
+      isCallEnabled: !voiceOff && (unlimited || creditsLimit > 0 || minutesLimit > 0),
       source: subscription.source || "subscription",
     };
   }
@@ -89,7 +92,10 @@ export function buildEffectiveUsage({ subscription, customPackage, activityUsage
       minutesUsed,
       smsRemaining: Math.max(0, smsLimit - smsUsed),
       minutesRemaining: Math.max(0, minutesLimit - minutesUsed),
-      creditsRemaining: Math.max(0, creditsLimit - minutesUsed),
+      creditsRemaining: Math.max(
+        0,
+        Number(customPackage.remainingCredits ?? customPackage.telecomCredits ?? creditsLimit - minutesUsed)
+      ),
       smsLimit,
       minutesLimit,
       creditsLimit,
@@ -256,7 +262,7 @@ export async function loadUserSubscription(userId) {
     }
   }
 
-  const [numbers, customPackage, canonical] = await Promise.all([
+  const [numbers, customPackage, canonical, creditSnapshot] = await Promise.all([
     PhoneNumber.find({
       userId,
       status: "active",
@@ -265,6 +271,7 @@ export async function loadUserSubscription(userId) {
       .lean(),
     getActiveCustomPackage(userId),
     getCanonicalUsage(userId, subForUsage),
+    getLatestSubscriptionCreditSnapshot(userId),
   ]);
 
   const smsLimit = canonical.smsLimit;
@@ -284,7 +291,12 @@ export async function loadUserSubscription(userId) {
   const minutesRemaining = canonical.minutesRemaining;
   const creditsRemaining = Math.max(
     0,
-    Number(subscription.creditsRemaining ?? creditsLimit - minutesUsed)
+    Number(
+      creditSnapshot?.remainingCredits ??
+        subscription.remainingCredits ??
+        subscription.telecomCredits ??
+        0
+    )
   );
   const smsRemaining = canonical.smsRemaining;
   const rawLimits = subscription.limits || {};
@@ -316,6 +328,10 @@ export async function loadUserSubscription(userId) {
     smsRemaining,
     minutesLimit,
     creditsLimit,
+    telecomCreditsAuthority: "subscription",
+    telecomCredits: Number(creditSnapshot?.telecomCredits ?? subscription.telecomCredits ?? creditsLimit),
+    remainingCredits: creditsRemaining,
+    reservedCredits: Number(creditSnapshot?.reservedCredits ?? subscription.reservedCredits ?? 0),
     smsLimit,
     minutesUsed,
     smsUsed,
@@ -338,8 +354,8 @@ export async function loadUserSubscription(userId) {
     periodEnd: subscription.periodEnd || null,
     voiceCallsEnabled: subForUsage.voiceCallsEnabled !== false,
     smsCampaignPlan: Boolean(subForUsage.smsCampaignPlan),
-    isCallEnabled: !voiceOff && (unlimited || minutesLimit > 0),
-    isSmsEnabled: unlimited || smsLimit > 0,
+    isCallEnabled: !voiceOff && (unlimited || creditsLimit > 0 || minutesLimit > 0),
+    isSmsEnabled: unlimited || smsLimit > 0 || creditsLimit > 0,
     isManuallyEnabled,
     source: "subscription",
     numbers: numbers.map((n) => ({
@@ -351,6 +367,7 @@ export async function loadUserSubscription(userId) {
     baseSubscription,
     customPackage
   );
+  resolvedSubscription.creditsRemaining = creditsRemaining;
 
   console.log("[USAGE DEBUG]", {
     userId: String(userId),

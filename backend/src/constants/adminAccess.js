@@ -74,7 +74,8 @@ export const getAdminRolesForUser = (user) => {
 export const getRequiredAdminRolesForPath = (path = "") => {
   const normalizedPath = String(path || "").split("?")[0];
 
-  if (normalizedPath.startsWith("/api/analytics/admin")) return ["analytics"];
+  // Dashboard admins can view analytics in the UI — API must match (see frontend adminAccess).
+  if (normalizedPath.startsWith("/api/analytics/admin")) return ["analytics", "dashboard"];
   if (normalizedPath.startsWith("/api/blog/admin")) return ["blog"];
 
   if (!normalizedPath.startsWith("/api/admin")) {

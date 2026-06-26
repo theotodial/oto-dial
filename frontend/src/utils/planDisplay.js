@@ -30,6 +30,37 @@ export function isSmsCampaignCatalogPlan(plan) {
   return n.includes("sms campaign");
 }
 
+/** Plans paused / not yet purchasable (e.g. Unlimited Call, Enterprise). */
+export function isComingSoonPlan(plan) {
+  if (!plan) return false;
+  if (plan.comingSoon === true) return true;
+  const t = String(plan.type || "").toLowerCase();
+  if (t === "enterprise") return true;
+  const n = String(plan.name || "").toLowerCase();
+  return n.includes("enterprise");
+}
+
+/** Telecom credits included by a plan (handles new credit plans + legacy fallbacks). */
+export function planCreditsIncluded(plan) {
+  return Math.max(
+    0,
+    Number(
+      plan?.limits?.creditsTotal ??
+        plan?.creditsIncluded ??
+        plan?.monthlyCreditsLimit ??
+        plan?.limits?.minutesTotal ??
+        0
+    )
+  );
+}
+
+/** Display-formatted credit amount (fractional credits rounded to whole numbers for users). */
+export function formatCredits(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0";
+  return Math.round(n).toLocaleString();
+}
+
 /** @typedef {{ text: string, included?: boolean }} PlanFeatureItem */
 
 /**
@@ -70,15 +101,11 @@ export function getPlanFeatureBullets(plan) {
       { text: "Email support", included: true },
     ];
   }
-  const c = Math.max(
-    0,
-    Number(plan?.limits?.creditsTotal ?? plan?.creditsIncluded ?? plan?.limits?.minutesTotal ?? 0)
-  );
-  const s = Math.max(0, Number(plan?.limits?.smsTotal ?? 0));
+  const c = planCreditsIncluded(plan);
   return [
     { text: "Free Virtual Number", included: true },
     { text: `${c.toLocaleString()} Telecom Credits`, included: true },
-    { text: `${s.toLocaleString()} SMS`, included: true },
+    { text: "Calls & SMS billed from your credits", included: true },
     { text: "Email Support", included: true },
   ];
 }

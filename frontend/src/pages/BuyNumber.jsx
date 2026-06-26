@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import { getMyNumbers, searchNumbersDetailed, purchaseNumber } from '../services/numberService';
+import { track } from '../utils/analyticsClient';
+import { ANALYTICS_EVENTS } from '../constants/analyticsEvents';
 import { useSubscription } from '../context/SubscriptionContext';
 import { SUPPORTED_COUNTRIES, getDefaultCountry } from '../utils/supportedCountries';
 
@@ -235,7 +237,12 @@ function BuyNumber() {
       }
 
       const purchasedNumber = response?.phoneNumber || selectedNumber.phone_number;
-      
+
+      track(ANALYTICS_EVENTS.NUMBER_PURCHASED, {
+        number: purchasedNumber,
+        country: selectedCountry
+      }, { ga: false });
+
       setSuccess(`Successfully purchased number: ${purchasedNumber}`);
       setTimeout(() => {
         if (isMountedRef.current) {

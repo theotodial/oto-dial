@@ -1,19 +1,21 @@
 /**
- * Single billing authority — all credit mutations that touch CreditLedger + user balances
+ * Single billing authority — all credit mutations that touch CreditLedger + subscription balances
  * MUST flow through applyBillingEvent().
  *
- * Ordering: validate → insert CreditLedger (unique idempotencyKey) → update User aggregates
- * (including optional reservedCredits delta in the same atomic step when a session/transaction is used).
+ * Ordering: validate → insert CreditLedger (unique idempotencyKey) → update Subscription aggregates
+ * → sync User cache mirror.
  */
 
 import mongoose from "mongoose";
 import User from "../models/User.js";
+import Subscription from "../models/Subscription.js";
 import CreditLedger from "../models/CreditLedger.js";
 import {
   recordBillingTrace,
   recordDuplicateBillingSkip,
   recordLedgerWriteFailure,
 } from "./billingTraceService.js";
+import BillingEventJournal from "../models/BillingEventJournal.js";
 import { appendJournalFromCreditLedger } from "./billingEventJournal.js";
 
 function isDuplicateKeyError(err) {
@@ -97,8 +99,28 @@ export async function syncCachedRemainingCreditsIfUnset({
   return { ok: true, matched: res.matchedCount, modified: res.modifiedCount };
 }
 
+export async function syncUserCacheFromSubscription(uid, opts = {}) {
+  const subscription = await Subscription.findOne({ userId: uid }, null, {
+    sort: { createdAt: -1 },
+    ...opts,
+  }).lean();
+  if (!subscription) return { ok: false, reason: "subscription_not_found" };
+  const patch = {
+    remainingCredits: Number(subscription.remainingCredits || 0),
+    totalCreditsUsed: Number(subscription.totalCreditsUsed || 0),
+    reservedCredits: Number(subscription.reservedCredits || 0),
+    lifetimeCreditsPurchased: Number(subscription.lifetimeCreditsPurchased || 0),
+  };
+  if (!Number.isFinite(Number(patch.remainingCredits))) patch.remainingCredits = 0;
+  if (!Number.isFinite(Number(patch.totalCreditsUsed))) patch.totalCreditsUsed = 0;
+  if (!Number.isFinite(Number(patch.reservedCredits))) patch.reservedCredits = 0;
+  if (!Number.isFinite(Number(patch.lifetimeCreditsPurchased))) patch.lifetimeCreditsPurchased = 0;
+  await User.updateOne({ _id: uid }, { $set: patch }, opts);
+  return { ok: true };
+}
+
 /**
- * Core billing mutation. Do not call CreditLedger.create / User credit fields elsewhere.
+ * Core billing mutation. Do not call CreditLedger.create / Subscription credit fields elsewhere.
  *
  * @param {object} params
  * @param {string} params.idempotencyKey
@@ -112,7 +134,7 @@ export async function syncCachedRemainingCreditsIfUnset({
  * @param {mongoose.Types.ObjectId|string|null} [params.callId]
  * @param {mongoose.Types.ObjectId|string|null} [params.smsId]
  * @param {string|null} [params.direction]
- * @param {number} [params.reservedCreditsInc] — $inc on User.reservedCredits (same commit as balance when transactional)
+ * @param {number} [params.reservedCreditsInc] — $inc on Subscription.reservedCredits
  * @param {import("mongoose").ClientSession|null} [params.session] — participate in outer transaction
  */
 export async function applyBillingEvent(params) {
@@ -149,7 +171,14 @@ export async function applyBillingEvent(params) {
     const opts = session ? { session } : {};
 
     const mirrorJournal = async (ledgerRow) => {
-      if (!ledgerRow) return;
+      if (!ledgerRow?.idempotencyKey) return;
+      const journalOpts = session ? { session } : {};
+      const journalExists = await BillingEventJournal.findOne(
+        { eventId: keyStr },
+        { _id: 1 },
+        journalOpts
+      ).lean();
+      if (journalExists) return;
       await appendJournalFromCreditLedger(ledgerRow, sourceService, reservedDelta, session || null);
     };
 
@@ -174,15 +203,19 @@ export async function applyBillingEvent(params) {
         afterBalance: existing.balanceAfter,
       });
       await mirrorJournal(existing);
+      await syncUserCacheFromSubscription(uid, opts).catch(() => {});
       return { ok: true, duplicate: true, ledger: existing };
     }
 
-    const user = await User.findById(uid, null, opts);
-    if (!user) {
-      throw new Error("user_not_found");
+    const subscription = await Subscription.findOne({ userId: uid }, null, {
+      sort: { createdAt: -1 },
+      ...opts,
+    });
+    if (!subscription) {
+      throw new Error("subscription_credit_wallet_not_found");
     }
 
-    const before = Number(user.remainingCredits || 0);
+    const before = Number(subscription.remainingCredits || 0);
     const after = before + amountNum;
     if (!allowNegative && amountNum < 0 && after < 0) {
       recordBillingTrace({
@@ -205,7 +238,7 @@ export async function applyBillingEvent(params) {
       };
     }
 
-    const reservedBefore = Number(user.reservedCredits || 0);
+    const reservedBefore = Number(subscription.reservedCredits || 0);
     if (reservedDelta > 0) {
       const available = before - reservedBefore;
       if (available < reservedDelta) {
@@ -231,15 +264,59 @@ export async function applyBillingEvent(params) {
       }
     }
 
+    const incUsed = amountNum < 0 ? Math.abs(amountNum) : 0;
+    const incPurchased = amountNum > 0 ? Math.max(0, amountNum) : 0;
+    const walletInc = {
+      remainingCredits: amountNum,
+      telecomCredits: amountNum,
+    };
+    if (incUsed) walletInc.totalCreditsUsed = incUsed;
+    if (incPurchased) walletInc.lifetimeCreditsPurchased = incPurchased;
+    if (reservedDelta !== 0) walletInc.reservedCredits = reservedDelta;
+
+    const walletFilter = { _id: subscription._id };
+    if (!allowNegative && amountNum < 0) {
+      walletFilter.remainingCredits = { $gte: Math.abs(amountNum) };
+    }
+
     try {
+      const beforeDoc = await Subscription.findOneAndUpdate(
+        walletFilter,
+        { $inc: walletInc },
+        { new: false, ...opts }
+      );
+      if (!beforeDoc) {
+        recordBillingTrace({
+          userId: String(uid),
+          callId: callObjectId ? String(callObjectId) : null,
+          smsId: smsObjectId ? String(smsObjectId) : null,
+          idempotencyKey: keyStr,
+          beforeBalance: before,
+          afterBalance: before,
+          eventType: type,
+          sourceService,
+          duplicate: false,
+          status: "insufficient_credits_race",
+        });
+        return {
+          ok: false,
+          code: "INSUFFICIENT_CREDITS",
+          balanceBefore: before,
+          required: amountNum < 0 ? Math.abs(amountNum) : 0,
+        };
+      }
+
+      const balanceBefore = Number(beforeDoc.remainingCredits || 0);
+      const balanceAfter = balanceBefore + amountNum;
+
       const ledgerRows = await CreditLedger.create(
         [
           {
             user: uid,
             amount: amountNum,
             type,
-            balanceBefore: before,
-            balanceAfter: after,
+            balanceBefore,
+            balanceAfter,
             callId: callObjectId,
             smsId: smsObjectId,
             direction: direction || null,
@@ -253,26 +330,15 @@ export async function applyBillingEvent(params) {
       );
       const ledger = ledgerRows[0];
 
-      const incUsed = amountNum < 0 ? Math.abs(amountNum) : 0;
-      const incPurchased = amountNum > 0 ? Math.max(0, amountNum) : 0;
-      const update = {
-        $set: { remainingCredits: after },
-      };
-      const inc = {};
-      if (incUsed) inc.totalCreditsUsed = incUsed;
-      if (incPurchased) inc.lifetimeCreditsPurchased = incPurchased;
-      if (reservedDelta) inc.reservedCredits = reservedDelta;
-      if (Object.keys(inc).length) update.$inc = inc;
-
-      await User.updateOne({ _id: uid }, update, opts);
+      await syncUserCacheFromSubscription(uid, opts).catch(() => {});
 
       recordBillingTrace({
         userId: String(uid),
         callId: callObjectId ? String(callObjectId) : null,
         smsId: smsObjectId ? String(smsObjectId) : null,
         idempotencyKey: keyStr,
-        beforeBalance: before,
-        afterBalance: after,
+        beforeBalance: balanceBefore,
+        afterBalance: balanceAfter,
         eventType: type,
         sourceService,
         duplicate: false,
@@ -305,6 +371,7 @@ export async function applyBillingEvent(params) {
           afterBalance: deduped?.balanceAfter,
         });
         await mirrorJournal(deduped);
+        await syncUserCacheFromSubscription(uid, opts).catch(() => {});
         return { ok: true, duplicate: true, ledger: deduped };
       }
       recordLedgerWriteFailure(err, {

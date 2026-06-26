@@ -3,6 +3,7 @@ import User from "../models/User.js";
 import Plan from "../models/Plan.js";
 import { getLatestSubscription } from "../services/subscriptionService.js";
 import { getCanonicalUsage } from "../services/usage/getCanonicalUsage.js";
+import { getLatestSubscriptionCreditSnapshot } from "../services/creditLedgerService.js";
 import { isUnlimitedSubscription } from "../services/unlimitedUsageService.js";
 import { getSubscriptionUsageDisplayFlags } from "../utils/subscriptionDisplayFlags.js";
 import { normalizeFeatures } from "../utils/userFeatures.js";
@@ -63,7 +64,10 @@ router.get("/bootstrap", async (req, res) => {
     let usage = emptyUsage();
 
     if (latestSub) {
-      const canonical = await getCanonicalUsage(userId, latestSub);
+      const [canonical, creditSnapshot] = await Promise.all([
+        getCanonicalUsage(userId, latestSub),
+        getLatestSubscriptionCreditSnapshot(userId),
+      ]);
       const rawLimits = latestSub.limits || {};
       const isManuallyEnabled =
         Number(rawLimits.smsTotal ?? 0) > 0 ||
@@ -97,8 +101,35 @@ router.get("/bootstrap", async (req, res) => {
         minutesUsed: canonical.minutesUsed,
         smsRemaining: canonical.smsRemaining,
         minutesRemaining: canonical.minutesRemaining,
+        creditsRemaining: Number(
+          creditSnapshot?.remainingCredits ??
+            latestSub.remainingCredits ??
+            latestSub.telecomCredits ??
+            0
+        ),
+        telecomCredits: Number(
+          creditSnapshot?.telecomCredits ??
+            latestSub.telecomCredits ??
+            latestSub.monthlyCreditsLimit ??
+            latestSub.limits?.creditsTotal ??
+            latestSub.limits?.minutesTotal ??
+            0
+        ),
+        reservedCredits: Number(
+          creditSnapshot?.reservedCredits ?? latestSub.reservedCredits ?? 0
+        ),
+        totalCreditsUsed: Number(
+          creditSnapshot?.totalCreditsUsed ?? latestSub.totalCreditsUsed ?? 0
+        ),
         smsLimit: canonical.smsLimit,
         minutesLimit: canonical.minutesLimit,
+        creditsLimit: Number(
+          latestSub.monthlyCreditsLimit ??
+            latestSub.limits?.creditsTotal ??
+            latestSub.limits?.minutesTotal ??
+            canonical.minutesLimit ??
+            0
+        ),
         isSmsEnabled: canonical.isSmsEnabled,
         isCallEnabled: canonical.isCallEnabled,
       };

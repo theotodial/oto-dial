@@ -214,10 +214,13 @@ router.get("/", requireAdmin, async (req, res) => {
         (ledgerByType.add_on_purchase?.totalAmount || 0) +
         (ledgerByType.admin_adjustment?.totalAmount || 0) +
         (ledgerByType.refund?.totalAmount || 0) +
-        (ledgerByType.migration_conversion?.totalAmount || 0)
+        (ledgerByType.migration_conversion?.totalAmount || 0) +
+        (ledgerByType.migration_reset?.totalAmount || 0)
     );
     const totalCreditsConsumed = Math.abs(
       (ledgerByType.outbound_attempt_charge?.totalAmount || 0) +
+        // v1 telecom rating lifecycle milestone charges (routed/ringing/answered/etc.)
+        (ledgerByType.call_event_charge?.totalAmount || 0) +
         (ledgerByType.connected_duration_charge?.totalAmount || 0) +
         (ledgerByType.sms_charge?.totalAmount || 0)
     );
@@ -561,7 +564,9 @@ router.get("/", requireAdmin, async (req, res) => {
           ) / answeredCalls.length
         : 0;
     const creditsBurnedOnRejectedCalls = Math.round(
-      Math.abs(ledgerByType.outbound_attempt_charge?.totalAmount || 0)
+      Math.abs(ledgerByType.outbound_attempt_charge?.totalAmount || 0) +
+        // v1: pre-connection lifecycle charges (routed/ringing/busy/no_answer/failed/answered)
+        Math.abs(ledgerByType.call_event_charge?.totalAmount || 0)
     );
     const answeredDurationCredits = Math.round(
       Math.abs(ledgerByType.connected_duration_charge?.totalAmount || 0)
@@ -858,6 +863,9 @@ router.get("/", requireAdmin, async (req, res) => {
         totalConsumed: Math.round(totalCreditsConsumed),
         outboundAttemptCharges: Math.round(
           Math.abs(ledgerByType.outbound_attempt_charge?.totalAmount || 0)
+        ),
+        callEventCharges: Math.round(
+          Math.abs(ledgerByType.call_event_charge?.totalAmount || 0)
         ),
         connectedDurationCharges: Math.round(
           Math.abs(ledgerByType.connected_duration_charge?.totalAmount || 0)

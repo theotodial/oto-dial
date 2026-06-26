@@ -13,6 +13,7 @@ function AdminUserDetail() {
   const [user, setUser] = useState(null);
   const [subscription, setSubscription] = useState(null);
   const [usage, setUsage] = useState(null);
+  const [telecomCredits, setTelecomCredits] = useState(null);
   const [recentCalls, setRecentCalls] = useState([]);
   const [recentMessages, setRecentMessages] = useState([]);
   const [costs, setCosts] = useState(null);
@@ -157,6 +158,7 @@ function AdminUserDetail() {
         setPackageSmsEnabled(nextCustomPackage ? nextCustomPackage.isSmsEnabled !== false : true);
         const userAllowedCallCountries = response.data.user?.allowedCallCountries || [];
         setAllowedCallCountries(userAllowedCallCountries);
+        fetchTelecomCredits();
       } else {
         setError('Failed to load user');
       }
@@ -169,6 +171,22 @@ function AdminUserDetail() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTelecomCredits = async () => {
+    try {
+      const token = localStorage.getItem('adminToken');
+      const response = await API.get(`/api/admin/users/${id}/telecom-credits`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.data?.success) {
+        setTelecomCredits(response.data);
+      } else {
+        setTelecomCredits(null);
+      }
+    } catch {
+      setTelecomCredits(null);
     }
   };
 
@@ -1053,6 +1071,70 @@ function AdminUserDetail() {
                   </div>
                 ) : (
                   <p className="text-sm text-gray-600 dark:text-gray-400">No phone numbers assigned</p>
+                )}
+              </div>
+
+              {/* Telecom Credits (authoritative balance) */}
+              <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Telecom Credits</h2>
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={`/adminbobby/analytics/billing-reconciliation?userId=${id}&tab=user`}
+                      className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+                    >
+                      Reconcile &amp; ledger →
+                    </a>
+                    <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300">
+                      Authoritative balance
+                    </span>
+                  </div>
+                </div>
+                {telecomCredits ? (
+                  <dl className="grid grid-cols-2 gap-4">
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Remaining Credits</dt>
+                      <dd className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
+                        {Math.round(Number(telecomCredits.remainingCredits ?? 0)).toLocaleString()}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Reserved Credits</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">
+                        {Math.round(Number(telecomCredits.reservedCredits ?? 0)).toLocaleString()}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Monthly Credit Limit</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">
+                        {telecomCredits.creditsLimit
+                          ? Math.round(Number(telecomCredits.creditsLimit)).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Outbound Calls</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white">
+                        {Number(telecomCredits.outboundCallCount ?? 0).toLocaleString()}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Credits Consumed (today)</dt>
+                      <dd className="text-sm font-semibold text-red-600">
+                        {Math.round(Number(telecomCredits.todaySpentCredits ?? 0)).toLocaleString()}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm text-gray-600 dark:text-gray-400">Credits Consumed (total)</dt>
+                      <dd className="text-sm font-semibold text-red-600">
+                        {Math.round(Number(telecomCredits.totalSpentCredits ?? 0)).toLocaleString()}
+                      </dd>
+                    </div>
+                  </dl>
+                ) : (
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    No telecom credit wallet found for this user.
+                  </p>
                 )}
               </div>
 

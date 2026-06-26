@@ -5,14 +5,16 @@ import PlanFeatureBullet from '../PlanFeatureBullet';
 import {
   getPlanFeatureBullets,
   isTrialPlan,
+  isComingSoonPlan,
   planMarketingDescription,
 } from '../../utils/planDisplay';
 
-/** Homepage should only show the three public marketing plans. */
+/** Homepage public marketing plans (Unlimited Call + Enterprise shown as Coming Soon). */
 const ALLOWED_PRICING_PLAN_NAMES = new Set([
   'Basic Plan',
   'Super Plan',
   'Unlimited Call',
+  'Enterprise',
 ]);
 
 const DEFAULT_MARKETING_PLANS = [
@@ -23,7 +25,7 @@ const DEFAULT_MARKETING_PLANS = [
     features: [
       "Free Virtual Number",
       "1,500 Telecom Credits",
-      "100 SMS",
+      "Calls & SMS billed from your credits",
       "Email Support"
     ],
     cta: "Get Started Instantly",
@@ -37,7 +39,7 @@ const DEFAULT_MARKETING_PLANS = [
     features: [
       "Free Virtual Number",
       "2,500 Telecom Credits",
-      "200 SMS",
+      "Calls & SMS billed from your credits",
       "Email Support"
     ],
     cta: "Get Started Instantly",
@@ -54,24 +56,41 @@ const DEFAULT_MARKETING_PLANS = [
       { text: 'SMS not included', included: false },
       { text: 'Email Support', included: true },
     ],
-    cta: 'Get Started Instantly',
+    cta: 'Coming Soon',
     popular: false,
-    available: true,
+    available: false,
+  },
+  {
+    name: 'Enterprise',
+    price: '0.00',
+    description: 'Custom volume pricing for large teams',
+    features: [
+      { text: 'Custom telecom credit volume', included: true },
+      { text: 'Dedicated onboarding & support', included: true },
+      { text: 'Volume discounts', included: true },
+      { text: 'SLA & priority routing', included: true },
+    ],
+    cta: 'Coming Soon',
+    popular: false,
+    available: false,
   },
 ];
 
 function NewPricingSection() {
   const [plans, setPlans] = useState(DEFAULT_MARKETING_PLANS);
 
-  const toMarketingPlan = (plan) => ({
-    name: plan.name,
-    price: Number(plan.price || 0).toFixed(2),
-    description: planMarketingDescription(plan),
-    features: getPlanFeatureBullets(plan),
-    cta: 'Get Started Instantly',
-    popular: plan.name === 'Basic Plan',
-    available: true,
-  });
+  const toMarketingPlan = (plan) => {
+    const comingSoon = isComingSoonPlan(plan);
+    return {
+      name: plan.name,
+      price: Number(plan.price || 0).toFixed(2),
+      description: planMarketingDescription(plan),
+      features: getPlanFeatureBullets(plan),
+      cta: comingSoon ? 'Coming Soon' : 'Get Started Instantly',
+      popular: plan.name === 'Basic Plan',
+      available: !comingSoon,
+    };
+  };
 
   useEffect(() => {
     // Fetch plans from API
@@ -85,9 +104,7 @@ function NewPricingSection() {
                 ALLOWED_PRICING_PLAN_NAMES.has(plan.name) && !isTrialPlan(plan)
             )
             .map(toMarketingPlan);
-          if (transformedPlans.length === ALLOWED_PRICING_PLAN_NAMES.size) {
-            setPlans(transformedPlans);
-          } else if (transformedPlans.length > 0) {
+          if (transformedPlans.length > 0) {
             const merged = DEFAULT_MARKETING_PLANS.map((fallbackPlan) => {
               return transformedPlans.find((plan) => plan.name === fallbackPlan.name) || fallbackPlan;
             });
@@ -121,7 +138,7 @@ function NewPricingSection() {
         </div>
 
         {/* Pricing Cards */}
-        <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
+        <div className="grid sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto">
           {plans.map((plan) => (
             <div
               key={plan.name}
@@ -136,6 +153,15 @@ function NewPricingSection() {
                 <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
                   <span className="bg-indigo-600 text-white px-4 py-1 rounded-full text-sm font-semibold shadow-lg">
                     Most Popular
+                  </span>
+                </div>
+              )}
+
+              {/* Coming soon badge */}
+              {!plan.available && (
+                <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
+                  <span className="bg-amber-500 text-white px-4 py-1 rounded-full text-sm font-semibold shadow-lg">
+                    Coming Soon
                   </span>
                 </div>
               )}
@@ -161,16 +187,26 @@ function NewPricingSection() {
               </ul>
 
               {/* CTA Button */}
-              <PrefetchLink
-                to="/billing"
-                className={`block w-full text-center py-3 px-6 rounded-xl font-semibold transition-all duration-200 ${
-                  plan.popular
-                    ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/30'
-                    : 'bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-slate-700'
-                }`}
-              >
-                {plan.cta}
-              </PrefetchLink>
+              {plan.available ? (
+                <PrefetchLink
+                  to="/billing"
+                  className={`block w-full text-center py-3 px-6 rounded-xl font-semibold transition-all duration-200 ${
+                    plan.popular
+                      ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/30'
+                      : 'bg-gray-100 dark:bg-slate-800 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {plan.cta}
+                </PrefetchLink>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="block w-full text-center py-3 px-6 rounded-xl font-semibold bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                >
+                  {plan.cta}
+                </button>
+              )}
             </div>
           ))}
         </div>

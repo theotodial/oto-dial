@@ -43,6 +43,7 @@ import {
   AdminAnalytics,
   AdminAnalyticsDetail,
   AdminProfitabilityTools,
+  AdminBillingReconciliation,
   AdminAffiliates,
   AdminBlog,
   AdminCalls,
@@ -271,6 +272,7 @@ export default function AppShell() {
         <Route path="/adminbobby/blog/:id" element={<AdminProtectedRoute><AdminLayout><AdminBlog /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/blog/new" element={<AdminProtectedRoute><AdminLayout><AdminBlog /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/analytics/profitability-tools" element={<AdminProtectedRoute><AdminLayout><AdminProfitabilityTools /></AdminLayout></AdminProtectedRoute>} />
+        <Route path="/adminbobby/analytics/billing-reconciliation" element={<AdminProtectedRoute><AdminLayout><AdminBillingReconciliation /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/analytics" element={<AdminProtectedRoute><AdminLayout><AdminAnalytics /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/analytics/:category" element={<AdminProtectedRoute><AdminLayout><AdminAnalyticsDetail /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/affiliates" element={<AdminProtectedRoute><AdminLayout><AdminAffiliates /></AdminLayout></AdminProtectedRoute>} />

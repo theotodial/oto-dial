@@ -1,4 +1,5 @@
 import Call from "../models/Call.js";
+import { BILLING_MATRIX_CALL_SOURCE } from "../config/creditConfig.js";
 import {
   billConnectedDurationIntervals,
   releaseUnusedCallReservation,
@@ -40,6 +41,7 @@ export function startCallCreditIntervalWorker() {
       const activeCalls = await Call.find({
         direction: "outbound",
         status: { $in: ["answered", "in-progress"] },
+        source: { $ne: BILLING_MATRIX_CALL_SOURCE },
       })
         .select(
           "_id user status direction callAnsweredAt callStartedAt durationCreditsCharged attemptChargedAt creditReservationHeld updatedAt"

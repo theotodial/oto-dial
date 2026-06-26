@@ -92,6 +92,40 @@ const subscriptionSchema = new mongoose.Schema(
       creditsUsed: { type: Number, default: 0 },
     },
 
+    /**
+     * Authoritative telecom credit ledger anchor for this subscriber.
+     * User.* credit fields are cache mirrors only.
+     */
+    telecomCredits: {
+      type: Number,
+      default: 0,
+    },
+    remainingCredits: {
+      type: Number,
+      default: 0,
+      index: true,
+    },
+    reservedCredits: {
+      type: Number,
+      default: 0,
+    },
+    totalCreditsUsed: {
+      type: Number,
+      default: 0,
+    },
+    lifetimeCreditsPurchased: {
+      type: Number,
+      default: 0,
+    },
+    rolloverCredits: {
+      type: Number,
+      default: 0,
+    },
+    trialCreditsGranted: {
+      type: Number,
+      default: 0,
+    },
+
     limits: {
       minutesTotal: { type: Number, required: true },
       smsTotal: { type: Number, required: true },

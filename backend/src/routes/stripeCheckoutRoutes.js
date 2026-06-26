@@ -46,6 +46,12 @@ router.post("/checkout", authenticateUser, async (req, res) => {
       });
     }
 
+    if (plan.comingSoon) {
+      return res.status(403).json({
+        error: "This plan is coming soon and not yet available for purchase."
+      });
+    }
+
     const effectivePriceId = getCanonicalPlanPriceId(plan);
     if (!effectivePriceId) {
       return res.status(400).json({

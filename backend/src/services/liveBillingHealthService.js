@@ -1,5 +1,6 @@
 import Call from "../models/Call.js";
 import User from "../models/User.js";
+import Subscription from "../models/Subscription.js";
 import CreditLedger from "../models/CreditLedger.js";
 import EconomicTimeline from "../models/EconomicTimeline.js";
 import TelecomChaosSnapshot from "../models/TelecomChaosSnapshot.js";
@@ -27,6 +28,14 @@ async function sumReservedCredits() {
       { $group: { _id: null, t: { $sum: "$reservedCredits" } } },
     ]).option({ maxTimeMS: 12000 });
     return row?.t ?? 0;
+  } catch {
+    return null;
+  }
+}
+
+async function countNegativeSubscriptionBalances() {
+  try {
+    return await Subscription.countDocuments({ remainingCredits: { $lt: 0 } }).maxTimeMS(8000);
   } catch {
     return null;
   }
@@ -91,6 +100,7 @@ export async function getLiveBillingHealthSnapshot() {
     intervalCharges1m,
     dupPrevention1m,
     negUsers,
+    negSubs,
     unreleasedTerminal,
     replayDiv24h,
     billingFailures15m,
@@ -108,6 +118,7 @@ export async function getLiveBillingHealthSnapshot() {
     safeCount(CreditLedger, { type: "connected_duration_charge", createdAt: { $gte: since1m } }),
     safeCount(ProcessedWebhookEvent, { duplicateCount: { $gt: 0 }, lastDuplicateAt: { $gte: since1m } }),
     safeCount(User, { remainingCredits: { $lt: 0 } }),
+    countNegativeSubscriptionBalances(),
     safeCount(Call, {
       status: { $in: TERMINAL_STATUSES },
       creditReservationHeld: { $gt: 0 },
@@ -149,7 +160,7 @@ export async function getLiveBillingHealthSnapshot() {
       recentBillingFailures15m: billingFailures15m,
       duplicateIdempotencyCollisions1m: dupPrevention1m,
       recentJournalDivergences24h: replayDiv24h,
-      negativeBalanceUsers: negUsers,
+      negativeBalanceUsers: negSubs ?? negUsers,
       unreleasedReservationsOnTerminalCalls: unreleasedTerminal,
       replayMismatches24h: replayDiv24h,
       duplicateIntervalDetections24h: dupInterval24h,

@@ -204,40 +204,58 @@ function SubscriptionDetails() {
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-gray-200 dark:border-slate-700 p-6">
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Usage Limits</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Credits</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {Number(subscription?.limits?.creditsTotal ?? subscription?.totalCredits ?? subscription?.limits?.minutesTotal ?? 0)}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Remaining Credits</p>
-                <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-                  {(subscription?.unlimitedMinutesDisplay ?? subscription?.isUnlimited)
-                    ? '∞'
-                    : Number(
-                        usage?.creditsRemaining ??
-                          usage?.minutesRemaining ??
-                          subscription?.creditsRemaining ??
-                          subscription?.minutesRemaining ??
-                          0
-                      )}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total SMS</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {Number(subscription?.limits?.smsTotal ?? subscription?.totalSMS ?? 0)}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Remaining SMS</p>
-                <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-                  {(subscription?.unlimitedSmsDisplay ?? subscription?.isUnlimited)
-                    ? '∞'
-                    : Number(usage?.smsRemaining ?? subscription?.smsRemaining ?? 0)}
-                </p>
-              </div>
+              {(() => {
+                const unlimited =
+                  subscription?.unlimitedMinutesDisplay ?? subscription?.isUnlimited;
+                const totalCredits = Number(
+                  subscription?.limits?.creditsTotal ??
+                    subscription?.totalCredits ??
+                    subscription?.limits?.minutesTotal ??
+                    0
+                );
+                const remainingCredits = Number(
+                  usage?.creditsRemaining ?? subscription?.creditsRemaining ?? 0
+                );
+                const consumed = Math.max(0, totalCredits - remainingCredits);
+                return (
+                  <>
+                    <div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                        Telecom Credits (monthly)
+                      </p>
+                      <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                        {unlimited ? '∞' : Math.round(totalCredits).toLocaleString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                        Remaining Telecom Credits
+                      </p>
+                      <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
+                        {unlimited ? '∞' : Math.round(remainingCredits).toLocaleString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                        Credits Consumed
+                      </p>
+                      <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                        {unlimited ? '—' : Math.round(consumed).toLocaleString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                        Estimated Remaining Usage
+                      </p>
+                      <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
+                        {unlimited
+                          ? '∞'
+                          : `${Math.floor(remainingCredits / 5).toLocaleString()} calls`}
+                      </p>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
 

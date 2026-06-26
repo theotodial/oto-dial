@@ -283,7 +283,7 @@ function AdminUsers() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Email</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Plan / Custom</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Credits Left</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">SMS Left</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Credits Used</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Created</th>
               </tr>
@@ -311,16 +311,10 @@ function AdminUsers() {
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                     {user.subscription?.isUnlimited
                       ? 'Unlimited'
-                      : Math.round(
-                          Number(
-                            (user.subscription?.creditsRemaining ??
-                              user.subscription?.minutesRemaining ??
-                              0)
-                          )
-                        )}
+                      : Math.round(Number(user.credits?.remainingCredits ?? 0)).toLocaleString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                    {user.subscription?.isUnlimited ? 'Unlimited' : Number(user.subscription?.smsRemaining || 0)}
+                    {Math.round(Number(user.credits?.totalCreditsUsed ?? 0)).toLocaleString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded-full ${

@@ -104,6 +104,14 @@ const planSchema = new mongoose.Schema(
       index: true
     },
 
+    // When true: shown on pricing/billing as "Coming Soon" with a disabled CTA; no Stripe checkout.
+    // Existing subscribers on the plan keep working; only new purchases are blocked.
+    comingSoon: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+
     // When false: block inbound/outbound voice (WebRTC + Telnyx); SMS unaffected.
     voiceCallsEnabled: {
       type: Boolean,

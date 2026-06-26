@@ -5,6 +5,7 @@
 
 import Call from "../models/Call.js";
 import EconomicTimeline from "../models/EconomicTimeline.js";
+import { BILLING_MATRIX_CALL_SOURCE } from "../config/creditConfig.js";
 import { billConnectedDurationIntervalsSerialized } from "./economicSerializationService.js";
 
 const TICK_MS = Number(process.env.CALL_CREDIT_TICK_MS || 6000);
@@ -50,6 +51,7 @@ export async function recoverActiveCallEconomics(options = {}) {
   const q = {
     direction: "outbound",
     status: { $in: ["answered", "in-progress"] },
+    source: { $ne: BILLING_MATRIX_CALL_SOURCE },
     createdAt: { $gte: new Date(now - maxAgeMs) },
   };
   if (mode === "sweep") {

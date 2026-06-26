@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { normalizeViteApiBaseUrl } from '../utils/viteApiBase';
+import { trackLogin } from '../utils/analyticsClient';
 
 const GoogleIcon = () => (
   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
@@ -92,6 +93,12 @@ function Login() {
     try {
       const result = await login(formData.email, formData.password);
       if (!result.success) throw new Error(result.error);
+
+      try {
+        trackLogin(result.user?.id || result.user?._id || null, { method: 'email' });
+      } catch {
+        /* analytics must never block login */
+      }
 
       // Check if there's session info (user logged in elsewhere)
       if (result.sessionInfo) {

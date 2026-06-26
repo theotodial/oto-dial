@@ -16,6 +16,7 @@ import {
   verifyCalledNumberBelongsToUser,
 } from "../utils/inboundOwnership.js";
 import { telecomStructuredLog } from "../utils/telecomStructuredLog.js";
+import { isRatingV1Enabled, rateCallEvent, CALL_BILLING_EVENT } from "../services/telecomRatingEngine.js";
 
 const router = express.Router();
 const TELNYX_API_BASE_URL = "https://api.telnyx.com/v2";
@@ -373,16 +374,44 @@ router.get("/token", async (req, res) => {
       unlimitedGate.subscription || req.subscription
     );
 
-    if (!unlimitedPlan && !(Number(req.subscription.minutesLimit) > 0)) {
-      return res.status(403).json({
-        error: "Calling is not included in your current plan.",
-      });
-    }
+    if (isRatingV1Enabled()) {
+      // v1: telecom credits are the single authority for voice. Gate on plan voice policy
+      // (isCallEnabled) + available credits (remaining minus reserved) sufficient to begin a call.
+      const callEnabled =
+        req.subscription.isCallEnabled !== false &&
+        (unlimitedPlan ||
+          Number(req.subscription.creditsLimit ?? 0) > 0 ||
+          Number(req.subscription.minutesLimit ?? 0) > 0);
+      if (!unlimitedPlan && !callEnabled) {
+        return res.status(403).json({
+          error: "Calling is not included in your current plan.",
+        });
+      }
+      if (!unlimitedPlan) {
+        const remaining = Number(req.subscription.remainingCredits ?? 0);
+        const reserved = Number(req.subscription.reservedCredits ?? 0);
+        const available = Math.max(0, remaining - reserved);
+        const minToStart =
+          rateCallEvent(CALL_BILLING_EVENT.ROUTED) + rateCallEvent(CALL_BILLING_EVENT.RINGING);
+        if (available < Math.max(1, minToStart)) {
+          return res.status(403).json({
+            error:
+              "Insufficient telecom credits to start a call. Please top up or upgrade your plan.",
+          });
+        }
+      }
+    } else {
+      if (!unlimitedPlan && !(Number(req.subscription.minutesLimit) > 0)) {
+        return res.status(403).json({
+          error: "Calling is not included in your current plan.",
+        });
+      }
 
-    if (!unlimitedPlan && (req.subscription.minutesRemaining || 0) <= 0) {
-      return res.status(403).json({
-        error: "No minutes remaining. Please upgrade your plan or wait for your next billing cycle."
-      });
+      if (!unlimitedPlan && (req.subscription.minutesRemaining || 0) <= 0) {
+        return res.status(403).json({
+          error: "No minutes remaining. Please upgrade your plan or wait for your next billing cycle."
+        });
+      }
     }
 
     // Get user's phone numbers

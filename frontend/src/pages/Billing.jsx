@@ -5,13 +5,16 @@ import { useSubscription } from '../context/SubscriptionContext';
 import API from '../api';
 import { fetchProjectedBalance } from '../services/projectedCreditService';
 import { trackSubscription } from '../utils/analytics';
+import { trackBeginCheckout } from '../utils/analyticsClient';
 import PlanFeatureBullet from '../components/PlanFeatureBullet';
 import {
   getPlanFeatureBullets,
   isCatalogUnlimitedPlan,
   isTrialPlan,
+  isComingSoonPlan,
   planMarketingDescription,
 } from '../utils/planDisplay';
+import CreditTimeline from '../components/CreditTimeline';
 
 const CheckIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -92,7 +95,13 @@ function Billing() {
 
           if (!isAddonCheckout && user?.id && subData?._id) {
             try {
-              await trackSubscription(user.id, subData._id);
+              await trackSubscription(user.id, subData._id, {
+                transactionId: String(subData._id),
+                value: Number(subData?.price || subData?.plan?.price || 0),
+                currency: 'usd',
+                planId: subData?.planId || subData?.plan?._id,
+                planName: subData?.planName || subData?.plan?.name
+              });
             } catch (err) {
               console.warn('Could not track subscription:', err);
             }
@@ -143,6 +152,7 @@ function Billing() {
             const priceString = Number(plan.price || 0).toFixed(2);
             const isUnlimited = isCatalogUnlimitedPlan(plan);
 
+            const comingSoon = isComingSoonPlan(plan);
             return {
               _id: plan._id,
               name: plan.name,
@@ -151,8 +161,9 @@ function Billing() {
               price: priceString,
               description: planMarketingDescription(plan),
               features: getPlanFeatureBullets(plan),
-              popular: isUnlimited,
-              available: true,
+              popular: isUnlimited && !comingSoon,
+              comingSoon,
+              available: !comingSoon,
             };
           });
 
@@ -326,6 +337,13 @@ function Billing() {
     setSuccess('');
 
     try {
+      trackBeginCheckout({
+        planId,
+        planName: plan.name,
+        value: Number(plan.price || 0),
+        currency: 'usd'
+      });
+
       const response = await API.post('/api/stripe/checkout', {
         planId: planId // Send MongoDB planId
       });
@@ -483,21 +501,16 @@ function Billing() {
                 );
                 const uMin =
                   currentSubscription.unlimitedMinutesDisplay ?? legacyAll;
-                const uSms =
-                  currentSubscription.unlimitedSmsDisplay ?? legacyAll;
-                const minPart = uMin
-                  ? "∞ credits"
-                  : `${Math.round(Number(usage?.creditsRemaining ?? usage?.minutesRemaining ?? currentSubscription.creditsRemaining ?? currentSubscription.minutesRemaining ?? 0))} credits`;
-                const smsPart = uSms
-                  ? "∞ SMS"
-                  : `${Number(usage?.smsRemaining ?? currentSubscription.smsRemaining ?? 0)} SMS`;
+                const creditPart = uMin
+                  ? "∞ Telecom Credits"
+                  : `${Math.round(Number(usage?.creditsRemaining ?? currentSubscription?.creditsRemaining ?? 0)).toLocaleString()} Telecom Credits`;
                 return (
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
                 <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                   Current plan: {currentSubscription.planName}
                 </span>
                 <span className="block mt-0.5">
-                        {`${minPart} • ${smsPart} remaining`}
+                        {`${creditPart} remaining`}
                 </span>
                 {!uMin && projectedAvailableCredits != null && (
                   <span
@@ -525,6 +538,12 @@ function Billing() {
           <div className="mb-4 max-w-3xl mx-auto px-4 py-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 rounded-xl text-sm flex items-center">
             <CheckIcon />
             <span className="ml-2">{success}</span>
+          </div>
+        )}
+
+        {currentSubscription?.active && isAuthenticated && (
+          <div className="mb-6 max-w-3xl mx-auto">
+            <CreditTimeline />
           </div>
         )}
 
@@ -619,10 +638,14 @@ function Billing() {
                 <button
                   type="button"
                   onClick={() => activePlan && handleSelectPlan(activePlan)}
-                  disabled={!activePlan || processing}
+                  disabled={!activePlan || processing || Boolean(activePlan?.comingSoon)}
                   className="w-full inline-flex justify-center items-center px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-md transition-colors"
                 >
-                  {processing ? 'Processing…' : 'Continue to secure checkout'}
+                  {activePlan?.comingSoon
+                    ? 'Coming Soon'
+                    : processing
+                    ? 'Processing…'
+                    : 'Continue to secure checkout'}
                 </button>
               </div>
 
@@ -632,9 +655,14 @@ function Billing() {
                     <div>
                       <p className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                         {activePlan.name}
-                        {activePlan.popular && (
+                        {activePlan.popular && !activePlan.comingSoon && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-200">
                             Unlimited calling
+                          </span>
+                        )}
+                        {activePlan.comingSoon && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-200">
+                            Coming Soon
                           </span>
                         )}
                       </p>
@@ -693,10 +721,14 @@ function Billing() {
               <button
                 type="button"
                 onClick={() => activePlan && handleSelectPlan(activePlan)}
-                disabled={!activePlan || processing}
+                disabled={!activePlan || processing || Boolean(activePlan?.comingSoon)}
                 className="mt-5 w-full inline-flex justify-center items-center px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-md transition-colors"
               >
-                {processing ? 'Processing…' : 'Continue to secure checkout'}
+                {activePlan?.comingSoon
+                  ? 'Coming Soon'
+                  : processing
+                  ? 'Processing…'
+                  : 'Continue to secure checkout'}
               </button>
             </div>
 

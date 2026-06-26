@@ -1,545 +1,691 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
-import API from '../../api';
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  AreaChart, Area, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
+import {
+  Users, UserPlus, Repeat, MousePointerClick, Eye, Timer,
+  TrendingDown, CreditCard, DollarSign, Activity, Smartphone,
+  Filter as FunnelIcon, Radio, Zap
+} from 'lucide-react';
+import API from '../../api';
+import { viteApiOriginForSockets } from '../../utils/viteApiBase';
+import useAnalyticsLive from '../../hooks/useAnalyticsLive';
+import KpiCard from '../../components/analytics/KpiCard';
+import ChartCard from '../../components/analytics/ChartCard';
+import FilterBar from '../../components/analytics/FilterBar';
+import { DashboardSkeleton } from '../../components/analytics/Skeletons';
+import {
+  formatNumber, formatFull, formatCurrency, formatPercent, formatDuration,
+  CHART_COLORS, channelLabel, sourceIcon
+} from '../../components/analytics/formatters';
+import RealtimeIntelligenceCenter from '../../components/analytics/live/RealtimeIntelligenceCenter';
 
-const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6'];
-const REALTIME_WINDOW_OPTIONS = [
-  { value: '15m', label: 'Last 15m' },
-  { value: '30m', label: 'Last 30m' },
-  { value: '45m', label: 'Last 45m' },
-  { value: '1h', label: 'Last 1h' },
-  { value: '2h', label: 'Last 2h' },
-  { value: '4h', label: 'Last 4h' },
-  { value: '6h', label: 'Last 6h' },
-  { value: '8h', label: 'Last 8h' },
-  { value: '12h', label: 'Last 12h' },
-  { value: '24h', label: 'Last 24h' },
-  { value: '28h', label: 'Last 28h' },
-  { value: '72h', label: 'Last 72h' }
+const WorldMap = lazy(() => import('../../components/analytics/WorldMap'));
+
+const TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'traffic', label: 'Traffic' },
+  { id: 'geography', label: 'Geography' },
+  { id: 'devices', label: 'Devices' },
+  { id: 'funnel', label: 'Funnel' },
+  { id: 'revenue', label: 'Revenue' },
+  { id: 'events', label: 'Events' }
 ];
 
-// Chevron icon for expand/collapse
-const ChevronDownIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-  </svg>
-);
+const shortDate = (d) => {
+  if (!d) return '';
+  const parts = String(d).split('-');
+  return parts.length === 3 ? `${parts[1]}/${parts[2]}` : d;
+};
 
-const ChevronUpIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-  </svg>
-);
+const chartTooltipStyle = {
+  contentStyle: {
+    background: 'rgba(15,23,42,0.95)',
+    border: '1px solid rgba(148,163,184,0.2)',
+    borderRadius: 12,
+    color: '#e2e8f0',
+    fontSize: 12
+  },
+  labelStyle: { color: '#94a3b8' }
+};
 
 function AdminAnalytics() {
   const navigate = useNavigate();
+  const { live, connected } = useAnalyticsLive();
+
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState(null);
-  const [meta, setMeta] = useState(null);
-  const hasLoadedOnceRef = useRef(false);
-  const [realtimeWindow, setRealtimeWindow] = useState('15m');
-  const [dateRange, setDateRange] = useState({
-    startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    endDate: new Date().toISOString().split('T')[0]
+  const [error, setError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [activeTab, setActiveTab] = useState('overview');
+
+  const [filters, setFilters] = useState({
+    range: '30d',
+    compare: 'previous_period',
+    customStart: new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10),
+    customEnd: new Date().toISOString().slice(0, 10)
   });
 
-  const fetchAnalytics = useCallback(async ({ background = false } = {}) => {
-    const shouldBlockRender = !background && !hasLoadedOnceRef.current;
-    try {
-      if (shouldBlockRender) {
-        setLoading(true);
-      }
+  const hasLoadedRef = useRef(false);
+
+  const buildParams = useCallback(
+    (extra = {}) => {
       const params = new URLSearchParams();
-      if (dateRange.startDate) params.append('startDate', dateRange.startDate);
-      if (dateRange.endDate) params.append('endDate', dateRange.endDate);
-      params.append('realtimeWindow', realtimeWindow);
-      const adminToken = localStorage.getItem('adminToken');
-
-      const response = await API.get(`/api/analytics/admin/dashboard?${params.toString()}`, {
-        headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
-      });
-      
-      console.log('Analytics API Response:', response);
-      
-      if (response.error) {
-        console.error('Error fetching analytics:', response.error);
-        if (response.status === 401) {
-          localStorage.removeItem('adminToken');
-          navigate('/adminbobby');
-          return;
-        }
-        hasLoadedOnceRef.current = true;
-        if (!background) {
-          // Set empty data structure so cards still show
-          setData(null);
-          setMeta({
-            source: 'unavailable',
-            googleAnalytics: {
-              warnings: [response.error]
-            }
-          });
-        }
-        return;
+      params.append('range', filters.range);
+      params.append('compare', filters.compare);
+      params.append('tzOffset', String(-new Date().getTimezoneOffset()));
+      if (filters.range === 'custom') {
+        if (filters.customStart) params.append('startDate', `${filters.customStart}T00:00:00.000Z`);
+        if (filters.customEnd) params.append('endDate', `${filters.customEnd}T23:59:59.999Z`);
       }
+      Object.entries(extra).forEach(([k, v]) => params.append(k, v));
+      return params;
+    },
+    [filters]
+  );
 
-      if (response.data?.success) {
-        console.log('Analytics data received:', response.data.data);
-        hasLoadedOnceRef.current = true;
-        setData(response.data.data);
-        setMeta(response.data.meta || null);
-      } else {
-        console.warn('Unexpected response format:', response.data);
-        hasLoadedOnceRef.current = true;
-        if (!background) {
-          // Set null so we can still show cards with defaults
-          setData(null);
-          setMeta(null);
+  const fetchData = useCallback(
+    async ({ refresh = false } = {}) => {
+      const token = localStorage.getItem('adminToken');
+      if (refresh) setRefreshing(true);
+      else if (!hasLoadedRef.current) setLoading(true);
+
+      const params = buildParams(refresh ? { refresh: '1' } : {});
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const loadOverview = () =>
+        API.get(`/api/analytics/admin/overview?${params.toString()}`, { headers });
+
+      const loadLegacyDashboard = () => {
+        const legacy = new URLSearchParams();
+        if (filters.range === 'custom') {
+          if (filters.customStart) legacy.append('startDate', filters.customStart);
+          if (filters.customEnd) legacy.append('endDate', filters.customEnd);
+        } else {
+          const end = new Date();
+          const start = new Date();
+          const days =
+            filters.range === '7d' ? 7 :
+            filters.range === '14d' ? 14 :
+            filters.range === '90d' ? 90 :
+            filters.range === 'today' ? 1 : 30;
+          start.setDate(start.getDate() - (days - 1));
+          legacy.append('startDate', start.toISOString().slice(0, 10));
+          legacy.append('endDate', end.toISOString().slice(0, 10));
         }
-      }
-    } catch (error) {
-      console.error('Error fetching analytics:', error);
-      hasLoadedOnceRef.current = true;
-      if (!background) {
-        setData(null);
-        setMeta({
-          source: 'unavailable',
-          googleAnalytics: {
-            warnings: [error.message]
+        legacy.append('realtimeWindow', '15m');
+        return API.get(`/api/analytics/admin/dashboard?${legacy.toString()}`, { headers });
+      };
+
+      try {
+        let res = await loadOverview();
+
+        if (res?.error || res?.data?.success === false || (res?.status && res.status >= 400)) {
+          if (res?.status === 401) {
+            localStorage.removeItem('adminToken');
+            navigate('/adminbobby');
+            return;
           }
-        });
+          res = await loadLegacyDashboard();
+        }
+
+        if (res?.error || res?.data?.success === false) {
+          throw new Error(res?.error || 'Failed to load analytics');
+        }
+
+        const payload = res.data?.data || res.data;
+        setData(payload);
+        setError('');
+        setLastUpdated(new Date());
+        hasLoadedRef.current = true;
+      } catch (err) {
+        setError(err.message || 'Failed to load analytics');
+        hasLoadedRef.current = true;
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-    } finally {
-      setLoading(false);
-    }
-  }, [dateRange.endDate, dateRange.startDate, navigate, realtimeWindow]);
+    },
+    [buildParams, navigate, filters]
+  );
 
   useEffect(() => {
-    fetchAnalytics({ background: hasLoadedOnceRef.current });
-  }, [fetchAnalytics]);
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.range, filters.compare, filters.customStart, filters.customEnd]);
 
-  const handleCardClick = (cardId) => {
-    navigate(`/adminbobby/analytics/${cardId}`, {
-      state: { data, dateRange, realtimeWindow, meta }
-    });
+  // Background auto-refresh every 60s.
+  useEffect(() => {
+    const id = setInterval(() => fetchData({ refresh: true }), 60000);
+    return () => clearInterval(id);
+  }, [fetchData]);
+
+  const handleFilterChange = (patch) => setFilters((prev) => ({ ...prev, ...patch }));
+
+  const handleExport = async (format) => {
+    try {
+      const token = localStorage.getItem('adminToken');
+      const params = buildParams({ format });
+      const base = viteApiOriginForSockets(import.meta.env.VITE_API_URL || '') || '';
+      const url = `${base}/api/analytics/admin/export?${params.toString()}`;
+      const resp = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!resp.ok) throw new Error('Export failed');
+      const blob = await resp.blob();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `otodial-analytics-${filters.range}.${format === 'excel' ? 'xlsx' : format}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+    } catch (err) {
+      setError(err.message || 'Export failed');
+    }
   };
 
-  const formatTime = (seconds) => {
-    if (!seconds) return '0s';
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-  };
+  const drill = (cardId) => navigate(`/adminbobby/analytics/${cardId}`);
 
-  const getSourceIcon = (source) => {
-    const key = String(source || '').toLowerCase();
-    if (key.includes('snapchat')) return '👻';
-    if (key.includes('instagram')) return '📸';
-    if (key.includes('facebook')) return '📘';
-    if (key === 'x' || key.includes('twitter') || key.includes('x.com')) return 'X';
-    if (key.includes('threads')) return '🧵';
-    if (key.includes('tiktok')) return '🎵';
-    if (key.includes('linkedin')) return '💼';
-    if (key.includes('youtube')) return '▶';
-    if (key.includes('reddit')) return '👽';
-    if (key.includes('pinterest')) return '📌';
-    if (key.includes('telegram') || key.includes('t.me')) return '✈';
-    if (key.includes('whatsapp')) return '🟢';
-    if (key.includes('discord')) return '🎮';
-    if (key.includes('google')) return '🔎';
-    return '🔗';
-  };
+  const overview = data?.overview || {};
+  const deltas = data?.deltas || {};
+  const daily = data?.dailyVisitors || [];
+  const meta = data?.meta || {};
 
-  const formatSourceLabel = (source) => {
-    const value = String(source || '').trim();
-    if (!value) return 'direct';
-    if (value === 'x') return 'X';
-    return value
-      .split(/[_\-\s]+/)
-      .filter(Boolean)
-      .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
-      .join(' ');
-  };
+  // Live-augmented values for the realtime strip.
+  const liveSnap = live || {};
 
-  const buildSourceDisplayLabel = (source, handle = null) => {
-    const icon = getSourceIcon(source);
-    const base = formatSourceLabel(source || 'direct');
-    return `${icon} ${base}${handle ? ` @${handle}` : ''}`;
-  };
+  const spark = useMemo(() => {
+    return daily.map((d) => ({
+      date: d.date,
+      visitors: d.visitors,
+      newVisitors: d.newVisitors,
+      returningVisitors: d.returningVisitors,
+      pageViews: d.pageViews,
+      signups: d.signups,
+      revenue: d.revenue
+    }));
+  }, [daily]);
 
   if (loading) {
     return (
-      <div className="p-6 min-h-full text-gray-900 dark:text-slate-100">
-        <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 dark:border-indigo-400"></div>
+      <div className="p-6 min-h-full">
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Analytics</h1>
         </div>
+        <DashboardSkeleton />
       </div>
     );
   }
 
-  // Always show cards, even with no data - helps debug and shows structure
-  const overview = data?.overview || {
-    totalVisitors: 0,
-    uniqueVisitors: 0,
-    returningVisitors: 0,
-    newVisitors: 0,
-    signUps: 0,
-    usersWithSubscription: 0,
-    avgTimeSpent: 0,
-    realtimeActiveUsers: 0
-  };
-  const realtimeActiveUsers = Number.isFinite(overview.realtimeActiveUsers)
-    ? overview.realtimeActiveUsers
-    : Number.isFinite(meta?.googleAnalytics?.realtimeActiveUsers)
-      ? meta.googleAnalytics.realtimeActiveUsers
-      : null;
-
-  const funnel = data?.funnel || {
-    totalVisitors: 0,
-    uniqueVisitors: 0,
-    signedUp: 0,
-    withSubscription: 0,
-    conversionRate: 0,
-    subscriptionRate: 0
-  };
-
-  const countries = data?.countries || [];
-  const devices = data?.devices || [];
-  const browsers = data?.browsers || [];
-  const os = data?.os || [];
-  const pages = data?.pages || [];
-  const voice = data?.voice || {};
-  const telecomRisk = data?.telecomRisk || {};
-  const highRiskUsers = telecomRisk?.highRiskUsers || [];
-  const topOutboundAttemptUsers = telecomRisk?.topOutboundAttemptUsers || [];
-  const negativeMarginUsers = telecomRisk?.negativeMarginUsers || [];
-  const dailyVisitors = data?.dailyVisitors || [];
-  const topIPs = data?.topIPs || [];
-  const uniqueIpVisitors = Number(overview?.uniqueIpVisitors || 0);
-  const realtimeData = data?.realtime || {};
-  const realtimeSummary = realtimeData?.summary || {
-    totalUsers: 0,
-    activeNow: 0,
-    signedUpUsers: 0,
-    subscribedUsers: 0,
-    windowKey: realtimeWindow
-  };
-  const realtimePreviewUsers = (realtimeData?.users || []).slice(0, 3);
-  const trafficSources = data?.trafficSources || { channels: [], topSources: [], summary: {} };
-  const topSource = trafficSources.topSources?.[0];
-  const topSourceSubtitle = topSource
-    ? `Top source: ${buildSourceDisplayLabel(topSource.socialPlatform || topSource.source, topSource.influencerHandle || null)}`
-    : `${(trafficSources.summary?.totalVisits || 0).toLocaleString()} tracked visits`;
-
-  // Card component - navigates to detail page (`navigateTo` when a second card shares one detail view)
-  const MetricCard = ({ id, navigateTo, title, icon, value, subtitle, color, gradient }) => {
-    const routeId = navigateTo ?? id;
-    return (
-      <div 
-        onClick={() => handleCardClick(routeId)}
-        className={`bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm hover:shadow-lg hover:scale-[1.02] transition-all duration-300 cursor-pointer overflow-hidden ${gradient}`}
-      >
-        <div className="w-full p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className={`p-3 rounded-lg ${color} bg-opacity-10`}>
-                {icon}
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
-                <div className="flex items-baseline space-x-2 mt-1">
-                  <span className={`text-3xl font-bold ${color}`}>{value}</span>
-                  {subtitle && (
-                    <span className="text-sm text-gray-500 dark:text-gray-400">{subtitle}</span>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-500 dark:text-gray-400">View Details</span>
-              <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   return (
-    <div className="p-6 bg-gray-50 dark:bg-slate-900 min-h-screen">
-      {/* Debug Banner */}
-      {!data && (
-        <div className="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-          <div className="flex items-center space-x-2">
-            <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <div>
-              <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">No data from API - Showing cards with default values (0)</p>
-              <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">Check browser console for API response details</p>
-            </div>
+    <div className="p-4 sm:p-6 min-h-full text-gray-900 dark:text-slate-100">
+      {/* Header */}
+      <div className="flex flex-col gap-4 mb-6">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">
+              Analytics
+            </h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {meta?.range?.label ? `Showing ${meta.range.label}` : 'Executive overview'}
+              {meta?.cached ? ' · cached' : ''}
+            </p>
           </div>
         </div>
-      )}
 
-      {meta && (
-        <div className="mb-4 p-4 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg">
-          <p className="text-sm font-medium text-indigo-800 dark:text-indigo-300">
-            Data source: {meta.source === 'google_analytics' ? 'Google Analytics (GA4)' : meta.source === 'internal' ? 'Internal Analytics' : 'Unavailable'}
-          </p>
-          {meta.googleAnalytics?.propertyId && (
-            <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1">
-              GA4 Property ID: {meta.googleAnalytics.propertyId}
-            </p>
-          )}
-          {Number.isFinite(realtimeActiveUsers) && (
-            <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-1">
-              Realtime active users: {realtimeActiveUsers}
-            </p>
-          )}
-          {Array.isArray(meta.googleAnalytics?.warnings) && meta.googleAnalytics.warnings.length > 0 && (
-            <ul className="mt-2 text-xs text-indigo-700 dark:text-indigo-300 list-disc pl-5 space-y-1">
-              {meta.googleAnalytics.warnings.slice(0, 3).map((warning, idx) => (
-                <li key={idx}>{warning}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-      
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Analytics Dashboard</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Track your audience and performance metrics</p>
-        </div>
-        <div className="flex gap-3 flex-wrap justify-end">
-          <select
-            value={realtimeWindow}
-            onChange={(e) => setRealtimeWindow(e.target.value)}
-            className="px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
-          >
-            {REALTIME_WINDOW_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <input
-            type="date"
-            value={dateRange.startDate}
-            onChange={(e) => setDateRange(prev => ({ ...prev, startDate: e.target.value }))}
-            className="px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
-          />
-          <input
-            type="date"
-            value={dateRange.endDate}
-            onChange={(e) => setDateRange(prev => ({ ...prev, endDate: e.target.value }))}
-            className="px-4 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
+        <FilterBar
+          range={filters.range}
+          compare={filters.compare}
+          customStart={filters.customStart}
+          customEnd={filters.customEnd}
+          onChange={handleFilterChange}
+          onRefresh={() => fetchData({ refresh: true })}
+          onExport={handleExport}
+          refreshing={refreshing}
+          lastUpdated={lastUpdated}
+          connected={connected}
+        />
+
+        {error && (
+          <div className="rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+            {error} — showing the most recent data available.
+          </div>
+        )}
       </div>
 
-      <div className="mb-6">
-        <div
-          onClick={() => handleCardClick('realtime')}
-          className="bg-gradient-to-r from-emerald-50 to-cyan-50 dark:from-emerald-900/20 dark:to-cyan-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl shadow-sm hover:shadow-lg hover:scale-[1.01] transition-all duration-300 cursor-pointer p-6"
-        >
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Realtime Active Users ({realtimeSummary.windowKey || realtimeWindow})</p>
-              <p className="mt-1 text-4xl font-bold text-emerald-700 dark:text-emerald-300">
-                {(Number(realtimeSummary.totalUsers) || 0).toLocaleString()}
-              </p>
-              <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-600 dark:text-gray-300">
-                <span>Active now (5m): <strong>{Number(realtimeSummary.activeNow || 0).toLocaleString()}</strong></span>
-                <span>Conversions: <strong>{Number(realtimeSummary.signedUpUsers || 0).toLocaleString()}</strong></span>
-                <span>Subscribers: <strong>{Number(realtimeSummary.subscribedUsers || 0).toLocaleString()}</strong></span>
+      {/* Live Operations Center — primary dashboard (always visible) */}
+      <div className="mb-10">
+        <RealtimeIntelligenceCenter
+          legacyLive={live}
+          legacyConnected={connected}
+          onRefreshHistorical={() => fetchData({ refresh: true })}
+          historicalMeta={meta}
+          historicalRefreshing={refreshing}
+          lastHistoricalRefresh={lastUpdated}
+          reconciliation={data?.reconciliation}
+        />
+      </div>
+
+      {/* Historical reports */}
+      <div className="border-t border-gray-200 dark:border-slate-700 pt-6">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Historical Reports</h2>
+      <div className="mb-6 flex flex-wrap gap-1 border-b border-gray-200 dark:border-slate-700">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === tab.id
+                ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'overview' && (
+        <OverviewTab
+          overview={overview}
+          deltas={deltas}
+          daily={daily}
+          spark={spark}
+          errors={meta?.errors}
+          onDrill={drill}
+        />
+      )}
+      {activeTab === 'traffic' && (
+        <TrafficTab trafficSources={data?.trafficSources} errors={meta?.errors} />
+      )}
+      {activeTab === 'geography' && <GeographyTab countries={data?.countries || []} />}
+      {activeTab === 'devices' && (
+        <DevicesTab devices={data?.devices} browsers={data?.browsers} os={data?.os} />
+      )}
+      {activeTab === 'funnel' && <FunnelTab funnel={data?.funnel} />}
+      {activeTab === 'revenue' && (
+        <RevenueTab revenue={data?.revenue} subscriptions={data?.subscriptions} errors={meta?.errors} />
+      )}
+      {activeTab === 'events' && <EventsTab topEvents={data?.topEvents || []} pages={data?.pages || []} />}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Tabs ---------------- */
+
+function OverviewTab({ overview, deltas, daily, spark, errors, onDrill }) {
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard title="Unique Visitors" value={formatNumber(overview.uniqueVisitors)}
+          delta={deltas.uniqueVisitors} icon={<Users className="w-4 h-4" />} accent="indigo"
+          sparkData={spark} sparkKey="visitors" onClick={() => onDrill('visitors')} />
+        <KpiCard title="New Visitors" value={formatNumber(overview.newVisitors)}
+          delta={deltas.newVisitors} icon={<UserPlus className="w-4 h-4" />} accent="violet"
+          sparkData={spark} sparkKey="newVisitors" />
+        <KpiCard title="Returning" value={formatNumber(overview.returningVisitors)}
+          delta={deltas.returningVisitors} icon={<Repeat className="w-4 h-4" />} accent="cyan"
+          sparkData={spark} sparkKey="returningVisitors" />
+        <KpiCard title="Sessions" value={formatNumber(overview.sessions)}
+          delta={deltas.sessions} icon={<Activity className="w-4 h-4" />} accent="blue" />
+
+        <KpiCard title="Page Views" value={formatNumber(overview.pageViews)}
+          delta={deltas.pageViews} icon={<Eye className="w-4 h-4" />} accent="indigo"
+          sparkData={spark} sparkKey="pageViews" onClick={() => onDrill('pageviews')} />
+        <KpiCard title="Bounce Rate" value={formatPercent(overview.bounceRate)}
+          delta={deltas.bounceRate} invertTrend icon={<TrendingDown className="w-4 h-4" />} accent="rose"
+          subtitle={`${overview.pagesPerSession || 0} pages / session`} />
+        <KpiCard title="Avg. Duration" value={formatDuration(overview.avgSessionDuration)}
+          delta={deltas.avgSessionDuration} icon={<Timer className="w-4 h-4" />} accent="amber" />
+        <KpiCard title="Sign-ups" value={formatNumber(overview.signUps)}
+          delta={deltas.signUps} icon={<MousePointerClick className="w-4 h-4" />} accent="emerald"
+          subtitle={`${overview.signupConversionRate || 0}% conversion`}
+          sparkData={spark} sparkKey="signups" onClick={() => onDrill('signups')} />
+
+        <KpiCard title="Subscriptions" value={formatNumber(overview.usersWithSubscription)}
+          delta={deltas.usersWithSubscription} icon={<CreditCard className="w-4 h-4" />} accent="emerald"
+          subtitle={`${overview.subscriptionConversionRate || 0}% of signups`} />
+        <KpiCard title="Revenue" value={formatCurrency(overview.revenue)}
+          delta={deltas.revenue} icon={<DollarSign className="w-4 h-4" />} accent="emerald"
+          sparkData={spark} sparkKey="revenue" />
+        <KpiCard title="ARPU" value={formatCurrency(overview.arpu)}
+          icon={<DollarSign className="w-4 h-4" />} accent="violet" />
+        <KpiCard title="DAU / WAU / MAU"
+          value={`${formatNumber(overview.dau)} / ${formatNumber(overview.wau)} / ${formatNumber(overview.mau)}`}
+          icon={<Zap className="w-4 h-4" />} accent="blue" />
+      </div>
+
+      <ChartCard title="Visitors over time" subtitle="New vs returning" error={errors?.timeseries}>
+        <ResponsiveContainer width="100%" height={320}>
+          <AreaChart data={daily}>
+            <defs>
+              <linearGradient id="gNew" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.5} />
+                <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+              </linearGradient>
+              <linearGradient id="gRet" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.5} />
+                <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
+            <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+            <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+            <Tooltip {...chartTooltipStyle} />
+            <Legend />
+            <Area type="monotone" dataKey="newVisitors" name="New" stackId="1" stroke="#6366f1" fill="url(#gNew)" strokeWidth={2} />
+            <Area type="monotone" dataKey="returningVisitors" name="Returning" stackId="1" stroke="#06b6d4" fill="url(#gRet)" strokeWidth={2} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ChartCard title="Page views" error={errors?.timeseries}>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={daily}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
+              <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <Tooltip {...chartTooltipStyle} />
+              <Bar dataKey="pageViews" name="Page views" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+        <ChartCard title="Sign-ups & subscriptions">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={daily}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
+              <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <Tooltip {...chartTooltipStyle} />
+              <Legend />
+              <Line type="monotone" dataKey="signups" name="Sign-ups" stroke="#10b981" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="subscriptions" name="Subscriptions" stroke="#f59e0b" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      </div>
+    </div>
+  );
+}
+
+function TrafficTab({ trafficSources, errors }) {
+  const channels = trafficSources?.channels || [];
+  const topSources = trafficSources?.topSources || [];
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ChartCard title="Channels" subtitle="Sessions by acquisition channel" error={errors?.trafficSources}>
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie data={channels} dataKey="visits" nameKey="channel" cx="50%" cy="50%"
+                outerRadius={110} innerRadius={60} paddingAngle={2}
+                label={(e) => channelLabel(e.channel)}>
+                {channels.map((entry, i) => (
+                  <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip {...chartTooltipStyle} formatter={(v, n, p) => [formatFull(v), channelLabel(p?.payload?.channel)]} />
+            </PieChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Channel conversion" subtitle="Visits vs sign-ups">
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={channels} layout="vertical" margin={{ left: 24 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
+              <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <YAxis type="category" dataKey="channel" tickFormatter={channelLabel} width={90} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <Tooltip {...chartTooltipStyle} />
+              <Legend />
+              <Bar dataKey="visits" name="Visits" fill="#6366f1" radius={[0, 4, 4, 0]} />
+              <Bar dataKey="signUps" name="Sign-ups" fill="#10b981" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      </div>
+
+      <ChartCard title="Top sources" subtitle="Including social influencers & campaigns">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-slate-700">
+                <th className="py-2 pr-4 font-medium">Source</th>
+                <th className="py-2 pr-4 font-medium">Channel</th>
+                <th className="py-2 pr-4 font-medium text-right">Visits</th>
+                <th className="py-2 pr-4 font-medium text-right">Unique</th>
+                <th className="py-2 pr-4 font-medium text-right">Sign-ups</th>
+                <th className="py-2 pr-4 font-medium text-right">Subs</th>
+                <th className="py-2 pr-4 font-medium text-right">Conv.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topSources.map((s, i) => (
+                <tr key={i} className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                  <td className="py-2 pr-4">
+                    <span className="mr-1">{sourceIcon(s.source)}</span>
+                    {s.source}
+                    {s.influencers?.length ? (
+                      <span className="ml-1 text-xs text-gray-400">@{s.influencers[0]}</span>
+                    ) : null}
+                  </td>
+                  <td className="py-2 pr-4 text-gray-500 dark:text-gray-400">{channelLabel(s.channel)}</td>
+                  <td className="py-2 pr-4 text-right">{formatFull(s.visits)}</td>
+                  <td className="py-2 pr-4 text-right">{formatFull(s.uniqueVisitors)}</td>
+                  <td className="py-2 pr-4 text-right">{formatFull(s.signUps)}</td>
+                  <td className="py-2 pr-4 text-right">{formatFull(s.subscriptions)}</td>
+                  <td className="py-2 pr-4 text-right">{formatPercent(s.conversionRate)}</td>
+                </tr>
+              ))}
+              {topSources.length === 0 && (
+                <tr><td colSpan={7} className="py-6 text-center text-gray-400">No traffic in this range.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </ChartCard>
+    </div>
+  );
+}
+
+function GeographyTab({ countries }) {
+  return (
+    <div className="space-y-6">
+      <ChartCard title="Visitors by country" subtitle="Geographic distribution">
+        <Suspense fallback={<div className="h-[380px] animate-pulse rounded-xl bg-gray-100 dark:bg-slate-800" />}>
+          <WorldMap countries={countries} />
+        </Suspense>
+      </ChartCard>
+      <ChartCard title="Top countries">
+        <div className="space-y-2">
+          {countries.slice(0, 15).map((c, i) => {
+            const max = countries[0]?.visits || 1;
+            return (
+              <div key={i} className="flex items-center gap-3">
+                <div className="w-16 text-sm text-gray-600 dark:text-gray-300">{c.country}</div>
+                <div className="flex-1 h-2.5 rounded-full bg-gray-100 dark:bg-slate-700 overflow-hidden">
+                  <div className="h-full rounded-full bg-indigo-500" style={{ width: `${(c.visits / max) * 100}%` }} />
+                </div>
+                <div className="w-16 text-right text-sm font-medium">{formatFull(c.visits)}</div>
+              </div>
+            );
+          })}
+          {countries.length === 0 && <p className="text-center text-gray-400 py-6">No geographic data.</p>}
+        </div>
+      </ChartCard>
+    </div>
+  );
+}
+
+function DevicesTab({ devices = [], browsers = [], os = [] }) {
+  const renderPie = (rows, nameKey) => (
+    <ResponsiveContainer width="100%" height={260}>
+      <PieChart>
+        <Pie data={rows} dataKey="count" nameKey={nameKey} cx="50%" cy="50%" outerRadius={100} innerRadius={55} paddingAngle={2}
+          label={(e) => e[nameKey]}>
+          {rows.map((entry, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+        </Pie>
+        <Tooltip {...chartTooltipStyle} />
+      </PieChart>
+    </ResponsiveContainer>
+  );
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <ChartCard title="Device type" subtitle={<span className="inline-flex items-center gap-1"><Smartphone className="w-3 h-3" /> sessions</span>}>
+        {renderPie(devices, 'device')}
+      </ChartCard>
+      <ChartCard title="Browsers">{renderPie(browsers, 'browser')}</ChartCard>
+      <ChartCard title="Operating systems">{renderPie(os, 'os')}</ChartCard>
+    </div>
+  );
+}
+
+function FunnelTab({ funnel }) {
+  if (!funnel) return <ChartCard title="Funnel"><p className="text-gray-400 py-6 text-center">No funnel data.</p></ChartCard>;
+  const steps = [
+    { label: 'Visitors', value: funnel.visitors },
+    { label: 'Signed up', value: funnel.signedUp },
+    { label: 'Email verified', value: funnel.emailVerified },
+    { label: 'Subscribed', value: funnel.subscribed },
+    { label: 'Number purchased', value: funnel.numberPurchased },
+    { label: 'First call', value: funnel.firstCall }
+  ];
+  const top = steps[0].value || 1;
+  return (
+    <ChartCard title="Conversion funnel" subtitle="Visitor → Signup → Subscribe → First call">
+      <div className="space-y-3">
+        {steps.map((s, i) => {
+          const pct = top > 0 ? (s.value / top) * 100 : 0;
+          const prev = i > 0 ? steps[i - 1].value : null;
+          const stepConv = prev ? ((s.value / (prev || 1)) * 100).toFixed(1) : null;
+          return (
+            <div key={i}>
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-gray-700 dark:text-gray-200 font-medium flex items-center gap-2">
+                  <FunnelIcon className="w-3.5 h-3.5 text-indigo-500" /> {s.label}
+                </span>
+                <span className="text-gray-500 dark:text-gray-400">
+                  {formatFull(s.value)} {stepConv !== null && <span className="text-xs">({stepConv}%)</span>}
+                </span>
+              </div>
+              <div className="h-7 rounded-lg bg-gray-100 dark:bg-slate-700 overflow-hidden">
+                <div
+                  className="h-full rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-500"
+                  style={{ width: `${Math.max(pct, 2)}%` }}
+                />
               </div>
             </div>
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              View realtime users by device, IP, geo, source, and conversion
-            </div>
-          </div>
-          {realtimePreviewUsers.length > 0 && (
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-              {realtimePreviewUsers.map((user, idx) => (
-                <div key={`${user.sessionId || idx}-${idx}`} className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-white/70 dark:bg-slate-900/40 p-3">
-                  <p className="text-xs font-semibold text-gray-900 dark:text-white truncate">
-                    {user.userEmail || user.userName || 'Anonymous'}
-                  </p>
-                  <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
-                    {user.device || 'unknown'} • {user.browser || 'unknown'}
-                  </p>
-                  <p className="text-xs text-gray-600 dark:text-gray-300">
-                    {user.ipAddress || 'unknown'} • {user.city && user.country ? `${user.city}, ${user.country}` : (user.country || 'Unknown')}
-                  </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {buildSourceDisplayLabel(user.socialPlatform || user.source || user.sourceChannel || 'direct', user.influencerHandle || null)} • {formatTime(user.timeSpent || 0)} • {user.conversion || 'none'}
-                  </p>
+          );
+        })}
+      </div>
+    </ChartCard>
+  );
+}
+
+function RevenueTab({ revenue, subscriptions, errors }) {
+  if (errors?.revenue || !revenue) {
+    return <ChartCard title="Revenue" error={errors?.revenue}><p className="text-gray-400 py-6 text-center">No revenue data.</p></ChartCard>;
+  }
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <KpiCard title="Total Revenue" value={formatCurrency(revenue.totalRevenue)} accent="emerald" icon={<DollarSign className="w-4 h-4" />} />
+        <KpiCard title="Orders" value={formatFull(revenue.orders)} accent="indigo" />
+        <KpiCard title="Avg. Order Value" value={formatCurrency(revenue.averageOrderValue)} accent="violet" />
+      </div>
+      <ChartCard title="Revenue over time">
+        <ResponsiveContainer width="100%" height={300}>
+          <AreaChart data={revenue.byDay}>
+            <defs>
+              <linearGradient id="gRev" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#10b981" stopOpacity={0.5} />
+                <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
+            <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+            <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+            <Tooltip {...chartTooltipStyle} formatter={(v) => formatCurrency(v)} />
+            <Area type="monotone" dataKey="revenue" name="Revenue" stroke="#10b981" fill="url(#gRev)" strokeWidth={2} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </ChartCard>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ChartCard title="Revenue by type">
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={revenue.byPlan}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
+              <XAxis dataKey="plan" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+              <Tooltip {...chartTooltipStyle} formatter={(v) => formatCurrency(v)} />
+              <Bar dataKey="revenue" name="Revenue" fill="#6366f1" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+        {subscriptions && (
+          <ChartCard title="Subscriptions">
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                ['Active', subscriptions.active, 'emerald'],
+                ['New (range)', subscriptions.newInRange, 'indigo'],
+                ['Suspended', subscriptions.suspended, 'amber'],
+                ['Cancelled', subscriptions.cancelled, 'rose']
+              ].map(([label, value], i) => (
+                <div key={i} className="rounded-xl border border-gray-200 dark:border-slate-700 p-4">
+                  <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
+                  <div className="text-2xl font-bold text-gray-900 dark:text-white">{formatFull(value)}</div>
                 </div>
               ))}
             </div>
-          )}
+          </ChartCard>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EventsTab({ topEvents, pages }) {
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <ChartCard title="Top events" subtitle="Tracked product events">
+        <div className="space-y-2">
+          {topEvents.slice(0, 20).map((e, i) => {
+            const max = topEvents[0]?.count || 1;
+            return (
+              <div key={i} className="flex items-center gap-3">
+                <div className="w-40 truncate text-sm text-gray-600 dark:text-gray-300">{e.name}</div>
+                <div className="flex-1 h-2.5 rounded-full bg-gray-100 dark:bg-slate-700 overflow-hidden">
+                  <div className="h-full rounded-full bg-violet-500" style={{ width: `${(e.count / max) * 100}%` }} />
+                </div>
+                <div className="w-16 text-right text-sm font-medium">{formatFull(e.count)}</div>
+              </div>
+            );
+          })}
+          {topEvents.length === 0 && <p className="text-center text-gray-400 py-6">No events tracked yet.</p>}
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Traffic Overview Card */}
-        <MetricCard
-          id="traffic"
-          title="Traffic Overview"
-          icon={
-            <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-            </svg>
-          }
-          value={overview.totalVisitors.toLocaleString()}
-          subtitle="Total Visitors"
-          color="text-blue-600 dark:text-blue-400"
-          gradient="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20"
-        />
-
-        {/* Returning Users Card */}
-        <MetricCard
-          id="returning"
-          title="Returning Users"
-          icon={
-            <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-          }
-          value={overview.returningVisitors.toLocaleString()}
-          subtitle={`${overview.totalVisitors > 0 ? ((overview.returningVisitors / overview.totalVisitors) * 100).toFixed(1) : 0}% of total`}
-          color="text-purple-600 dark:text-purple-400"
-          gradient="bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20"
-        />
-
-        {/* Conversions Card */}
-        <MetricCard
-          id="conversions"
-          title="Conversions"
-          icon={
-            <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-          value={overview.signUps.toLocaleString()}
-          subtitle={`${funnel.conversionRate}% conversion rate`}
-          color="text-green-600 dark:text-green-400"
-          gradient="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20"
-        />
-
-        {/* Geographic Data Card */}
-        <MetricCard
-          id="geographic"
-          title="Geographic Data"
-          icon={
-            <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-          value={countries.length}
-          subtitle="Countries"
-          color="text-red-600 dark:text-red-400"
-          gradient="bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20"
-        />
-
-        {/* Traffic Sources Card */}
-        <MetricCard
-          id="sources"
-          title="Traffic Sources"
-          icon={
-            <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          }
-          value={(trafficSources.channels?.length || 0).toLocaleString()}
-          subtitle={topSourceSubtitle}
-          color="text-emerald-600 dark:text-emerald-400"
-          gradient="bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20"
-        />
-
-        {/* Device Analytics Card */}
-        <MetricCard
-          id="devices"
-          title="Device Analytics"
-          icon={
-            <svg className="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
-          }
-          value={devices.length}
-          subtitle="Device Types"
-          color="text-indigo-600 dark:text-indigo-400"
-          gradient="bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-900/20 dark:to-blue-900/20"
-        />
-
-        {/* Telecom Risk Card */}
-        <MetricCard
-          id="telecom-risk"
-          title="Telecom Risk & Margin"
-          icon={
-            <svg className="w-6 h-6 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
-            </svg>
-          }
-          value={highRiskUsers.length.toLocaleString()}
-          subtitle={`ASR ${Number(voice?.answerSeizureRatio || 0).toFixed(2)}% · Negative margin ${negativeMarginUsers.length}`}
-          color="text-rose-600 dark:text-rose-400"
-          gradient="bg-gradient-to-br from-rose-50 to-red-50 dark:from-rose-900/20 dark:to-red-900/20"
-        />
-
-        {/* Page Performance Card */}
-        <MetricCard
-          id="pages"
-          title="Page Performance"
-          icon={
-            <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-          }
-          value={pages.length}
-          subtitle="Tracked Pages"
-          color="text-yellow-600 dark:text-yellow-400"
-          gradient="bg-gradient-to-br from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20"
-        />
-
-        {/* Visitor Details Card */}
-        <MetricCard
-          id="visitors"
-          title="Visitor Details"
-          icon={
-            <svg className="w-6 h-6 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-          }
-          value={(uniqueIpVisitors || topIPs.length || overview.uniqueVisitors || 0).toLocaleString()}
-          subtitle="Unique Visitor IPs"
-          color="text-cyan-600 dark:text-cyan-400"
-          gradient="bg-gradient-to-br from-cyan-50 to-teal-50 dark:from-cyan-900/20 dark:to-teal-900/20"
-        />
-
-        {/* Outbound Pressure Card */}
-        <MetricCard
-          id="telecom-outbound-pressure"
-          navigateTo="telecom-risk"
-          title="Outbound Pressure"
-          icon={
-            <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          }
-          value={Number(topOutboundAttemptUsers?.[0]?.outboundAttempts || 0).toLocaleString()}
-          subtitle="Highest outbound attempts (single user)"
-          color="text-amber-600 dark:text-amber-400"
-          gradient="bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20"
-        />
-      </div>
+      </ChartCard>
+      <ChartCard title="Top pages" subtitle="Most viewed pages">
+        <div className="space-y-2">
+          {pages.slice(0, 20).map((p, i) => {
+            const max = pages[0]?.visits || 1;
+            return (
+              <div key={i} className="flex items-center gap-3">
+                <div className="w-40 truncate text-sm text-gray-600 dark:text-gray-300" title={p.page}>{p.page}</div>
+                <div className="flex-1 h-2.5 rounded-full bg-gray-100 dark:bg-slate-700 overflow-hidden">
+                  <div className="h-full rounded-full bg-indigo-500" style={{ width: `${(p.visits / max) * 100}%` }} />
+                </div>
+                <div className="w-16 text-right text-sm font-medium">{formatFull(p.visits)}</div>
+              </div>
+            );
+          })}
+          {pages.length === 0 && <p className="text-center text-gray-400 py-6">No page data.</p>}
+        </div>
+      </ChartCard>
     </div>
   );
 }

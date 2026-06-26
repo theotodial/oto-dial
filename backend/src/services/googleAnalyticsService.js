@@ -1,4 +1,5 @@
 import { BetaAnalyticsDataClient } from "@google-analytics/data";
+import fs from "fs";
 
 function normalizePrivateKey(value) {
   if (!value) return null;
@@ -60,6 +61,21 @@ function resolveServiceAccountCredentials() {
       client_email: clientEmail,
       private_key: normalizePrivateKey(privateKey)
     };
+  }
+
+  const credPath = String(process.env.GOOGLE_APPLICATION_CREDENTIALS || "").trim();
+  if (credPath) {
+    try {
+      const resolved = credPath.endsWith(".json") ? credPath : `${credPath}.json`;
+      const raw = fs.readFileSync(resolved, "utf8");
+      const parsed = JSON.parse(raw);
+      return {
+        client_email: parsed.client_email,
+        private_key: normalizePrivateKey(parsed.private_key)
+      };
+    } catch {
+      return null;
+    }
   }
 
   return null;

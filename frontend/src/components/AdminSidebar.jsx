@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import {
   clearStoredAdminProfile,
+  canSeeAdminNavItem,
   hasAdminRole,
   isSuperAdmin,
   readStoredAdminProfile
@@ -23,6 +24,9 @@ const ChevronUpIcon = () => (
 
 const navItems = [
   { path: '/adminbobby/dashboard', label: 'Dashboard', role: 'dashboard' },
+  { path: '/adminbobby/analytics', label: 'Analytics', role: 'analytics' },
+  { path: '/adminbobby/analytics/profitability-tools', label: 'Profit tools', role: 'analytics' },
+  { path: '/adminbobby/analytics/billing-reconciliation', label: 'Billing Reconciliation', role: 'analytics' },
   { path: '/adminbobby/calls', label: 'Calls', role: 'calls' },
   { path: '/adminbobby/oto-agents', label: 'OTO Agents', role: 'dashboard', ai: true },
   { path: '/adminbobby/system-health', label: 'System Health', role: 'dashboard' },
@@ -33,8 +37,6 @@ const navItems = [
   { path: '/adminbobby/support', label: 'Support', role: 'support' },
   { path: '/adminbobby/team', label: 'Team', role: 'team' },
   { path: '/adminbobby/blog', label: 'Blog', role: 'blog' },
-  { path: '/adminbobby/analytics', label: 'Analytics', role: 'analytics' },
-  { path: '/adminbobby/analytics/profitability-tools', label: 'Profit tools', role: 'analytics' },
 ];
 
 const communicationsItems = [
@@ -56,7 +58,7 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
   const [communicationsOpen, setCommunicationsOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const adminProfile = readStoredAdminProfile();
-  const visibleNavItems = navItems.filter((item) => hasAdminRole(adminProfile, item.role));
+  const visibleNavItems = navItems.filter((item) => canSeeAdminNavItem(adminProfile, item));
   const visibleCommunicationsItems = communicationsItems.filter((item) =>
     hasAdminRole(adminProfile, item.role)
   );
@@ -111,6 +113,11 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
         <nav className="flex-1 overflow-y-auto py-4">
           {/* Main Navigation Items */}
           <div className="px-2 space-y-1">
+            {visibleNavItems.length > 0 && (
+              <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                Overview
+              </p>
+            )}
             {visibleNavItems.map((item) => {
               let isActive =
                 location.pathname === item.path || location.pathname.startsWith(item.path + '/');

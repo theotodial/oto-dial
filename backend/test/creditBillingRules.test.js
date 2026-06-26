@@ -17,9 +17,9 @@ test("connected call interval rounding uses exact 6-second buckets", () => {
   assert.equal(intervals(13), 3);
 });
 
-test("official credit constants match production billing policy", () => {
+test("official credit constants match production billing policy (v1)", () => {
   assert.equal(CREDIT_RULES.outboundAttemptCharge, 1);
-  assert.equal(CREDIT_RULES.connectedIntervalCharge, 1);
+  assert.equal(CREDIT_RULES.connectedIntervalCharge, 1.5);
   assert.equal(CREDIT_RULES.smsOutboundCharge, 10);
-  assert.equal(CREDIT_RULES.callReservationMinimum, 3);
+  assert.equal(CREDIT_RULES.callReservationMinimum, 11);
 });

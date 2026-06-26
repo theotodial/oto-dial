@@ -100,7 +100,7 @@ const callSchema = new mongoose.Schema(
     /** Outbound WebRTC (client SDK) vs legacy server-originated voice API */
     source: {
       type: String,
-      enum: ["webrtc", "voice_api"],
+      enum: ["webrtc", "voice_api", "billing_matrix"],
       default: "webrtc",
     },
 
@@ -243,6 +243,15 @@ const callSchema = new mongoose.Schema(
     attemptCredits: {
       type: Number,
       default: 0,
+    },
+    /**
+     * v1 telecom rating: lifecycle milestones already charged for this call
+     * (e.g. "routed","ringing","busy","no_answer","failed_after_routing","answered").
+     * Fast-skip guard + per-event analytics. Ledger idempotency keys remain authoritative.
+     */
+    billedCallEvents: {
+      type: [String],
+      default: [],
     },
     durationCredits: {
       type: Number,

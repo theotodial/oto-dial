@@ -36,6 +36,12 @@ const optionalEnvVars = {
   EMAIL_USER: '',
   EMAIL_PASS: '',
   GA4_PROPERTY_ID: '',
+  GA4_MEASUREMENT_ID: '',
+  GA4_MP_API_SECRET: '', // GA4 Admin > Data Streams > Measurement Protocol API secret (server-side purchase tracking)
+  GA4_ENABLED: 'true',
+  GA4_DEBUG: 'false',
+  GA4_RECONCILE_ENABLED: 'true',
+  GA4_RECONCILE_INTERVAL_MS: '300000',
   GOOGLE_ANALYTICS_PROPERTY_ID: '',
   GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON: '',
   GOOGLE_ANALYTICS_SERVICE_ACCOUNT_BASE64: '',

@@ -7,6 +7,7 @@ import { calculateSmsParts } from "./smsBillingService.js";
 import { getCanonicalUsage } from "./usage/getCanonicalUsage.js";
 import { isUnlimitedSubscription } from "./unlimitedUsageService.js";
 import { getCachedUserSubscription } from "./subscriptionService.js";
+import { isRatingV1Enabled } from "./telecomRatingEngine.js";
 
 export { calculateSmsParts };
 
@@ -108,7 +109,9 @@ export async function reserveSmsCredits(userId, smsParts, idempotencyKey) {
         isUnlimitedSubscription(subscription) ||
         /unlimited/i.test(String(subscription.planName || "")));
 
-    if (!unlimited) {
+    // v1 rating: telecom credits are the single authority for SMS spend. The legacy SMS-segment
+    // quota no longer gates sends; the reservation row is still created for idempotency/release.
+    if (!unlimited && !isRatingV1Enabled()) {
       const canonical = await getCanonicalUsage(uid, subscription);
       const smsRemaining = Math.max(0, Number(canonical?.smsRemaining ?? 0));
       const totalHeld = await sumReservedPartsForUser(uid);

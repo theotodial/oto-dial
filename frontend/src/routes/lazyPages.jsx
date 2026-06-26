@@ -32,9 +32,12 @@ export const AffiliateDashboard = lazy(() => import('../pages/AffiliateDashboard
 
 /** Admin / site tools — lazy */
 export const AdminLogin = lazy(() => import('../pages/admin/AdminLogin.jsx'));
-export const AdminAnalytics = lazy(() => import('../pages/admin/AdminAnalytics.jsx'));
+// Eager-loaded: heavy chart/map deps must not block on a separate lazy chunk
+// (users were stuck on AdminPageFallback / "Loading admin console" indefinitely).
+export { default as AdminAnalytics } from '../pages/admin/AdminAnalytics.jsx';
 export const AdminAnalyticsDetail = lazy(() => import('../pages/admin/AdminAnalyticsDetail.jsx'));
 export const AdminProfitabilityTools = lazy(() => import('../pages/admin/AdminProfitabilityTools.jsx'));
+export const AdminBillingReconciliation = lazy(() => import('../pages/admin/AdminBillingReconciliation.jsx'));
 export const AdminAffiliates = lazy(() => import('../pages/admin/AdminAffiliates.jsx'));
 export const AdminBlog = lazy(() => import('../pages/admin/AdminBlog.jsx'));
 export const AdminCalls = lazy(() => import('../pages/admin/AdminCalls.jsx'));

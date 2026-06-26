@@ -38,8 +38,10 @@ import { resolveInboundOwner } from "../../utils/inboundOwnership.js";
 import {
   billConnectedDurationIntervals,
   chargeProviderAcceptedAttempt,
+  chargeCallLifecycleEvent,
   releaseUnusedCallReservation,
 } from "../../services/callCreditBillingService.js";
+import { isRatingV1Enabled, CALL_BILLING_EVENT } from "../../services/telecomRatingEngine.js";
 import { finalizeTelecomCallAccounting } from "../../services/telecomCallAccountingService.js";
 import { recordTelecomEventSequence } from "../../services/telecomSequenceService.js";
 import { persistWebhookLatencySample } from "../../services/webhookLatencyService.js";
@@ -735,13 +737,25 @@ router.post("/", async (req, res) => {
       });
       try {
         const afterRing = await Call.findById(call._id).select(
-          "_id user direction attemptChargedAt attemptCharged status"
+          "_id user direction attemptChargedAt attemptCharged status billedCallEvents"
         );
         if (afterRing?.direction === "outbound") {
-          await chargeProviderAcceptedAttempt(afterRing, {
-            sourcePath: "telnyxVoice.js:call.ringing",
-            eventType: event,
-          });
+          if (isRatingV1Enabled()) {
+            // v1 rating: reaching ringing implies the call was routed to the carrier.
+            await chargeCallLifecycleEvent(afterRing, CALL_BILLING_EVENT.ROUTED, {
+              sourcePath: "telnyxVoice.js:call.ringing",
+              eventType: event,
+            });
+            await chargeCallLifecycleEvent(afterRing, CALL_BILLING_EVENT.RINGING, {
+              sourcePath: "telnyxVoice.js:call.ringing",
+              eventType: event,
+            });
+          } else {
+            await chargeProviderAcceptedAttempt(afterRing, {
+              sourcePath: "telnyxVoice.js:call.ringing",
+              eventType: event,
+            });
+          }
         }
       } catch (ringBillErr) {
         console.warn("[VOICE BILLING] ringing charge step failed:", ringBillErr?.message || ringBillErr);
@@ -784,6 +798,20 @@ router.post("/", async (req, res) => {
           lastProcessedEventAt: new Date(occurredAtMs),
         },
       });
+      try {
+        if (isRatingV1Enabled() && fresh?.direction === "outbound") {
+          // Early media implies the carrier routed the call.
+          const afterProg = await Call.findById(call._id).select(
+            "_id user direction billedCallEvents"
+          );
+          await chargeCallLifecycleEvent(afterProg, CALL_BILLING_EVENT.ROUTED, {
+            sourcePath: "telnyxVoice.js:call.progress",
+            eventType: event,
+          });
+        }
+      } catch (progBillErr) {
+        console.warn("[VOICE BILLING] progress routed charge failed:", progBillErr?.message || progBillErr);
+      }
       return res.sendStatus(200);
     }
 
@@ -1020,8 +1048,20 @@ router.post("/", async (req, res) => {
       });
       try {
         const latest = await Call.findById(call._id).select(
-          "_id user status direction callAnsweredAt callStartedAt durationCreditsCharged attemptChargedAt creditReservationHeld"
+          "_id user status direction callAnsweredAt callStartedAt durationCreditsCharged attemptChargedAt creditReservationHeld billedCallEvents"
         );
+        if (isRatingV1Enabled() && latest?.direction === "outbound") {
+          // Ensure routed is captured (answered may arrive without a ringing webhook),
+          // then charge the answered-connection milestone before connected billing.
+          await chargeCallLifecycleEvent(latest, CALL_BILLING_EVENT.ROUTED, {
+            sourcePath: "telnyxVoice.js:call.answered",
+            eventType: event,
+          });
+          await chargeCallLifecycleEvent(latest, CALL_BILLING_EVENT.ANSWERED, {
+            sourcePath: "telnyxVoice.js:call.answered",
+            eventType: event,
+          });
+        }
         await billConnectedDurationIntervals(latest);
       } catch (billingErr) {
         console.warn("[VOICE BILLING] duration charge step failed:", billingErr?.message || billingErr);
@@ -1183,6 +1223,43 @@ router.post("/", async (req, res) => {
         previousStatus: beforeTerminal,
         nextStatus: finalStatus,
       });
+
+      // v1 Telecom Rating: terminal disposition milestone charge (after telecom flow concluded).
+      try {
+        if (isRatingV1Enabled() && call.direction === "outbound") {
+          const wasRouted =
+            Boolean(call.callRingingAt) ||
+            Boolean(call.callEarlyMediaAt) ||
+            Boolean(call.callAnsweredAt) ||
+            (Array.isArray(call.billedCallEvents) &&
+              (call.billedCallEvents.includes(CALL_BILLING_EVENT.ROUTED) ||
+                call.billedCallEvents.includes(CALL_BILLING_EVENT.RINGING)));
+          let terminalEvent = null;
+          if (finalStatus === CALL_STATES.BUSY) terminalEvent = CALL_BILLING_EVENT.BUSY;
+          else if (finalStatus === CALL_STATES.NO_ANSWER) terminalEvent = CALL_BILLING_EVENT.NO_ANSWER;
+          else if (finalStatus === CALL_STATES.FAILED && wasRouted) {
+            terminalEvent = CALL_BILLING_EVENT.FAILED_AFTER_ROUTING;
+          }
+          // rejected/canceled/failed-before-routing => carrier_reject_before_routing (0 credits, no charge).
+          // completed => already billed via answered + connected intervals.
+          if (terminalEvent) {
+            // busy/no-answer imply the call was routed; ensure routed is captured first.
+            await chargeCallLifecycleEvent(call, CALL_BILLING_EVENT.ROUTED, {
+              sourcePath: "telnyxVoice.js:call.hangup",
+              eventType: event,
+            });
+            await chargeCallLifecycleEvent(call, terminalEvent, {
+              sourcePath: "telnyxVoice.js:call.hangup",
+              eventType: event,
+            });
+          }
+        }
+      } catch (terminalBillErr) {
+        console.warn(
+          "[VOICE BILLING] terminal disposition charge failed:",
+          terminalBillErr?.message || terminalBillErr
+        );
+      }
 
       emitAdminLiveCall({
         eventType: "ended",

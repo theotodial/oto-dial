@@ -13,6 +13,7 @@ import { OTODIAL_SMS_OUTBOUND_EVENT } from '../constants/smsOutboundEvents';
 import { loadSmsFavorites, addSmsFavorite, removeSmsFavorite } from '../utils/smsFavoritesStorage';
 import { loadArchivedPhones, archiveSmsChat, unarchiveSmsChat } from '../utils/smsChatArchiveStorage';
 import { getDialCountriesForUser } from '../utils/callingCountries';
+import { fetchProjectedBalance } from '../services/projectedCreditService';
 
 const ClockIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -240,9 +241,7 @@ function Recents() {
     remainingSMS: usage?.smsRemaining ?? subscription?.smsRemaining ?? 0,
     creditsRemaining:
       usage?.creditsRemaining ??
-      usage?.minutesRemaining ??
       subscription?.creditsRemaining ??
-      subscription?.minutesRemaining ??
       0,
     planName: subscription?.planName || 'No Plan',
   };
@@ -251,6 +250,7 @@ function Recents() {
   /** True while outbound makeCall is in flight (before isInCall may update). */
   const [calling, setCalling] = useState(false);
   const isCallBusy = calling || isInCall;
+  const [projectedAvailableCredits, setProjectedAvailableCredits] = useState(null);
 
   // Mobile navigation state
   const [mobileTab, setMobileTab] = useState('chats'); // 'chats', 'recents', 'dialer'
@@ -278,6 +278,33 @@ function Recents() {
     }
     callIdleRef.current = idle;
   }, [callContext?.callState, callContext?.CALL_STATES?.IDLE]);
+
+  useEffect(() => {
+    if (!canUseService) {
+      setProjectedAvailableCredits(null);
+      return;
+    }
+    let cancelled = false;
+    const refreshProjectedCredits = async () => {
+      try {
+        const res = await fetchProjectedBalance();
+        if (cancelled) return;
+        if (res?.ok && Number.isFinite(Number(res.data?.projectedAvailableCredits))) {
+          setProjectedAvailableCredits(Number(res.data.projectedAvailableCredits));
+        } else {
+          setProjectedAvailableCredits(null);
+        }
+      } catch {
+        if (!cancelled) setProjectedAvailableCredits(null);
+      }
+    };
+    refreshProjectedCredits();
+    const id = setInterval(refreshProjectedCredits, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [canUseService]);
   
   // New chat modal state
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -1089,6 +1116,10 @@ function Recents() {
       
     if (!canUseService) {
       alert('No subscription found. Subscribe to make calls.');
+      return;
+    }
+    if (Number.isFinite(Number(projectedAvailableCredits)) && Number(projectedAvailableCredits) <= 0) {
+      alert('Insufficient telecom credits. Please top up before dialing.');
       return;
     }
     if (userNumbers.length === 0) {

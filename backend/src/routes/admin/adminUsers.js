@@ -10,6 +10,7 @@ import TelnyxCost from "../../models/TelnyxCost.js";
 import CustomPackage from "../../models/CustomPackage.js";
 import CreditLedger from "../../models/CreditLedger.js";
 import { getActiveAddonAmounts } from "../../services/subscriptionAddonCreditService.js";
+import { getLatestSubscriptionCreditSnapshot } from "../../services/creditLedgerService.js";
 import {
   clearAdminUsersCache,
   readAdminUsersCache,
@@ -136,6 +137,11 @@ function buildSubscriptionFromLookup(subscription, customPackage) {
             planType: subscription.planType || null,
             displayUnlimited: Boolean(subscription.displayUnlimited),
             isUnlimited: Boolean(subscription.displayUnlimited),
+            telecomCredits: Number(subscription.telecomCredits || 0),
+            remainingCredits: Number(subscription.remainingCredits || 0),
+            reservedCredits: Number(subscription.reservedCredits || 0),
+            totalCreditsUsed: Number(subscription.totalCreditsUsed || 0),
+            lifetimeCreditsPurchased: Number(subscription.lifetimeCreditsPurchased || 0),
             minutesRemaining: Math.max(
               0,
               Number(subscription.limits?.minutesTotal || 0) -
@@ -187,6 +193,11 @@ async function loadEffectiveSubscriptionForAdmin(userId) {
             planType: subscriptionDoc.planType || null,
             displayUnlimited: Boolean(subscriptionDoc.displayUnlimited),
             isUnlimited: Boolean(subscriptionDoc.displayUnlimited),
+            telecomCredits: Number(subscriptionDoc.telecomCredits || 0),
+            remainingCredits: Number(subscriptionDoc.remainingCredits || 0),
+            reservedCredits: Number(subscriptionDoc.reservedCredits || 0),
+            totalCreditsUsed: Number(subscriptionDoc.totalCreditsUsed || 0),
+            lifetimeCreditsPurchased: Number(subscriptionDoc.lifetimeCreditsPurchased || 0),
             minutesRemaining: Math.max(
               0,
               Number(subscriptionDoc.limits?.minutesTotal || 0) -
@@ -279,6 +290,11 @@ router.get(
                   planKey: 1,
                   planType: 1,
                   displayUnlimited: 1,
+                  telecomCredits: 1,
+                  remainingCredits: 1,
+                  reservedCredits: 1,
+                  totalCreditsUsed: 1,
+                  lifetimeCreditsPurchased: 1,
                   limits: 1,
                   usage: 1,
                   periodStart: 1,
@@ -382,10 +398,10 @@ router.get(
             smsUsed: Number(user.subscription?.usage?.smsUsed || 0),
           },
           credits: {
-            remainingCredits: Number(user.remainingCredits || 0),
-            totalCreditsUsed: Number(user.totalCreditsUsed || 0),
-            reservedCredits: Number(user.reservedCredits || 0),
-            lifetimeCreditsPurchased: Number(user.lifetimeCreditsPurchased || 0),
+            remainingCredits: Number(user.subscription?.remainingCredits || 0),
+            totalCreditsUsed: Number(user.subscription?.totalCreditsUsed || 0),
+            reservedCredits: Number(user.subscription?.reservedCredits || 0),
+            lifetimeCreditsPurchased: Number(user.subscription?.lifetimeCreditsPurchased || 0),
           },
           subscriptionStatus: effectiveSubscription?.status || "none",
           subscriptionPlan: effectiveSubscription?.planName || "none",
@@ -410,6 +426,61 @@ router.get(
     } catch (err) {
       console.error("Get users error:", err);
       res.status(500).json({ error: "Failed to fetch users" });
+    }
+  }
+);
+
+router.get(
+  "/:id/telecom-credits",
+  authenticateUser,
+  async (req, res) => {
+    try {
+      const user = await User.findById(req.params.id).select("_id email");
+      if (!user) {
+        return res.status(404).json({ success: false, error: "User not found" });
+      }
+      const credit = await getLatestSubscriptionCreditSnapshot(user._id);
+      if (!credit) {
+        return res.status(404).json({
+          success: false,
+          error: "Subscription credit wallet not found",
+          code: "SUBSCRIPTION_CREDIT_WALLET_MISSING",
+        });
+      }
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const [spentTodayAgg, spentTotalAgg, outboundCallCount] = await Promise.all([
+        CreditLedger.aggregate([
+          {
+            $match: {
+              user: user._id,
+              amount: { $lt: 0 },
+              createdAt: { $gte: startOfDay },
+            },
+          },
+          { $group: { _id: null, spent: { $sum: { $abs: "$amount" } } } },
+        ]),
+        CreditLedger.aggregate([
+          { $match: { user: user._id, amount: { $lt: 0 } } },
+          { $group: { _id: null, spent: { $sum: { $abs: "$amount" } } } },
+        ]),
+        Call.countDocuments({ user: user._id, direction: "outbound" }),
+      ]);
+      return res.json({
+        success: true,
+        userId: String(user._id),
+        email: user.email,
+        authority: "subscription",
+        todaySpentCredits: Number(spentTodayAgg?.[0]?.spent || 0),
+        totalSpentCredits: Number(spentTotalAgg?.[0]?.spent || 0),
+        outboundCallCount,
+        ...credit,
+      });
+    } catch (err) {
+      console.error("Admin telecom credit snapshot error:", err);
+      return res
+        .status(500)
+        .json({ success: false, error: "Failed to load telecom credit snapshot" });
     }
   }
 );

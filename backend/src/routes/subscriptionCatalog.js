@@ -32,6 +32,7 @@ router.get("/plans", async (req, res) => {
         stripeProductId: plan.stripeProductId,
         stripePriceId: plan.stripePriceId,
         smsCampaignPlan: Boolean(plan.smsCampaignPlan),
+        comingSoon: Boolean(plan.comingSoon),
       })),
     });
   } catch (err) {

@@ -69,7 +69,11 @@ coverage/
 .temp/
 .npm/
 
-# Production
-.vercel
-.netlify
+# Service account / credential JSON (never commit)
+backend/otodial-*.json
+**/service-account*.json
+
+# Generated audit artifacts (reproducible from npm scripts)
+backend/scripts/billing-matrix-report.json
+backend/scripts/production-readiness-report.json
 

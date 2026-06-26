@@ -102,6 +102,16 @@ export function buildSubscriptionPlanSnapshot(plan = {}) {
 
 export function applyPlanSnapshotToSubscription(subscription, plan = {}) {
   const snapshot = buildSubscriptionPlanSnapshot(plan);
+  const initialCredits = Math.max(
+    0,
+    Number(
+      plan.monthlyCreditsLimit ??
+        plan.limits?.creditsTotal ??
+        plan.limits?.minutesTotal ??
+        snapshot.limits.creditsTotal ??
+        0
+    )
+  );
 
   subscription.planType = snapshot.planType;
   subscription.displayUnlimited = snapshot.displayUnlimited;
@@ -121,6 +131,21 @@ export function applyPlanSnapshotToSubscription(subscription, plan = {}) {
   subscription.dailySmsLimit = snapshot.dailySmsLimit;
   subscription.dailyMinutesLimit = snapshot.dailyMinutesLimit;
   subscription.dailyCreditsLimit = snapshot.dailyCreditsLimit;
+  if (!Number.isFinite(Number(subscription.telecomCredits)) || Number(subscription.telecomCredits) <= 0) {
+    subscription.telecomCredits = initialCredits;
+  }
+  if (!Number.isFinite(Number(subscription.remainingCredits)) || Number(subscription.remainingCredits) <= 0) {
+    subscription.remainingCredits = initialCredits;
+  }
+  if (!Number.isFinite(Number(subscription.reservedCredits))) {
+    subscription.reservedCredits = 0;
+  }
+  if (!Number.isFinite(Number(subscription.totalCreditsUsed))) {
+    subscription.totalCreditsUsed = 0;
+  }
+  if (!Number.isFinite(Number(subscription.lifetimeCreditsPurchased))) {
+    subscription.lifetimeCreditsPurchased = 0;
+  }
 
   subscription.voiceCallsEnabled = plan.voiceCallsEnabled !== false;
   subscription.smsCampaignPlan = Boolean(plan.smsCampaignPlan);

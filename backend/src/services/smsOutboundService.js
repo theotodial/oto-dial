@@ -29,6 +29,9 @@ import {
 import { enqueueOutboundSms } from "./smsQueueService.js";
 import { getUserCreditSnapshot } from "./creditLedgerService.js";
 import { CREDIT_RULES } from "../config/creditConfig.js";
+import { getLatestSubscriptionCreditSnapshot } from "./creditLedgerService.js";
+import { calculateSmsCost } from "./smsBillingService.js";
+import { rateSms, isRatingV1Enabled } from "./telecomRatingEngine.js";
 
 /** Telnyx accepted send (carrier delivery tracked separately via webhooks). */
 function isOutboundSendCompleteForIdempotency(row) {
@@ -395,7 +398,11 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
       };
     }
 
-    if (!unlimitedPlan && subscription.smsRemaining <= 0) {
+    const v1Rating = isRatingV1Enabled();
+
+    // Legacy SMS-allowance gate only applies when v1 rating is disabled. Under v1, telecom
+    // credits are the single authority for SMS spend (no separate SMS balance).
+    if (!v1Rating && !unlimitedPlan && subscription.smsRemaining <= 0) {
       return {
         ok: false,
         error:
@@ -405,10 +412,23 @@ export async function sendOutboundSms({ userId, to, text, campaignId = null, ide
       };
     }
 
-    const creditSnapshot = await getUserCreditSnapshot(userId);
+    // Credit sufficiency: under v1, require credits for the actual computed segments
+    // (15/segment GSM-7, 20/segment Unicode). Legacy uses the flat per-SMS charge.
+    let requiredSmsCredits = CREDIT_RULES.smsOutboundCharge;
+    if (v1Rating) {
+      try {
+        const { smsParts: segs, encoding: enc } = calculateSmsCost(text);
+        requiredSmsCredits = rateSms({ encoding: enc, segments: segs });
+      } catch {
+        requiredSmsCredits = rateSms({ encoding: "GSM", segments: 1 });
+      }
+    }
+    const creditSnapshot =
+      (await getLatestSubscriptionCreditSnapshot(userId)) ||
+      (await getUserCreditSnapshot(userId));
     if (
       !creditSnapshot ||
-      Number(creditSnapshot.remainingCredits || 0) < CREDIT_RULES.smsOutboundCharge
+      Number(creditSnapshot.remainingCredits || 0) < requiredSmsCredits
     ) {
       return {
         ok: false,

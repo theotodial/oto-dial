@@ -32,6 +32,10 @@ import { runProductionReadinessChecks } from "./src/services/productionReadiness
 import { telecomOperationalLog } from "./src/utils/telecomOperationalLog.js";
 import { sendEmailSafe, logResendConfigAtStartup } from "./src/services/email.service.js";
 import { configureAdminLiveEvents } from "./src/services/adminLiveEventsService.js";
+import { configureAnalyticsLive } from "./src/services/analytics/analyticsLiveService.js";
+import { startRollupWorker } from "./src/services/analytics/rollupService.js";
+import { startGa4MpWorker } from "./src/services/analytics/gaMeasurementProtocolService.js";
+import { startGa4ReconciliationWorker } from "./src/services/analytics/ga4ReconciliationWorker.js";
 import { registerUserSmsNamespace } from "./src/events/smsEvents.js";
 import {
   registerPerformanceTelemetryIo,
@@ -127,6 +131,7 @@ import usageStatisticsRoutes from "./src/routes/usageStatistics.js";
 import supportRoutes from "./src/routes/supportRoutes.js";
 import blogRoutes from "./src/routes/blogRoutes.js";
 import analyticsRoutes from "./src/routes/analyticsRoutes.js";
+import analyticsV2Routes from "./src/routes/analytics/analyticsV2Routes.js";
 import sitePublicRoutes from "./src/routes/sitePublic.js";
 import appBootstrapRoutes from "./src/routes/appBootstrap.js";
 import campaignRoutes from "./src/routes/campaignRoutes.js";
@@ -143,6 +148,10 @@ const io = new SocketIOServer(server, {
   cors: { origin: true, credentials: true },
 });
 configureAdminLiveEvents(io);
+configureAnalyticsLive(io);
+startRollupWorker();
+startGa4MpWorker();
+startGa4ReconciliationWorker();
 registerUserSmsNamespace(io);
 registerPerformanceTelemetryIo(io);
 startPerformanceTelemetryService();
@@ -504,7 +513,8 @@ app.use("/api/webrtc", authenticateUser, loadSubscription, requireVoiceEnabled, 
 app.use("/api/usage", authenticateUser, loadSubscription, usageStatisticsRoutes);
 app.use("/api/support", supportRoutes); // Support routes (authenticateUser is in the route file)
 app.use("/api/blog", blogRoutes); // Blog routes (public and admin routes inside)
-app.use("/api/analytics", analyticsRoutes); // Analytics routes (public and admin routes inside)
+app.use("/api/analytics", analyticsV2Routes); // Enterprise analytics: /collect, live, overview, sections, exports
+app.use("/api/analytics", analyticsRoutes); // Legacy analytics routes (kept for backward compatibility)
 app.use("/api/affiliate", affiliateRoutes);
 // Admin routes: Only require authentication, NOT subscription (admins don't need subscriptions)
 app.use("/api/admin", authenticateUser, requireAdmin, adminRoutes);
