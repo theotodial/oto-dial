@@ -4,7 +4,6 @@ import Subscription from "../../models/Subscription.js";
 import Call from "../../models/Call.js";
 import SMS from "../../models/SMS.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
-import TelnyxCost from "../../models/TelnyxCost.js";
 import CreditLedger from "../../models/CreditLedger.js";
 import User from "../../models/User.js";
 import StripeInvoice from "../../models/StripeInvoice.js";
@@ -15,6 +14,11 @@ import {
   syncPaidInvoicesFromStripe,
   getStripeRevenueSummaryFromMongo
 } from "../../services/stripeInvoiceSyncService.js";
+import { getTelnyxBillingSummary, calculateNumberCostsForPeriod, ACTIVE_PHONE_NUMBER_QUERY } from "../../services/telnyxBillingReportService.js";
+import {
+  getCallTelnyxCost,
+  getSmsTelnyxCost,
+} from "../../services/telnyxWebhookCostAggregationService.js";
 
 const router = express.Router();
 
@@ -91,7 +95,7 @@ function getDateRange(filter) {
 router.get("/", requireAdmin, async (req, res) => {
   const wantsStripeSync =
     req.query.stripeSync === "1" || req.query.liveSync === "1";
-  const timeoutMs = wantsStripeSync ? 120000 : 90000;
+  const timeoutMs = 180000;
 
   let settled = false;
   const finish = (status, body) => {
@@ -125,68 +129,23 @@ router.get("/", requireAdmin, async (req, res) => {
     
     const dateFilter = { createdAt: { $gte: effectiveStartDate, $lte: effectiveEndDate } };
 
-    // ================================
-    // 1. TELNYX COSTS - FROM IMMUTABLE LEDGER
-    // All costs come from TelnyxCost collection (admin-defined pricing)
-    // ================================
-    
-    // Build event timestamp filter for TelnyxCost - use effective dates
-    const costDateFilter = { 
-      eventTimestamp: { $gte: effectiveStartDate, $lte: effectiveEndDate } 
-    };
-
-    const callCostMatch = { resourceType: "call", ...costDateFilter };
-    const smsCostMatch = { resourceType: "sms", ...costDateFilter };
-    const numberCostMatch = { resourceType: "number", ...costDateFilter };
+    const wantsTelnyxSync = req.query.telnyxSync !== "0";
 
     const [
-      callCosts,
-      smsCosts,
-      numberCosts,
       mongoRevenueSummary,
-      creditLedgerAgg
+      creditLedgerAgg,
+      allCalls,
+      allSms,
+      allNumbers,
     ] = await Promise.all([
-      TelnyxCost.aggregate([
-        { $match: callCostMatch },
-        {
-          $group: {
-            _id: "$direction",
-            totalCost: { $sum: "$totalCostUsd" },
-            totalSeconds: { $sum: "$billedSeconds" },
-            totalRingingSeconds: { $sum: "$ringingSeconds" },
-            totalAnsweredSeconds: { $sum: "$answeredSeconds" },
-            count: { $sum: 1 }
-          }
-        }
-      ]),
-      TelnyxCost.aggregate([
-        { $match: smsCostMatch },
-        {
-          $group: {
-            _id: "$direction",
-            totalCost: { $sum: "$totalCostUsd" },
-            count: { $sum: 1 }
-          }
-        }
-      ]),
-      TelnyxCost.aggregate([
-        { $match: numberCostMatch },
-        {
-          $group: {
-            _id: null,
-            totalCost: { $sum: "$totalCostUsd" },
-            count: { $sum: 1 }
-          }
-        }
-      ]),
       getStripeRevenueSummaryFromMongo({
         startDate: effectiveStartDate,
-        endDate: effectiveEndDate
+        endDate: effectiveEndDate,
       }).catch(() => ({
         grossRevenue: 0,
         invoiceCount: 0,
         subscriptionRevenue: 0,
-        addonRevenue: 0
+        addonRevenue: 0,
       })),
       CreditLedger.aggregate([
         {
@@ -202,7 +161,160 @@ router.get("/", requireAdmin, async (req, res) => {
           },
         },
       ]),
+      Call.find(dateFilter).sort({ createdAt: -1 }).limit(5000).lean(),
+      SMS.find(dateFilter).sort({ createdAt: -1 }).limit(5000).lean(),
+      PhoneNumber.find(ACTIVE_PHONE_NUMBER_QUERY).limit(1000).lean(),
     ]);
+
+    const telnyxBilling = await getTelnyxBillingSummary({
+      startDate: effectiveStartDate,
+      endDate: effectiveEndDate,
+      activeNumbers: allNumbers,
+      mongoCalls: allCalls,
+      mongoSms: allSms,
+      bypassCache: !wantsTelnyxSync,
+    });
+
+    // ================================
+    // 1. TELNYX COSTS — Telnyx Detail Records + Usage Reports API
+    // ================================
+    let telnyxCostSource = telnyxBilling?.mongoSupplementUsed
+      ? "telnyx_api+mongo"
+      : telnyxBilling?.source || "inventory";
+    let telnyxSync = {
+      skipped: false,
+      source: telnyxBilling?.source || "unavailable",
+      recordTypeStats: telnyxBilling?.recordTypeStats || {},
+      usageStats: telnyxBilling?.usageStats || {},
+      fetchedAt: telnyxBilling?.fetchedAt || null,
+      error: telnyxBilling?.error || null,
+      mongoSupplementUsed: Boolean(telnyxBilling?.mongoSupplementUsed),
+    };
+
+    let telnyxCallCost = 0;
+    let telnyxCallCostInbound = 0;
+    let telnyxCallCostOutbound = 0;
+    let telnyxSmsCost = 0;
+    let telnyxSmsCostInbound = 0;
+    let telnyxSmsCostOutbound = 0;
+    let totalSmsCarrierFees = 0;
+    let totalNumberCost = 0;
+    let totalNumberMonthlyCost = 0;
+    let totalNumberOneTimeCost = 0;
+    let totalNumberExtraFees = 0;
+    let activeNumbersCount = allNumbers.length;
+    let totalBilledSeconds = 0;
+    let totalRingingSeconds = 0;
+    let totalAnsweredSeconds = 0;
+    let pendingCallCosts = 0;
+    let pendingSmsCosts = 0;
+    let totalSmsCount = allSms.length;
+
+    const numberCosts = calculateNumberCostsForPeriod(
+      allNumbers,
+      effectiveStartDate,
+      effectiveEndDate
+    );
+
+    if (telnyxBilling?.success) {
+      const calls = telnyxBilling.calls || {};
+      const sms = telnyxBilling.sms || {};
+      const numbers = telnyxBilling.numbers || {};
+
+      telnyxCallCost = Number(calls.totalCost || 0);
+      telnyxCallCostInbound = Number(calls.inboundCost || 0);
+      telnyxCallCostOutbound = Number(calls.outboundCost || 0);
+      totalBilledSeconds = Number(calls.totalBilledSeconds || 0);
+
+      telnyxSmsCost = Number(sms.totalCost || 0);
+      telnyxSmsCostInbound = Number(sms.inboundCost || 0);
+      telnyxSmsCostOutbound = Number(sms.outboundCost || 0);
+      totalSmsCarrierFees = Number(sms.carrierFees || 0);
+      totalSmsCount = Number(sms.count || allSms.length);
+
+      totalNumberCost = Number(numbers.totalCost || 0);
+      totalNumberMonthlyCost = Number(numbers.monthlyCost || 0);
+      totalNumberOneTimeCost = Number(numbers.oneTimeCost || 0);
+      totalNumberExtraFees = Number(numbers.extraFees || 0);
+      activeNumbersCount = Number(numbers.activeCount || allNumbers.length);
+    }
+
+    // Inventory numbers are always $2/mo prorated to the selected window (incl. hour filters).
+    totalNumberCost = Number(numberCosts.totalCost || totalNumberCost);
+    totalNumberMonthlyCost = Number(numberCosts.monthlyCost || totalNumberMonthlyCost);
+    totalNumberOneTimeCost = Number(numberCosts.oneTimeCost || totalNumberOneTimeCost);
+    totalNumberExtraFees = Number(numberCosts.extraFees || totalNumberExtraFees);
+    activeNumbersCount = Number(numberCosts.activeCount || activeNumbersCount);
+
+    for (const call of allCalls) {
+      const cost = getCallTelnyxCost(call);
+      const billedSecs =
+        Number(call.billedSeconds) ||
+        Number(call.durationSeconds) ||
+        Number(call.duration) ||
+        0;
+      if (billedSecs > 0 && cost <= 0 && !call.costSyncedAt) pendingCallCosts += 1;
+    }
+
+    for (const sms of allSms) {
+      const cost = getSmsTelnyxCost(sms);
+      if (cost <= 0 && !sms.costSyncedAt && sms.status !== "failed") pendingSmsCosts += 1;
+    }
+
+    // Usage timing from local call records (ringing/answered breakdown in UI)
+    if (totalRingingSeconds === 0 && totalAnsweredSeconds === 0) {
+      for (const call of allCalls) {
+        const billedSecs =
+          Number(call.billedSeconds) ||
+          Number(call.durationSeconds) ||
+          Number(call.duration) ||
+          0;
+        totalRingingSeconds += Number(call.ringingDuration || 0);
+        totalAnsweredSeconds +=
+          Number(call.answeredDuration || 0) ||
+          Math.max(0, billedSecs - Number(call.ringingDuration || 0));
+      }
+    }
+
+    if (telnyxBilling?.success && totalBilledSeconds === 0) {
+      for (const call of allCalls) {
+        totalBilledSeconds +=
+          Number(call.billedSeconds) ||
+          Number(call.durationSeconds) ||
+          Number(call.duration) ||
+          0;
+      }
+    }
+
+    let totalCallMinutes = totalBilledSeconds / 60;
+    let avgCostPerSecond = 0;
+    let avgCostPerMinute = 0;
+    if (totalBilledSeconds > 0) {
+      avgCostPerSecond = telnyxCallCost / totalBilledSeconds;
+      avgCostPerMinute = avgCostPerSecond * 60;
+    }
+
+    const ringingSecondsCost =
+      totalBilledSeconds > 0
+        ? (totalRingingSeconds / totalBilledSeconds) * telnyxCallCost
+        : 0;
+    const answeredSecondsCost =
+      totalBilledSeconds > 0
+        ? (totalAnsweredSeconds / totalBilledSeconds) * telnyxCallCost
+        : 0;
+
+    let avgCostPerSms = totalSmsCount > 0 ? telnyxSmsCost / totalSmsCount : 0;
+
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+    const periodMs = startDate ? endDate.getTime() - startDate.getTime() : 365 * MS_PER_DAY;
+    const daysInPeriod = startDate ? periodMs / MS_PER_DAY : 365;
+    const hoursInPeriod = periodMs / (60 * 60 * 1000);
+
+    if (totalNumberMonthlyCost <= 0 && totalNumberCost > 0 && daysInPeriod > 0) {
+      totalNumberMonthlyCost = (totalNumberCost * 30) / daysInPeriod;
+    }
+
+    const totalTelnyxCost = telnyxCallCost + telnyxSmsCost + totalNumberCost;
 
     let grossRevenue = Number(mongoRevenueSummary.grossRevenue) || 0;
     const ledgerByType = Object.fromEntries(
@@ -227,236 +339,6 @@ router.get("/", requireAdmin, async (req, res) => {
     let stripeInvoiceCount = Number(mongoRevenueSummary.invoiceCount) || 0;
     let subscriptionRevenue = Number(mongoRevenueSummary.subscriptionRevenue) || 0;
     let addonRevenue = Number(mongoRevenueSummary.addonRevenue) || 0;
-
-    let telnyxCallCost = 0;
-    let telnyxCallCostInbound = 0;
-    let telnyxCallCostOutbound = 0;
-    let totalRingingSeconds = 0;
-    let totalAnsweredSeconds = 0;
-    let totalBilledSeconds = 0;
-    let totalCallMinutes = 0;
-    let avgCostPerSecond = 0;
-    let avgCostPerMinute = 0;
-    let pendingCallCosts = 0;
-
-    callCosts.forEach(cost => {
-      telnyxCallCost += cost.totalCost;
-      totalBilledSeconds += cost.totalSeconds;
-      totalRingingSeconds += cost.totalRingingSeconds;
-      totalAnsweredSeconds += cost.totalAnsweredSeconds;
-      
-      if (cost._id === "inbound") {
-        telnyxCallCostInbound += cost.totalCost;
-      } else if (cost._id === "outbound") {
-        telnyxCallCostOutbound += cost.totalCost;
-      }
-    });
-
-    const [callCostResourceIds, smsCostResourceIds, allCalls, allSms, allNumbers] = await Promise.all([
-      TelnyxCost.distinct("resourceId", { resourceType: "call", ...costDateFilter }),
-      TelnyxCost.distinct("resourceId", { resourceType: "sms", ...costDateFilter }),
-      Call.find(dateFilter).sort({ createdAt: -1 }).limit(5000).lean(),
-      SMS.find(dateFilter).sort({ createdAt: -1 }).limit(5000).lean(),
-      PhoneNumber.find({ status: "active" }).limit(1000).lean()
-    ]);
-
-    const callCostIdSet = new Set(callCostResourceIds.map((id) => String(id)));
-    const smsCostIdSet = new Set(smsCostResourceIds.map((id) => String(id)));
-    pendingCallCosts = allCalls.filter((c) => !callCostIdSet.has(String(c._id))).length;
-
-    let telnyxSmsCost = 0;
-    let telnyxSmsCostInbound = 0;
-    let telnyxSmsCostOutbound = 0;
-    let totalSmsCarrierFees = 0;
-    let avgCostPerSms = 0;
-    let pendingSmsCosts = 0;
-
-    smsCosts.forEach(cost => {
-      telnyxSmsCost += cost.totalCost;
-      if (cost._id === "inbound") {
-        telnyxSmsCostInbound += cost.totalCost;
-      } else if (cost._id === "outbound") {
-        telnyxSmsCostOutbound += cost.totalCost;
-      }
-    });
-
-    pendingSmsCosts = allSms.filter((s) => !smsCostIdSet.has(String(s._id))).length;
-
-    totalCallMinutes = totalBilledSeconds / 60;
-    if (totalBilledSeconds > 0) {
-      avgCostPerSecond = telnyxCallCost / totalBilledSeconds;
-      avgCostPerMinute = avgCostPerSecond * 60;
-    }
-
-    // Calculate ringing and answered costs
-    const ringingSecondsCost = callCosts.reduce((sum, c) => 
-      sum + (c.totalRingingSeconds * (c.totalCost / (c.totalSeconds || 1))), 0
-    );
-    const answeredSecondsCost = callCosts.reduce((sum, c) => 
-      sum + (c.totalAnsweredSeconds * (c.totalCost / (c.totalSeconds || 1))), 0
-    );
-
-    // FALLBACK: If TelnyxCost is empty, calculate from Call records directly
-    if (telnyxCallCost === 0 && allCalls.length > 0) {
-      const callCostsFromRecords = allCalls.reduce((acc, call) => {
-        const callCost = call.cost || 0;
-        const billedSecs = call.billedSeconds || call.duration || 0;
-        const ringingSecs = call.ringingDuration || 0;
-        const answeredSecs = call.answeredDuration || (billedSecs - ringingSecs);
-        
-        acc.totalCost += callCost;
-        acc.totalBilledSeconds += billedSecs;
-        acc.totalRingingSeconds += ringingSecs;
-        acc.totalAnsweredSeconds += answeredSecs;
-        
-        if (call.direction === "inbound") {
-          acc.inboundCost += callCost;
-        } else if (call.direction === "outbound") {
-          acc.outboundCost += callCost;
-        }
-        
-        return acc;
-      }, { totalCost: 0, inboundCost: 0, outboundCost: 0, totalBilledSeconds: 0, totalRingingSeconds: 0, totalAnsweredSeconds: 0 });
-      
-      telnyxCallCost = callCostsFromRecords.totalCost;
-      telnyxCallCostInbound = callCostsFromRecords.inboundCost;
-      telnyxCallCostOutbound = callCostsFromRecords.outboundCost;
-      totalBilledSeconds = callCostsFromRecords.totalBilledSeconds;
-      totalRingingSeconds = callCostsFromRecords.totalRingingSeconds;
-      totalAnsweredSeconds = callCostsFromRecords.totalAnsweredSeconds;
-      
-      totalCallMinutes = totalBilledSeconds / 60;
-      if (totalBilledSeconds > 0) {
-        avgCostPerSecond = telnyxCallCost / totalBilledSeconds;
-        avgCostPerMinute = avgCostPerSecond * 60;
-      }
-    }
-
-    const totalSmsCount = smsCosts.reduce((sum, c) => sum + c.count, 0);
-    if (totalSmsCount > 0) {
-      avgCostPerSms = telnyxSmsCost / totalSmsCount;
-    }
-
-    // FALLBACK: If TelnyxCost is empty, calculate from SMS records directly
-    // Default SMS pricing: Outbound $0.0075 per SMS, Inbound $0.0025 per SMS (typical Telnyx rates)
-    if (telnyxSmsCost === 0 && allSms.length > 0) {
-      const DEFAULT_OUTBOUND_SMS_COST = 0.0075; // $0.0075 per outbound SMS
-      const DEFAULT_INBOUND_SMS_COST = 0.0025; // $0.0025 per inbound SMS
-      
-      const smsCostsFromRecords = allSms.reduce((acc, sms) => {
-        // Use stored cost if available, otherwise use default pricing
-        let smsCost = sms.cost;
-        const carrierFee = sms.carrierFees || 0;
-        
-        // If cost is not set, use default pricing based on direction
-        if (!smsCost || smsCost === 0) {
-          if (sms.direction === "outbound") {
-            smsCost = DEFAULT_OUTBOUND_SMS_COST;
-          } else if (sms.direction === "inbound") {
-            smsCost = DEFAULT_INBOUND_SMS_COST;
-          } else {
-            smsCost = DEFAULT_OUTBOUND_SMS_COST; // Default to outbound pricing
-          }
-        }
-        
-        const totalSmsCost = smsCost + carrierFee;
-        
-        acc.totalCost += totalSmsCost;
-        acc.totalCarrierFees += carrierFee;
-        acc.count += 1;
-        
-        if (sms.direction === "inbound") {
-          acc.inboundCost += totalSmsCost;
-        } else if (sms.direction === "outbound") {
-          acc.outboundCost += totalSmsCost;
-        }
-        
-        return acc;
-      }, { totalCost: 0, inboundCost: 0, outboundCost: 0, totalCarrierFees: 0, count: 0 });
-      
-      telnyxSmsCost = parseFloat(smsCostsFromRecords.totalCost.toFixed(4));
-      telnyxSmsCostInbound = parseFloat(smsCostsFromRecords.inboundCost.toFixed(4));
-      telnyxSmsCostOutbound = parseFloat(smsCostsFromRecords.outboundCost.toFixed(4));
-      totalSmsCarrierFees = parseFloat(smsCostsFromRecords.totalCarrierFees.toFixed(4));
-      
-      if (smsCostsFromRecords.count > 0) {
-        avgCostPerSms = parseFloat((telnyxSmsCost / smsCostsFromRecords.count).toFixed(4));
-      }
-      
-      // Update pending costs count since we've now calculated costs
-      pendingSmsCosts = 0;
-    }
-
-    // PHONE NUMBER COSTS (numberCosts + allNumbers loaded in parallel above)
-    let totalNumberCost = numberCosts.length > 0 ? numberCosts[0].totalCost : 0;
-    const activeNumbersCount = allNumbers.length;
-
-    // Calculate monthly equivalent (for display)
-    const daysInPeriod = startDate ? Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) : 365;
-    const monthlyCostForPeriod = totalNumberCost; // Already accrued daily
-    let totalNumberMonthlyCost = (totalNumberCost * 30) / daysInPeriod; // Estimate monthly
-    let totalNumberOneTimeCost = 0; // One-time costs handled separately if needed
-    let totalNumberExtraFees = 0;
-
-    // FALLBACK: If TelnyxCost is empty, calculate from PhoneNumber records directly
-    // Phone number pricing: $1/month base + $1/month Telnyx recurring fee = $2/month total
-    if (totalNumberCost === 0 && allNumbers.length > 0) {
-      const BASE_MONTHLY_COST = 1.00; // $1 per month per number
-      const TELNYX_RECURRING_FEE = 1.00; // $1 per month Telnyx recurring fee
-      const TOTAL_MONTHLY_COST_PER_NUMBER = BASE_MONTHLY_COST + TELNYX_RECURRING_FEE; // $2/month total
-      const DAILY_COST_PER_NUMBER = TOTAL_MONTHLY_COST_PER_NUMBER / 30; // $0.0667 per day per number
-      
-      const periodStart = startDate || new Date(0); // If no start date, use epoch (all time)
-      const periodEnd = endDate || new Date();
-      
-      const numberCostsFromRecords = allNumbers.reduce((acc, number) => {
-        // Use stored cost if available, otherwise use default pricing
-        const monthlyCost = number.monthlyCost || TOTAL_MONTHLY_COST_PER_NUMBER;
-        const oneTimeFees = number.oneTimeFees || 0;
-        const extraFees = number.extraFees || 0;
-        
-        // Calculate how many days this number was active during the period
-        const numberCreatedAt = number.createdAt ? new Date(number.createdAt) : new Date();
-        
-        // Number was active from its creation date (or period start, whichever is later) to period end
-        const numberActiveStart = numberCreatedAt > periodStart ? numberCreatedAt : periodStart;
-        const numberActiveEnd = periodEnd;
-        
-        // Calculate actual days this number was active in the period (use floor for accuracy)
-        const millisecondsActive = numberActiveEnd - numberActiveStart;
-        const actualDaysActive = Math.max(0, Math.floor(millisecondsActive / (1000 * 60 * 60 * 24)));
-        
-        // For very short periods (hours), calculate fractional days
-        const hoursActive = millisecondsActive / (1000 * 60 * 60);
-        const fractionalDays = hoursActive / 24;
-        
-        // Calculate cost for the actual time this number was active
-        // Use fractional days for accuracy (especially for short periods)
-        const periodCost = (monthlyCost / 30) * fractionalDays;
-        
-        acc.totalCost += periodCost + oneTimeFees + extraFees;
-        acc.totalOneTime += oneTimeFees;
-        acc.totalExtraFees += extraFees;
-        acc.totalMonthly += monthlyCost;
-        acc.totalDays += actualDaysActive;
-        
-        return acc;
-      }, { totalCost: 0, totalOneTime: 0, totalExtraFees: 0, totalMonthly: 0, totalDays: 0 });
-      
-      totalNumberCost = parseFloat(numberCostsFromRecords.totalCost.toFixed(4));
-      totalNumberOneTimeCost = parseFloat(numberCostsFromRecords.totalOneTime.toFixed(4));
-      totalNumberExtraFees = parseFloat(numberCostsFromRecords.totalExtraFees.toFixed(4));
-      
-      // Calculate monthly equivalent: if period is 30 days, show actual monthly cost
-      // Otherwise, prorate based on the period
-      if (daysInPeriod > 0) {
-        totalNumberMonthlyCost = parseFloat(((totalNumberCost * 30) / daysInPeriod).toFixed(2));
-      } else {
-        totalNumberMonthlyCost = parseFloat(numberCostsFromRecords.totalMonthly.toFixed(2));
-      }
-    }
-
-    const totalTelnyxCost = telnyxCallCost + telnyxSmsCost + totalNumberCost;
 
     // ================================
     // 2. STRIPE COSTS - FULL BREAKDOWN (revenue summary from Mongo loaded above)
@@ -618,15 +500,12 @@ router.get("/", requireAdmin, async (req, res) => {
     for (const c of allCalls) {
       const key = c?.user ? String(c.user) : "";
       if (!key) continue;
-      userCosts.set(key, Number(userCosts.get(key) || 0) + Number(c.cost || 0));
+      userCosts.set(key, Number(userCosts.get(key) || 0) + getCallTelnyxCost(c));
     }
     for (const s of allSms) {
       const key = s?.user ? String(s.user) : "";
       if (!key) continue;
-      userCosts.set(
-        key,
-        Number(userCosts.get(key) || 0) + Number(s.cost || 0) + Number(s.carrierFees || 0)
-      );
+      userCosts.set(key, Number(userCosts.get(key) || 0) + getSmsTelnyxCost(s));
     }
 
     const riskRows = Array.from(callStatsByUser.entries()).map(([userId, stats]) => {
@@ -776,10 +655,14 @@ router.get("/", requireAdmin, async (req, res) => {
     finish(200, {
       success: true,
       filter,
+      telnyxSync,
+      telnyxCostSource,
       period: {
         startDate: startDate?.toISOString() || null,
         endDate: endDate.toISOString(),
-        days: daysInPeriod
+        days: parseFloat(daysInPeriod.toFixed(4)),
+        hours: parseFloat(hoursInPeriod.toFixed(4)),
+        periodMs: Math.round(periodMs),
       },
       financial: {
         // Stripe
@@ -812,7 +695,8 @@ router.get("/", requireAdmin, async (req, res) => {
           totalCallMinutes: parseFloat(totalCallMinutes.toFixed(2)),
           avgCostPerSecond: parseFloat(avgCostPerSecond.toFixed(6)),
           avgCostPerMinute: parseFloat(avgCostPerMinute.toFixed(4)),
-          pendingCosts: pendingCallCosts
+          pendingCosts: pendingCallCosts,
+          apiSyncedCount: telnyxBilling?.calls?.count || 0,
         },
         sms: {
           totalCost: parseFloat(telnyxSmsCost.toFixed(4)),
@@ -820,15 +704,18 @@ router.get("/", requireAdmin, async (req, res) => {
           outboundCost: parseFloat(telnyxSmsCostOutbound.toFixed(4)),
           carrierFees: parseFloat(totalSmsCarrierFees.toFixed(4)),
           avgCostPerSms: parseFloat(avgCostPerSms.toFixed(4)),
-          pendingCosts: pendingSmsCosts
+          pendingCosts: pendingSmsCosts,
+          apiSyncedCount: telnyxBilling?.sms?.count || 0,
         },
         numbers: {
           activeCount: activeNumbersCount,
+          monthlyRateUsd: numberCosts.monthlyRateUsd,
           monthlyCost: parseFloat(totalNumberMonthlyCost.toFixed(2)),
           monthlyCostForPeriod: parseFloat(totalNumberCost.toFixed(4)),
           oneTimeCost: parseFloat(totalNumberOneTimeCost.toFixed(2)),
           extraFees: parseFloat(totalNumberExtraFees.toFixed(2)),
-          totalCost: parseFloat(totalNumberCost.toFixed(4))
+          totalCost: parseFloat(totalNumberCost.toFixed(4)),
+          periodMs: numberCosts.periodMs,
         }
       },
       subscriptions: {

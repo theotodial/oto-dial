@@ -6,9 +6,9 @@ import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-test("economicRecoveryService only bills via serialized interval path", () => {
+test("economicRecoveryService bills via callCreditBillingService interval path", () => {
   const src = fs.readFileSync(path.join(__dirname, "../src/services/economicRecoveryService.js"), "utf8");
-  assert.match(src, /billConnectedDurationIntervalsSerialized/);
+  assert.match(src, /billConnectedDurationIntervals/);
 });
 
 test("sweep stale threshold matches worker tick basis (crash recovery alignment)", () => {

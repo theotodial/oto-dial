@@ -69,6 +69,8 @@ function Dashboard() {
   const [numbers, setNumbers] = useState([]);
   const [packageDetails, setPackageDetails] = useState({
     remainingCredits: 0,
+    reservedCredits: 0,
+    availableCredits: 0,
     remainingSMS: 0,
     planName: 'No Plan',
     unlimitedMinutesDisplay: false,
@@ -98,6 +100,8 @@ function Dashboard() {
     if (!hasRow) {
       setPackageDetails({
         remainingCredits: 0,
+        reservedCredits: 0,
+        availableCredits: 0,
         remainingSMS: 0,
         planName: 'No Plan',
         unlimitedMinutesDisplay: false,
@@ -112,8 +116,12 @@ function Dashboard() {
       subscription.unlimitedMinutesDisplay ?? legacyAll;
     const unlimitedSms = subscription.unlimitedSmsDisplay ?? legacyAll;
 
+    const remaining = Math.round(Number(usage?.creditsRemaining ?? 0));
+    const reserved = Math.round(Number(usage?.reservedCredits ?? 0));
     setPackageDetails({
-      remainingCredits: unlimitedMinutes ? '∞' : Math.round(usage?.creditsRemaining ?? 0),
+      remainingCredits: unlimitedMinutes ? '∞' : remaining,
+      reservedCredits: unlimitedMinutes ? 0 : reserved,
+      availableCredits: unlimitedMinutes ? '∞' : Math.max(0, remaining - reserved),
       remainingSMS: unlimitedSms ? '∞' : (usage?.smsRemaining ?? 0),
       planName: subscription.planName || 'No Plan',
       unlimitedMinutesDisplay: unlimitedMinutes,
@@ -331,13 +339,22 @@ function Dashboard() {
           <p className="text-sm opacity-90 mb-2">{packageDetails.planName}</p>
           <div className="space-y-3 mb-4">
             {!isSmsCampaignPlan && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm opacity-90">Remaining Telecom Credits</span>
-                <span className="text-2xl font-bold">
-                  {packageDetails.unlimitedMinutesDisplay
-                    ? '∞'
-                    : Number(packageDetails?.remainingCredits || 0).toLocaleString()}
-                </span>
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm opacity-90">Remaining Telecom Credits</span>
+                  <span className="text-2xl font-bold">
+                    {packageDetails.unlimitedMinutesDisplay
+                      ? '∞'
+                      : Number(packageDetails?.remainingCredits || 0).toLocaleString()}
+                  </span>
+                </div>
+                {!packageDetails.unlimitedMinutesDisplay &&
+                  Number(packageDetails?.reservedCredits || 0) > 0 && (
+                    <p className="text-xs opacity-80 mt-1 text-right">
+                      {Number(packageDetails.reservedCredits).toLocaleString()} reserved ·{' '}
+                      {Number(packageDetails.availableCredits).toLocaleString()} available
+                    </p>
+                  )}
               </div>
             )}
             {isSmsCampaignPlan && (

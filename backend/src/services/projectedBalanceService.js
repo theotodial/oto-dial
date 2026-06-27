@@ -9,6 +9,12 @@ import EconomicTimeline from "../models/EconomicTimeline.js";
 import Subscription from "../models/Subscription.js";
 import { CREDIT_RULES } from "../config/creditConfig.js";
 import { maxCompletedBillableIntervalIndex } from "./economicSerializationService.js";
+import {
+  billingTraceEnter,
+  billingTraceExit,
+  billingTraceReturn,
+  traceCall,
+} from "./billingRuntimeTraceService.js";
 
 function toObjectId(value) {
   if (!value) return null;
@@ -37,8 +43,22 @@ export function listPendingIntervalIndexes(maxIdx, billedIndexes) {
  * Pending interval debits for one active call (read-only).
  */
 export function computePendingIntervalExposureForCall(callLean, timelineLean, nowMs = Date.now()) {
+  billingTraceEnter("projectedBalanceService.computePendingIntervalExposureForCall", {
+    input: traceCall(callLean),
+    timeline: timelineLean
+      ? {
+          callId: timelineLean.callId ? String(timelineLean.callId) : null,
+          billedIntervalIndexes: timelineLean.billedIntervalIndexes || [],
+          reservedCredits: timelineLean.reservedCredits,
+          finalizedAt: timelineLean.finalizedAt || null,
+        }
+      : null,
+  });
   const answeredAt = callLean.callAnsweredAt || callLean.callStartedAt;
   if (!answeredAt) {
+    billingTraceReturn("projectedBalanceService.computePendingIntervalExposureForCall", "not_answered", {
+      input: traceCall(callLean),
+    });
     return { pendingIndexes: [], pendingCredits: 0, maxBillableIndex: 0 };
   }
   const elapsed = Math.max(
@@ -52,17 +72,25 @@ export function computePendingIntervalExposureForCall(callLean, timelineLean, no
   for (let j = 1; j <= legacy; j += 1) billedSet.add(j);
   const pendingIndexes = listPendingIntervalIndexes(maxIdx, billedSet);
   const pendingCredits = pendingIndexes.length * CREDIT_RULES.connectedIntervalCharge;
-  return { pendingIndexes, pendingCredits, maxBillableIndex: maxIdx };
+  const out = { pendingIndexes, pendingCredits, maxBillableIndex: maxIdx };
+  billingTraceExit("projectedBalanceService.computePendingIntervalExposureForCall", {
+    input: traceCall(callLean),
+    result: out,
+  });
+  return out;
 }
 
 /**
  * @param {import("mongoose").Types.ObjectId|string} userId
  */
 export async function computeProjectedUserBalance(userId) {
+  billingTraceEnter("projectedBalanceService.computeProjectedUserBalance", {
+    userId: userId ? String(userId) : null,
+  });
   const uid = toObjectId(userId);
   const calculatedAt = new Date();
   if (!uid) {
-    return {
+    const out = {
       cachedBalance: null,
       reservedCredits: null,
       activeCallProjectedConsumption: null,
@@ -72,6 +100,11 @@ export async function computeProjectedUserBalance(userId) {
       calculatedAt,
       error: "invalid_user_id",
     };
+    billingTraceReturn("projectedBalanceService.computeProjectedUserBalance", "invalid_user_id", {
+      userId: userId ? String(userId) : null,
+      result: out,
+    });
+    return out;
   }
 
   const subscription = await Subscription.findOne({ userId: uid })
@@ -79,7 +112,7 @@ export async function computeProjectedUserBalance(userId) {
     .select("remainingCredits reservedCredits")
     .lean();
   if (!subscription) {
-    return {
+    const out = {
       cachedBalance: null,
       reservedCredits: null,
       activeCallProjectedConsumption: null,
@@ -89,6 +122,11 @@ export async function computeProjectedUserBalance(userId) {
       calculatedAt,
       error: "subscription_credit_wallet_not_found",
     };
+    billingTraceReturn("projectedBalanceService.computeProjectedUserBalance", "subscription_credit_wallet_not_found", {
+      userId: String(uid),
+      result: out,
+    });
+    return out;
   }
 
   const cachedBalance = Number(subscription.remainingCredits || 0);
@@ -136,7 +174,7 @@ export async function computeProjectedUserBalance(userId) {
   const pendingEconomicExposure = reservedCredits + activeCallProjectedConsumption;
   const projectedAvailableCredits = cachedBalance - reservedCredits - activeCallProjectedConsumption;
 
-  return {
+  const out = {
     cachedBalance,
     reservedCredits,
     activeCallProjectedConsumption,
@@ -145,4 +183,10 @@ export async function computeProjectedUserBalance(userId) {
     activeCalls: perCall,
     calculatedAt,
   };
+  billingTraceExit("projectedBalanceService.computeProjectedUserBalance", {
+    userId: String(uid),
+    subscriptionId: subscription._id ? String(subscription._id) : null,
+    result: out,
+  });
+  return out;
 }

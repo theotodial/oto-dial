@@ -4,6 +4,10 @@
  */
 
 import { PLAN_CREDITS } from "../../config/creditConfig.js";
+import { getCanonicalPlanKeyFromPriceId } from "../../config/stripeCatalog.js";
+import { SMS_CAMPAIGN_PLAN_TYPE } from "../../constants/smsCampaignPlan.js";
+import { AFFILIATE_UNLIMITED_PLAN_TYPE } from "../../constants/affiliatePlan.js";
+import { UNLIMITED_PLAN_TYPE } from "../../constants/unlimitedPlan.js";
 
 function num(v) {
   const n = Number(v);
@@ -24,6 +28,21 @@ function normalize(s) {
  * @returns {number} grant credits (>= 0)
  */
 export function resolvePlanCreditGrant(subscription = {}, plan = null) {
+  const stripePriceId = subscription?.stripePriceId || plan?.stripePriceId || null;
+  if (stripePriceId) {
+    const canonicalKey = getCanonicalPlanKeyFromPriceId(stripePriceId);
+    if (canonicalKey === SMS_CAMPAIGN_PLAN_TYPE) return 0;
+    if (
+      canonicalKey === UNLIMITED_PLAN_TYPE ||
+      canonicalKey === AFFILIATE_UNLIMITED_PLAN_TYPE
+    ) {
+      return 0;
+    }
+    if (canonicalKey && PLAN_CREDITS[canonicalKey] != null) {
+      return Math.max(0, Number(PLAN_CREDITS[canonicalKey]));
+    }
+  }
+
   const byPlan =
     num(plan?.monthlyCreditsLimit) ??
     num(plan?.limits?.creditsTotal);

@@ -9,12 +9,21 @@ import {
   billConnectedDurationIntervals,
   stopCallDurationBilling,
 } from "./callCreditBillingService.js";
+import {
+  billingTraceEnter,
+  billingTraceExit,
+  billingTraceReturn,
+  traceCall,
+} from "./billingRuntimeTraceService.js";
 
 /**
  * Sum actual telecom credit debits posted for a call from the ledger (system of record).
  * Used under v1 so the per-call accounting snapshot always reconciles with CreditLedger.
  */
 async function sumLedgerChargesForCall(callId) {
+  billingTraceEnter("telecomCallAccountingService.sumLedgerChargesForCall", {
+    callId: callId ? String(callId) : null,
+  });
   const rows = await CreditLedger.find({
     callId,
     type: { $in: ["call_event_charge", "connected_duration_charge", "outbound_attempt_charge"] },
@@ -28,10 +37,16 @@ async function sumLedgerChargesForCall(callId) {
     if (r.type === "connected_duration_charge") durationCredits += debit;
     else eventCredits += debit;
   }
-  return {
+  const out = {
     eventCredits: Math.round(eventCredits * 10000) / 10000,
     durationCredits: Math.round(durationCredits * 10000) / 10000,
   };
+  billingTraceExit("telecomCallAccountingService.sumLedgerChargesForCall", {
+    callId: callId ? String(callId) : null,
+    rowCount: rows.length,
+    result: out,
+  });
+  return out;
 }
 
 function destinationForCall(call) {
@@ -42,11 +57,24 @@ function destinationForCall(call) {
  * Persist authoritative telecom accounting snapshot on a call row.
  */
 export async function finalizeTelecomCallAccounting(callId, context = {}) {
+  billingTraceEnter("telecomCallAccountingService.finalizeTelecomCallAccounting", {
+    callId: callId ? String(callId) : null,
+    context,
+  });
   const call = await Call.findById(callId);
-  if (!call?._id) return { ok: false, reason: "call_not_found" };
+  if (!call?._id) {
+    billingTraceReturn("telecomCallAccountingService.finalizeTelecomCallAccounting", "call_not_found", {
+      callId: callId ? String(callId) : null,
+    });
+    return { ok: false, reason: "call_not_found" };
+  }
 
   const status = normalizeCallStatus(call.status);
   if (!isTerminalStatus(status) && !context.forceWhileActive) {
+    billingTraceReturn("telecomCallAccountingService.finalizeTelecomCallAccounting", "not_terminal", {
+      input: traceCall(call),
+      context,
+    });
     return { ok: true, skipped: true, reason: "not_terminal" };
   }
 
@@ -56,7 +84,13 @@ export async function finalizeTelecomCallAccounting(callId, context = {}) {
   }
 
   const refreshed = await Call.findById(callId);
-  if (!refreshed) return { ok: false, reason: "call_not_found" };
+  if (!refreshed) {
+    billingTraceReturn("telecomCallAccountingService.finalizeTelecomCallAccounting", "call_not_found_after_billing_cleanup", {
+      callId: callId ? String(callId) : null,
+      context,
+    });
+    return { ok: false, reason: "call_not_found" };
+  }
 
   const v1 = isRatingV1Enabled();
   let attemptCredits;
@@ -124,7 +158,7 @@ export async function finalizeTelecomCallAccounting(callId, context = {}) {
     eventType: context.eventType || null,
   });
 
-  return {
+  const out = {
     ok: true,
     totalCreditsCharged,
     finalCharge,
@@ -132,6 +166,16 @@ export async function finalizeTelecomCallAccounting(callId, context = {}) {
     attemptCredits,
     durationCredits,
   };
+  billingTraceExit("telecomCallAccountingService.finalizeTelecomCallAccounting", {
+    input: traceCall(refreshed),
+    context,
+    ledgerEventCredits: attemptCredits,
+    ledgerDurationCredits: durationCredits,
+    totalCreditsCharged,
+    billingReason,
+    result: out,
+  });
+  return out;
 }
 
 export function computeExpectedIntervalCredits(seconds, intervalSeconds, perIntervalCredits) {

@@ -230,13 +230,7 @@ async function resolvePlan({
   stripePriceId = null,
   fallbackPlanId = null
 }) {
-  if (planId && isValidObjectId(planId)) {
-    const byId = await Plan.findOne({ _id: planId, active: true });
-    if (byId) {
-      return byId;
-    }
-  }
-
+  // Authoritative order: active Stripe price → canonical price key → metadata planId → name → fallback.
   if (stripePriceId) {
     const byPrice = await Plan.findOne({ stripePriceId, active: true });
     if (byPrice) {
@@ -282,6 +276,13 @@ async function resolvePlan({
     });
     if (smsCampaign) {
       return smsCampaign;
+    }
+  }
+
+  if (planId && isValidObjectId(planId)) {
+    const byId = await Plan.findOne({ _id: planId, active: true });
+    if (byId) {
+      return byId;
     }
   }
 

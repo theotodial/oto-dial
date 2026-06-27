@@ -5,6 +5,7 @@ import Call from "../../models/Call.js";
 import PhoneNumber from "../../models/PhoneNumber.js";
 import { loadUserSubscription } from "../../services/subscriptionService.js";
 import { recordCallCost } from "../../services/telnyxCostCalculator.js";
+import { parseTelnyxWebhookCallCost } from "../../services/telnyxWebhookCostAggregationService.js";
 import {
   emitAdminCallDebugEvent,
   emitAdminLiveCall,
@@ -50,6 +51,11 @@ import {
   recordWebhookBurstSample,
   shouldSuppressNonCriticalWebhookWork,
 } from "../../services/webhookBurstProtectionService.js";
+import {
+  billingTrace,
+  billingTraceEnter,
+  billingTraceExit,
+} from "../../services/billingRuntimeTraceService.js";
 
 const router = express.Router();
 
@@ -434,6 +440,13 @@ async function transitionCallStatus({
  */
 router.post("/", async (req, res) => {
   try {
+    billingTraceEnter("telnyxVoice.POST /api/webhooks/telnyx/voice", {
+      providerEventType: req.body?.data?.event_type || null,
+      telnyxEventId: req.body?.data?.id || null,
+      callControlId:
+        req.body?.data?.payload?.call_control_id || req.body?.data?.call_control_id || null,
+      callSessionId: req.body?.data?.payload?.call_session_id || null,
+    });
     console.log("🚨 VOICE WEBHOOK HIT");
     if (!shouldSuppressNonCriticalWebhookWork("debug_log")) {
       console.log("🚨 FULL BODY:", JSON.stringify(req.body, null, 2));
@@ -526,6 +539,14 @@ router.post("/", async (req, res) => {
         eventType: "webhook_duplicate_claim",
         telnyxEventId,
         providerEventType: event,
+      });
+      billingTraceExit("telnyxVoice.POST /api/webhooks/telnyx/voice", {
+        providerEventType: event,
+        telnyxEventId,
+        callControlId,
+        callSessionId,
+        duplicate: true,
+        result: "webhook_duplicate_claim",
       });
       return res.sendStatus(200);
     }
@@ -740,6 +761,14 @@ router.post("/", async (req, res) => {
           "_id user direction attemptChargedAt attemptCharged status billedCallEvents"
         );
         if (afterRing?.direction === "outbound") {
+          billingTrace("telnyxVoice.POST /api/webhooks/telnyx/voice", "BEFORE_RINGING_BILLING", {
+            callId: String(afterRing._id),
+            userId: afterRing.user ? String(afterRing.user) : null,
+            providerEventType: event,
+            callControlId,
+            callSessionId,
+            ratingV1Enabled: isRatingV1Enabled(),
+          });
           if (isRatingV1Enabled()) {
             // v1 rating: reaching ringing implies the call was routed to the carrier.
             await chargeCallLifecycleEvent(afterRing, CALL_BILLING_EVENT.ROUTED, {
@@ -758,6 +787,13 @@ router.post("/", async (req, res) => {
           }
         }
       } catch (ringBillErr) {
+        billingTrace("telnyxVoice.POST /api/webhooks/telnyx/voice", "RINGING_BILLING_EXCEPTION", {
+          callId: call?._id ? String(call._id) : null,
+          providerEventType: event,
+          callControlId,
+          callSessionId,
+          error: ringBillErr?.message || String(ringBillErr),
+        });
         console.warn("[VOICE BILLING] ringing charge step failed:", ringBillErr?.message || ringBillErr);
       }
       return res.sendStatus(200);
@@ -804,12 +840,26 @@ router.post("/", async (req, res) => {
           const afterProg = await Call.findById(call._id).select(
             "_id user direction billedCallEvents"
           );
+          billingTrace("telnyxVoice.POST /api/webhooks/telnyx/voice", "BEFORE_PROGRESS_BILLING", {
+            callId: afterProg?._id ? String(afterProg._id) : null,
+            userId: afterProg?.user ? String(afterProg.user) : null,
+            providerEventType: event,
+            callControlId,
+            callSessionId,
+          });
           await chargeCallLifecycleEvent(afterProg, CALL_BILLING_EVENT.ROUTED, {
             sourcePath: "telnyxVoice.js:call.progress",
             eventType: event,
           });
         }
       } catch (progBillErr) {
+        billingTrace("telnyxVoice.POST /api/webhooks/telnyx/voice", "PROGRESS_BILLING_EXCEPTION", {
+          callId: call?._id ? String(call._id) : null,
+          providerEventType: event,
+          callControlId,
+          callSessionId,
+          error: progBillErr?.message || String(progBillErr),
+        });
         console.warn("[VOICE BILLING] progress routed charge failed:", progBillErr?.message || progBillErr);
       }
       return res.sendStatus(200);
@@ -1050,6 +1100,16 @@ router.post("/", async (req, res) => {
         const latest = await Call.findById(call._id).select(
           "_id user status direction callAnsweredAt callStartedAt durationCreditsCharged attemptChargedAt creditReservationHeld billedCallEvents"
         );
+        billingTrace("telnyxVoice.POST /api/webhooks/telnyx/voice", "BEFORE_ANSWERED_BILLING", {
+          callId: latest?._id ? String(latest._id) : null,
+          userId: latest?.user ? String(latest.user) : null,
+          status: latest?.status || null,
+          direction: latest?.direction || null,
+          providerEventType: event,
+          callControlId,
+          callSessionId,
+          ratingV1Enabled: isRatingV1Enabled(),
+        });
         if (isRatingV1Enabled() && latest?.direction === "outbound") {
           // Ensure routed is captured (answered may arrive without a ringing webhook),
           // then charge the answered-connection milestone before connected billing.
@@ -1064,6 +1124,13 @@ router.post("/", async (req, res) => {
         }
         await billConnectedDurationIntervals(latest);
       } catch (billingErr) {
+        billingTrace("telnyxVoice.POST /api/webhooks/telnyx/voice", "ANSWERED_BILLING_EXCEPTION", {
+          callId: call?._id ? String(call._id) : null,
+          providerEventType: event,
+          callControlId,
+          callSessionId,
+          error: billingErr?.message || String(billingErr),
+        });
         console.warn("[VOICE BILLING] duration charge step failed:", billingErr?.message || billingErr);
       }
       return res.sendStatus(200);
@@ -1128,10 +1195,15 @@ router.post("/", async (req, res) => {
         );
       }
 
-      if (billableSeconds > 0) {
+      const webhookCost = parseTelnyxWebhookCallCost(callPayload);
+      if (webhookCost != null) {
+        cost = webhookCost;
+        console.log(`[CALL ENDED] Telnyx webhook cost: $${cost.toFixed(6)}`);
+      } else if (billableSeconds > 0) {
         const rate = Number(process.env.CALL_RATE_PER_MINUTE || 0.0065);
         const minutes = billableSeconds / 60;
         cost = minutes * rate;
+        console.log(`[CALL ENDED] estimated cost until API sync: $${cost.toFixed(6)}`);
       }
 
       const hangupCause = callPayload.hangup_cause || "unknown";
@@ -1227,6 +1299,15 @@ router.post("/", async (req, res) => {
       // v1 Telecom Rating: terminal disposition milestone charge (after telecom flow concluded).
       try {
         if (isRatingV1Enabled() && call.direction === "outbound") {
+          billingTrace("telnyxVoice.POST /api/webhooks/telnyx/voice", "BEFORE_HANGUP_TERMINAL_BILLING", {
+            callId: String(call._id),
+            userId: call.user ? String(call.user) : null,
+            status: call.status,
+            finalStatus,
+            providerEventType: event,
+            callControlId,
+            callSessionId,
+          });
           const wasRouted =
             Boolean(call.callRingingAt) ||
             Boolean(call.callEarlyMediaAt) ||
@@ -1255,6 +1336,13 @@ router.post("/", async (req, res) => {
           }
         }
       } catch (terminalBillErr) {
+        billingTrace("telnyxVoice.POST /api/webhooks/telnyx/voice", "HANGUP_TERMINAL_BILLING_EXCEPTION", {
+          callId: call?._id ? String(call._id) : null,
+          providerEventType: event,
+          callControlId,
+          callSessionId,
+          error: terminalBillErr?.message || String(terminalBillErr),
+        });
         console.warn(
           "[VOICE BILLING] terminal disposition charge failed:",
           terminalBillErr?.message || terminalBillErr

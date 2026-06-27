@@ -5,6 +5,20 @@ import getTelnyxClient from "./telnyxService.js";
  * Fetches REAL costs from Telnyx API - NO estimates, NO hardcoded values
  */
 
+function parseTelnyxMoney(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function pickFirstCost(...values) {
+  for (const value of values) {
+    const parsed = parseTelnyxMoney(value);
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
 /**
  * Fetch call cost from Telnyx API
  * @param {string} telnyxCallId - Telnyx call ID
@@ -41,14 +55,19 @@ export async function fetchCallCost(telnyxCallId) {
     // Telnyx provides cost in the call record
     const costData = {
       telnyxCallId: callData.id,
-      billedSeconds: callData.billable_duration || callData.duration_seconds || 0,
+      billedSeconds: callData.billable_duration || callData.duration_seconds || callData.billable_time || 0,
       ringDurationSeconds: callData.ring_duration || 0,
       answeredDurationSeconds: callData.answered_duration || 0,
-      costPerSecond: callData.cost_per_second || null,
-      totalCost: callData.cost || callData.total_cost || null,
-      carrierFee: callData.carrier_fee || 0,
+      costPerSecond: parseTelnyxMoney(callData.cost_per_second),
+      totalCost: pickFirstCost(
+        callData.cost,
+        callData.total_cost,
+        callData.call_cost,
+        callData.billed_amount,
+        callData.amount
+      ),
+      carrierFee: parseTelnyxMoney(callData.carrier_fee) || 0,
       direction: callData.direction || callData.call_direction || null,
-      // If cost is not directly available, calculate from rates
       calculatedCost: null
     };
 
@@ -61,21 +80,56 @@ export async function fetchCallCost(telnyxCallId) {
     // If still no cost, try usage records or billing API
     if (!costData.totalCost) {
       try {
-        // Try usage records endpoint
         const usageRecords = await telnyx.usageRecords.list({
           filter: {
             call_id: telnyxCallId
           }
         });
 
-        if (usageRecords && usageRecords.data && usageRecords.data.length > 0) {
-          const usage = usageRecords.data[0];
-          costData.totalCost = usage.cost || usage.total_cost || null;
-          costData.costPerSecond = usage.cost_per_second || costData.costPerSecond;
+        if (usageRecords?.data?.length > 0) {
+          let usageTotal = 0;
+          for (const usage of usageRecords.data) {
+            usageTotal += pickFirstCost(usage.cost, usage.total_cost, usage.amount) || 0;
+          }
+          if (usageTotal > 0) {
+            costData.totalCost = usageTotal;
+          }
+          costData.costPerSecond =
+            parseTelnyxMoney(usageRecords.data[0].cost_per_second) || costData.costPerSecond;
         }
       } catch (usageErr) {
-        // Usage records might not be available immediately - this is OK
         console.warn(`Could not fetch usage records for call ${telnyxCallId}:`, usageErr.message);
+      }
+    }
+
+    if (!costData.totalCost) {
+      try {
+        const detailRecords = await telnyx.detailRecords.list({
+          filter: {
+            record_type: "call-control",
+            call_session_id: callData.call_session_id || undefined,
+            call_leg_id: telnyxCallId,
+          },
+          page: { size: 20 },
+        });
+
+        if (detailRecords?.data?.length > 0) {
+          let detailTotal = 0;
+          for (const record of detailRecords.data) {
+            detailTotal +=
+              pickFirstCost(
+                record.cost,
+                record.total_cost,
+                record.billed_amount,
+                record.amount
+              ) || 0;
+          }
+          if (detailTotal > 0) {
+            costData.totalCost = detailTotal;
+          }
+        }
+      } catch (detailErr) {
+        console.warn(`Could not fetch detail records for call ${telnyxCallId}:`, detailErr.message);
       }
     }
 
@@ -282,9 +336,9 @@ export async function syncCallCost(callId, telnyxCallId) {
       throw new Error(`Call ${callId} not found`);
     }
 
-    // If cost already exists, skip
-    if (call.cost && call.cost > 0) {
-      return { success: true, message: "Cost already exists" };
+    // Skip only when cost was already synced from the Telnyx API (not webhook estimates).
+    if (call.costSyncedAt && call.cost > 0) {
+      return { success: true, message: "Cost already synced from Telnyx API" };
     }
 
     // Fetch from Telnyx
@@ -300,7 +354,15 @@ export async function syncCallCost(callId, telnyxCallId) {
 
     // Update call with real cost data
     const costData = costResult.data;
-    call.cost = costData.totalCost || 0;
+    const totalCost = pickFirstCost(costData.totalCost, costData.calculatedCost);
+    if (totalCost == null) {
+      call.costPending = true;
+      call.costSyncError = "No cost data from Telnyx API yet";
+      await call.save();
+      return { success: false, error: "No cost data from Telnyx API yet" };
+    }
+
+    call.cost = totalCost;
     call.costPerSecond = costData.costPerSecond;
     call.billedSeconds = costData.billedSeconds;
     call.ringingDuration = costData.ringDurationSeconds;
@@ -333,9 +395,9 @@ export async function syncSmsCost(smsId, telnyxMessageId) {
       throw new Error(`SMS ${smsId} not found`);
     }
 
-    // If cost already exists, skip
-    if (sms.cost && sms.cost > 0) {
-      return { success: true, message: "Cost already exists" };
+    // Skip only when cost was already synced from the Telnyx API (not outbound estimates).
+    if (sms.costSyncedAt && sms.cost > 0) {
+      return { success: true, message: "Cost already synced from Telnyx API" };
     }
 
     // Fetch from Telnyx
@@ -351,7 +413,15 @@ export async function syncSmsCost(smsId, telnyxMessageId) {
 
     // Update SMS with real cost data
     const costData = costResult.data;
-    sms.cost = costData.cost || 0;
+    const totalCost = pickFirstCost(costData.cost, costData.calculatedCost);
+    if (totalCost == null) {
+      sms.costPending = true;
+      sms.costSyncError = "No cost data from Telnyx API yet";
+      await sms.save();
+      return { success: false, error: "No cost data from Telnyx API yet" };
+    }
+
+    sms.cost = totalCost;
     sms.costPerSms = costData.costPerSms;
     sms.carrier = costData.carrier;
     sms.carrierFees = costData.carrierFee || 0;
@@ -425,4 +495,69 @@ export async function syncNumberCost(numberId, telnyxNumberId) {
     console.error(`Error syncing number cost for ${numberId}:`, error);
     return { success: false, error: error.message };
   }
+}
+
+/**
+ * Pull real Telnyx billing for recent calls/SMS that are still missing API sync.
+ */
+export async function syncPendingTelnyxCostsInRange({
+  startDate,
+  endDate,
+  limit = 20,
+} = {}) {
+  const Call = (await import("../models/Call.js")).default;
+  const SMS = (await import("../models/SMS.js")).default;
+
+  const dateFilter = {
+    createdAt: {
+      $gte: startDate || new Date(0),
+      $lte: endDate || new Date(),
+    },
+  };
+
+  const [pendingCalls, pendingSms] = await Promise.all([
+    Call.find({
+      ...dateFilter,
+      telnyxCallId: { $nin: [null, ""] },
+      costSyncedAt: null,
+      $or: [{ billedSeconds: { $gt: 0 } }, { durationSeconds: { $gt: 0 } }],
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select("_id telnyxCallId")
+      .lean(),
+    SMS.find({
+      ...dateFilter,
+      telnyxMessageId: { $nin: [null, ""] },
+      costSyncedAt: null,
+      status: { $ne: "failed" },
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select("_id telnyxMessageId")
+      .lean(),
+  ]);
+
+  let synced = 0;
+  let failed = 0;
+
+  for (const call of pendingCalls) {
+    const result = await syncCallCost(String(call._id), call.telnyxCallId);
+    if (result.success && Number(result.cost) > 0) synced += 1;
+    else if (!result.success) failed += 1;
+  }
+
+  for (const sms of pendingSms) {
+    const result = await syncSmsCost(String(sms._id), sms.telnyxMessageId);
+    if (result.success && Number(result.cost) > 0) synced += 1;
+    else if (!result.success) failed += 1;
+  }
+
+  return {
+    scanned: pendingCalls.length + pendingSms.length,
+    synced,
+    failed,
+    pendingCalls: pendingCalls.length,
+    pendingSms: pendingSms.length,
+  };
 }

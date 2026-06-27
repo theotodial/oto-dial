@@ -167,11 +167,13 @@ function AdminDashboardEnterprise() {
       
       // OPTIMIZED: Add timeout and only fetch essential data
       const controller = new AbortController();
-      const mainTimeoutMs = 85000;
+      const mainTimeoutMs = 175000;
       const timeoutId = setTimeout(() => controller.abort(), mainTimeoutMs + 8000);
       
       try {
-        const enhancedRes = await API.get(`/api/admin/analytics/enhanced?filter=${filterParam}`, {
+        const enhancedRes = await API.get(
+          `/api/admin/analytics/enhanced?filter=${filterParam}&telnyxSync=1`,
+          {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
           timeout: mainTimeoutMs
@@ -192,7 +194,7 @@ function AdminDashboardEnterprise() {
         
         // Fetch time-series data separately (non-blocking, optional)
         // Don't wait for it - load it in background
-        API.get(`/api/admin/analytics/time-series/enhanced?filter=${filterParam}`, {
+        API.get(`/api/admin/analytics/time-series/enhanced?filter=${filterParam}&telnyxSync=1`, {
           headers: { Authorization: `Bearer ${token}` },
           timeout: 60000
         }).then(timeSeriesRes => {
@@ -622,11 +624,38 @@ function AdminDashboardEnterprise() {
                 <div>
                   <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">Telnyx Costs Breakdown</h2>
                   <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    All costs from Telnyx API - Real billing data (not estimates)
+                    Live costs from Telnyx Detail Records API (calls, SMS, numbers)
                   </p>
-                  {(analytics?.financial?.totalTelnyxCost || 0) === 0 && (
+                  {analytics?.telnyxCostSource && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Source: {analytics.telnyxCostSource === 'telnyx_api' ? 'Telnyx API' : 'Local fallback'}
+                      {analytics?.telnyxSync?.fetchedAt
+                        ? ` · updated ${new Date(analytics.telnyxSync.fetchedAt).toLocaleString()}`
+                        : ''}
+                    </p>
+                  )}
+                  {analytics?.telnyxSync?.usageStats && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Usage API: {Object.entries(analytics.telnyxSync.usageStats)
+                        .filter(([, amount]) => Number(amount) > 0)
+                        .map(([type, amount]) => `${type} $${Number(amount).toFixed(4)}`)
+                        .join(' · ') || 'no usage in range'}
+                    </p>
+                  )}
+                  {(analytics?.telnyxBreakdown?.numbers?.activeCount || 0) > 0 && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {analytics.telnyxBreakdown.numbers.activeCount} active numbers @ $
+                      {(analytics?.telnyxBreakdown?.numbers?.monthlyRateUsd ??
+                        (analytics?.telnyxBreakdown?.numbers?.monthlyCost || 0) /
+                          (analytics?.telnyxBreakdown?.numbers?.activeCount || 1)).toFixed(2)}
+                      /mo each (prorated for selected period)
+                    </p>
+                  )}
+                  {((analytics?.telnyxBreakdown?.calls?.pendingCosts || 0) > 0 ||
+                    (analytics?.telnyxBreakdown?.sms?.pendingCosts || 0) > 0) && (
                     <p className="text-xs text-orange-600 dark:text-orange-400 mt-2 font-medium">
-                      ⚠️ No costs found. Costs are synced from Telnyx after calls/SMS/number purchases.
+                      {analytics?.telnyxBreakdown?.calls?.pendingCosts || 0} calls and{' '}
+                      {analytics?.telnyxBreakdown?.sms?.pendingCosts || 0} SMS still awaiting Telnyx cost sync
                     </p>
                   )}
                 </div>
@@ -693,6 +722,13 @@ function AdminDashboardEnterprise() {
                         ${(analytics?.telnyxBreakdown?.calls?.avgCostPerSecond || 0).toFixed(6)}
                       </span>
                     </div>
+                    {analytics?.telnyxBreakdown?.calls?.pendingCosts > 0 && (
+                      <div className="mt-2 pt-2 border-t border-gray-200 dark:border-slate-700">
+                        <span className="text-xs text-orange-600 dark:text-orange-400">
+                          {analytics.telnyxBreakdown.calls.pendingCosts} calls pending cost sync
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 

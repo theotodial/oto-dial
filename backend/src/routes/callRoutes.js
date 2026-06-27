@@ -31,15 +31,22 @@ import {
   reserveCreditsForOutboundCall,
   chargeProviderAcceptedAttempt,
   chargeCallLifecycleEvent,
+  billConnectedDurationIntervals,
   releaseUnusedCallReservation,
 } from "../services/callCreditBillingService.js";
 import { isRatingV1Enabled, CALL_BILLING_EVENT } from "../services/telecomRatingEngine.js";
 import { assertUserHasOutboundDialCredits } from "../services/telecomCreditGuard.js";
+import { finalizeTelecomCallAccounting } from "../services/telecomCallAccountingService.js";
 import { applyOutboundProfitThrottle, getUserProfitGuardrails } from "../services/profitGuardrailService.js";
 import {
   logMiddlewareEnter,
   logMiddlewarePass,
 } from "../utils/callsApiMiddlewareAudit.js";
+import {
+  billingTrace,
+  billingTraceEnter,
+  billingTraceExit,
+} from "../services/billingRuntimeTraceService.js";
 
 const router = express.Router();
 
@@ -186,6 +193,13 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
   const callCreateT0 = Date.now();
   const execTraceHeader = String(req.get("x-oto-exec-trace") || "").trim() || null;
   try {
+    billingTraceEnter("callRoutes.POST /api/calls", {
+      userId: req.userId ? String(req.userId) : null,
+      execTraceHeader,
+      bodyStatus: req.body?.status || null,
+      direction: req.body?.direction || "outbound",
+      phoneNumber: req.body?.phoneNumber || req.body?.to || null,
+    });
     logCallCreate("entry", {
       execTraceHeader,
       userId: req.userId ? String(req.userId) : null,
@@ -406,18 +420,22 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       toOwnership: toNumberOwnership,
     });
     if (!isCallMinimalMode()) {
-      emitAdminCallDebugEvent({
-        eventType: "call.preflight",
-        callControlId: null,
-        callSessionId: null,
-        from: normalizeThreadPhone(fromNumber),
-        to: normalizeThreadPhone(toNumber || phoneNumber),
-        state: "validated",
-        callerUser: String(req.userId),
-        calleeUser: calleeOwnedUser,
-        fromOwnedByCaller: true,
-        toOwnership: toNumberOwnership,
-      }).catch(() => {});
+      try {
+        emitAdminCallDebugEvent({
+          eventType: "call.preflight",
+          callControlId: null,
+          callSessionId: null,
+          from: normalizeThreadPhone(fromNumber),
+          to: normalizeThreadPhone(toNumber || phoneNumber),
+          state: "validated",
+          callerUser: String(req.userId),
+          calleeUser: calleeOwnedUser,
+          fromOwnedByCaller: true,
+          toOwnership: toNumberOwnership,
+        });
+      } catch (_) {
+        /* admin debug emit is non-critical */
+      }
     }
 
     const existing = await findRecentActiveCallForUser(req.userId);
@@ -510,6 +528,12 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       status,
       source: direction === "outbound" ? "webrtc" : source,
     });
+    billingTrace("callRoutes.POST /api/calls", "CALL_CREATED", {
+      callId: call?._id ? String(call._id) : null,
+      userId: req.userId ? String(req.userId) : null,
+      direction,
+      status: call?.status || null,
+    });
     logCallCreate("persist_after", {
       callId: call?._id ? String(call._id) : null,
       userId: String(req.userId),
@@ -551,10 +575,25 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       const guardrails = await getUserProfitGuardrails(call.user);
       let reserve;
       try {
+        billingTrace("callRoutes.POST /api/calls", "BEFORE_RESERVE", {
+          callId: String(call._id),
+          userId: String(req.userId),
+          reservationMultiplier: guardrails?.reservationMultiplier ?? null,
+        });
         reserve = await reserveCreditsForOutboundCall(call, {
           reservationMultiplier: guardrails?.reservationMultiplier,
         });
+        billingTrace("callRoutes.POST /api/calls", "AFTER_RESERVE", {
+          callId: String(call._id),
+          userId: String(req.userId),
+          result: reserve,
+        });
       } catch (reserveErr) {
+        billingTrace("callRoutes.POST /api/calls", "RESERVE_EXCEPTION", {
+          callId: String(call._id),
+          userId: String(req.userId),
+          error: reserveErr?.message || String(reserveErr),
+        });
         logCallCredit("reserve_exception", {
           callId: String(call._id),
           userId: String(req.userId),
@@ -604,8 +643,18 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       console.warn("[ADMIN LIVE] failed to emit call start:", error?.message || error);
     });
 
+    billingTraceExit("callRoutes.POST /api/calls", {
+      callId: call?._id ? String(call._id) : null,
+      userId: req.userId ? String(req.userId) : null,
+      direction,
+      status: call?.status || null,
+    });
     res.json({ success: true, call });
   } catch (err) {
+    billingTrace("callRoutes.POST /api/calls", "EXCEPTION", {
+      userId: req.userId ? String(req.userId) : null,
+      error: err?.message || String(err),
+    });
     console.error("[CALL ERROR] POST /api/calls", {
       userId: req.userId ? String(req.userId) : null,
       message: err?.message || String(err),
@@ -740,6 +789,14 @@ router.get("/:id", async (req, res) => {
 // Outbound WebRTC: client SDK drives status. Inbound / legacy: webhooks or narrow client abort.
 router.patch("/:id", async (req, res) => {
   try {
+    billingTraceEnter("callRoutes.PATCH /api/calls/:id", {
+      callId: req.params.id,
+      userId: req.userId ? String(req.userId) : null,
+      requestedStatus: req.body?.status || null,
+      durationSeconds: req.body?.durationSeconds ?? null,
+      callEndedAt: req.body?.callEndedAt || null,
+      callStartedAt: req.body?.callStartedAt || null,
+    });
     const {
       status,
       durationSeconds,
@@ -754,7 +811,7 @@ router.patch("/:id", async (req, res) => {
       lastHeartbeatAt,
     } = req.body;
 
-    const call = await Call.findOne({
+    let call = await Call.findOne({
       _id: req.params.id,
       user: req.userId,
     });
@@ -844,12 +901,16 @@ router.patch("/:id", async (req, res) => {
           current === CALL_STATES.ACTIVE ||
           current === CALL_STATES.ANSWERED ||
           Boolean(call.callAnsweredAt);
+        const clientDurationSeconds = Number(durationSeconds);
+        const hasClientBillableDuration =
+          Number.isFinite(clientDurationSeconds) && clientDurationSeconds > 0;
 
         let effectiveRequested = requested;
         if (
           isTerminalStatus(requested) &&
           requested === CALL_STATES.COMPLETED &&
-          !hadAnsweredPrior
+          !hadAnsweredPrior &&
+          !hasClientBillableDuration
         ) {
           effectiveRequested = mapHangupToTerminalStatus({
             hangupCause: hangupCause || call.hangupCause,
@@ -927,10 +988,21 @@ router.patch("/:id", async (req, res) => {
         if (isTerminalStatus(effectiveRequested)) {
           const ended = set.callEndedAt || call.callEndedAt || new Date();
           set.callEndedAt = ended;
-          const hadAnswered = hadAnsweredPrior;
+          const hadAnswered =
+            hadAnsweredPrior ||
+            (effectiveRequested === CALL_STATES.COMPLETED && hasClientBillableDuration);
           let billable = Number(durationSeconds);
           if (!Number.isFinite(billable) || billable < 0) {
             billable = 0;
+          }
+
+          if (hadAnswered && !call.callAnsweredAt && effectiveRequested === CALL_STATES.COMPLETED) {
+            const inferredAnsweredAt = callStartedAt
+              ? new Date(callStartedAt)
+              : new Date(ended.getTime() - Math.max(1, Math.floor(billable || 1)) * 1000);
+            set.callStartedAt = set.callStartedAt || inferredAnsweredAt;
+            set.callAnsweredAt = inferredAnsweredAt;
+            set.callInitiatedAt = call.callInitiatedAt || inferredAnsweredAt;
           }
 
           if (hadAnswered && billable <= 0) {
@@ -979,6 +1051,15 @@ router.patch("/:id", async (req, res) => {
           call = transitioned.call || call;
           if (isRatingV1Enabled() && call.direction === "outbound") {
             try {
+            billingTrace("callRoutes.PATCH /api/calls/:id", "BEFORE_TERMINAL_V1_BILLING", {
+              callId: String(call._id),
+              userId: call.user ? String(call.user) : null,
+              current,
+              requested,
+              effectiveRequested,
+              hadAnswered,
+              billable,
+            });
               const wasRouted =
                 Boolean(call.callRingingAt) ||
                 Boolean(call.callEarlyMediaAt) ||
@@ -993,6 +1074,17 @@ router.patch("/:id", async (req, res) => {
                 terminalEvent = CALL_BILLING_EVENT.NO_ANSWER;
               else if (effectiveRequested === CALL_STATES.FAILED && wasRouted)
                 terminalEvent = CALL_BILLING_EVENT.FAILED_AFTER_ROUTING;
+              else if (effectiveRequested === CALL_STATES.COMPLETED && hadAnswered) {
+                await chargeCallLifecycleEvent(call, CALL_BILLING_EVENT.ROUTED, {
+                  sourcePath: "callRoutes.js:PATCH",
+                  eventType: "client_completed",
+                });
+                await chargeCallLifecycleEvent(call, CALL_BILLING_EVENT.ANSWERED, {
+                  sourcePath: "callRoutes.js:PATCH",
+                  eventType: "client_completed",
+                });
+                await billConnectedDurationIntervals(call);
+              }
               if (terminalEvent) {
                 await chargeCallLifecycleEvent(call, CALL_BILLING_EVENT.ROUTED, {
                   sourcePath: "callRoutes.js:PATCH",
@@ -1004,6 +1096,11 @@ router.patch("/:id", async (req, res) => {
                 });
               }
             } catch (v1TermErr) {
+              billingTrace("callRoutes.PATCH /api/calls/:id", "TERMINAL_V1_BILLING_EXCEPTION", {
+                callId: String(call._id),
+                userId: call.user ? String(call.user) : null,
+                error: v1TermErr?.message || String(v1TermErr),
+              });
               console.warn(
                 "[TELECOM CHARGE] v1 client terminal charge failed:",
                 v1TermErr?.message || v1TermErr
@@ -1049,6 +1146,26 @@ router.patch("/:id", async (req, res) => {
             billableSeconds: hadAnswered ? billable : 0,
             answered: hadAnswered,
           });
+
+          try {
+            await releaseUnusedCallReservation(call);
+          } catch (releaseErr) {
+            console.warn(
+              "[TELECOM CHARGE] client terminal reservation release failed:",
+              releaseErr?.message || releaseErr
+            );
+          }
+          try {
+            await finalizeTelecomCallAccounting(call._id, {
+              sourcePath: "callRoutes.js:PATCH",
+              terminationSource: "client_patch_webrtc",
+            });
+          } catch (finalizeErr) {
+            console.warn(
+              "[TELECOM CHARGE] client terminal accounting finalize failed:",
+              finalizeErr?.message || finalizeErr
+            );
+          }
         } else {
           const transitioned = await applyCallTransition({
             callId: call._id,
@@ -1069,6 +1186,11 @@ router.patch("/:id", async (req, res) => {
           call = transitioned.call || call;
           if (isRatingV1Enabled()) {
             try {
+              billingTrace("callRoutes.PATCH /api/calls/:id", "BEFORE_LIFECYCLE_V1_BILLING", {
+                callId: String(call._id),
+                userId: call.user ? String(call.user) : null,
+                requested,
+              });
               const freshV1 = await Call.findById(call._id).select(
                 "_id user direction billedCallEvents"
               );
@@ -1094,9 +1216,18 @@ router.patch("/:id", async (req, res) => {
                     sourcePath: "callRoutes.js:PATCH",
                     eventType: "client_answered",
                   });
+                  const liveForBilling = await Call.findById(call._id).select(
+                    "_id user status direction callAnsweredAt callStartedAt durationCreditsCharged attemptChargedAt creditReservationHeld"
+                  );
+                  await billConnectedDurationIntervals(liveForBilling);
                 }
               }
             } catch (v1Err) {
+              billingTrace("callRoutes.PATCH /api/calls/:id", "LIFECYCLE_V1_BILLING_EXCEPTION", {
+                callId: String(call._id),
+                userId: call.user ? String(call.user) : null,
+                error: v1Err?.message || String(v1Err),
+              });
               console.warn(
                 "[TELECOM CHARGE] v1 client lifecycle charge failed:",
                 v1Err?.message || v1Err

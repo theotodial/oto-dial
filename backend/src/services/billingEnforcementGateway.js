@@ -17,6 +17,12 @@ import {
 } from "./billingTraceService.js";
 import BillingEventJournal from "../models/BillingEventJournal.js";
 import { appendJournalFromCreditLedger } from "./billingEventJournal.js";
+import {
+  billingTrace,
+  billingTraceEnter,
+  billingTraceExit,
+  billingTraceReturn,
+} from "./billingRuntimeTraceService.js";
 
 function isDuplicateKeyError(err) {
   return err?.code === 11000;
@@ -100,11 +106,20 @@ export async function syncCachedRemainingCreditsIfUnset({
 }
 
 export async function syncUserCacheFromSubscription(uid, opts = {}) {
+  billingTraceEnter("billingEnforcementGateway.syncUserCacheFromSubscription", {
+    userId: uid ? String(uid) : null,
+    hasSession: Boolean(opts?.session),
+  });
   const subscription = await Subscription.findOne({ userId: uid }, null, {
     sort: { createdAt: -1 },
     ...opts,
   }).lean();
-  if (!subscription) return { ok: false, reason: "subscription_not_found" };
+  if (!subscription) {
+    billingTraceReturn("billingEnforcementGateway.syncUserCacheFromSubscription", "subscription_not_found", {
+      userId: uid ? String(uid) : null,
+    });
+    return { ok: false, reason: "subscription_not_found" };
+  }
   const patch = {
     remainingCredits: Number(subscription.remainingCredits || 0),
     totalCreditsUsed: Number(subscription.totalCreditsUsed || 0),
@@ -116,7 +131,14 @@ export async function syncUserCacheFromSubscription(uid, opts = {}) {
   if (!Number.isFinite(Number(patch.reservedCredits))) patch.reservedCredits = 0;
   if (!Number.isFinite(Number(patch.lifetimeCreditsPurchased))) patch.lifetimeCreditsPurchased = 0;
   await User.updateOne({ _id: uid }, { $set: patch }, opts);
-  return { ok: true };
+  const out = { ok: true };
+  billingTraceExit("billingEnforcementGateway.syncUserCacheFromSubscription", {
+    userId: uid ? String(uid) : null,
+    subscriptionId: subscription._id ? String(subscription._id) : null,
+    patch,
+    result: out,
+  });
+  return out;
 }
 
 /**
@@ -151,6 +173,20 @@ export async function applyBillingEvent(params) {
     reservedCreditsInc = 0,
   } = params || {};
 
+  billingTraceEnter("billingEnforcementGateway.applyBillingEvent", {
+    callId: callId ? String(callId) : null,
+    smsId: smsId ? String(smsId) : null,
+    userId: params?.userId ? String(params.userId) : null,
+    eventType: type || null,
+    idempotencyKey: params?.idempotencyKey ? normalizeIdempotencyKey(params.idempotencyKey) : null,
+    sourceService,
+    amount: params?.amount,
+    creditsToCharge: Number(params?.amount) < 0 ? Math.abs(Number(params?.amount)) : 0,
+    reservedCreditsInc,
+    allowNegative,
+    hasOuterSession: Boolean(outerSession),
+  });
+
   const validated = validateApplyBillingEventInput(params);
   if (!validated.ok) {
     const err = new Error(validated.error);
@@ -159,6 +195,12 @@ export async function applyBillingEvent(params) {
       idempotencyKey: params?.idempotencyKey,
       sourceService: params?.sourceService,
       type: params?.type,
+    });
+    billingTraceReturn("billingEnforcementGateway.applyBillingEvent", validated.error, {
+      callId: callId ? String(callId) : null,
+      userId: params?.userId ? String(params.userId) : null,
+      eventType: type || null,
+      sourceService,
     });
     throw err;
   }
@@ -169,17 +211,56 @@ export async function applyBillingEvent(params) {
 
   const runOnce = async (session) => {
     const opts = session ? { session } : {};
+    billingTrace("billingEnforcementGateway.applyBillingEvent", "RUN_ONCE_ENTER", {
+      callId: callObjectId ? String(callObjectId) : null,
+      userId: String(uid),
+      eventType: type,
+      idempotencyKey: keyStr,
+      sourceService,
+      amount: amountNum,
+      creditsToCharge: amountNum < 0 ? Math.abs(amountNum) : 0,
+      hasSession: Boolean(session),
+    });
 
     const mirrorJournal = async (ledgerRow) => {
-      if (!ledgerRow?.idempotencyKey) return;
+      if (!ledgerRow?.idempotencyKey) {
+        billingTraceReturn("billingEnforcementGateway.applyBillingEvent.mirrorJournal", "missing_ledger_idempotency_key", {
+          callId: callObjectId ? String(callObjectId) : null,
+          userId: String(uid),
+          eventType: type,
+          sourceService,
+        });
+        return;
+      }
       const journalOpts = session ? { session } : {};
       const journalExists = await BillingEventJournal.findOne(
         { eventId: keyStr },
         { _id: 1 },
         journalOpts
       ).lean();
-      if (journalExists) return;
+      if (journalExists) {
+        billingTraceReturn("billingEnforcementGateway.applyBillingEvent.mirrorJournal", "journal_already_exists", {
+          callId: callObjectId ? String(callObjectId) : null,
+          userId: String(uid),
+          eventType: type,
+          idempotencyKey: keyStr,
+          journalId: String(journalExists._id),
+        });
+        return;
+      }
+      billingTrace("billingEnforcementGateway.applyBillingEvent", "JOURNAL_INSERT_START", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        eventType: type,
+        idempotencyKey: keyStr,
+      });
       await appendJournalFromCreditLedger(ledgerRow, sourceService, reservedDelta, session || null);
+      billingTrace("billingEnforcementGateway.applyBillingEvent", "JOURNAL_INSERT_DONE", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        eventType: type,
+        idempotencyKey: keyStr,
+      });
     };
 
     const existing = await CreditLedger.findOne({ idempotencyKey: keyStr }, null, opts).lean();
@@ -204,7 +285,16 @@ export async function applyBillingEvent(params) {
       });
       await mirrorJournal(existing);
       await syncUserCacheFromSubscription(uid, opts).catch(() => {});
-      return { ok: true, duplicate: true, ledger: existing };
+      const out = { ok: true, duplicate: true, ledger: existing };
+      billingTraceReturn("billingEnforcementGateway.applyBillingEvent", "idempotency_existing_ledger", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        eventType: type,
+        idempotencyKey: keyStr,
+        ledgerId: existing._id ? String(existing._id) : null,
+        result: out,
+      });
+      return out;
     }
 
     const subscription = await Subscription.findOne({ userId: uid }, null, {
@@ -212,8 +302,23 @@ export async function applyBillingEvent(params) {
       ...opts,
     });
     if (!subscription) {
+      billingTraceReturn("billingEnforcementGateway.applyBillingEvent", "subscription_credit_wallet_not_found", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        eventType: type,
+        idempotencyKey: keyStr,
+      });
       throw new Error("subscription_credit_wallet_not_found");
     }
+    billingTrace("billingEnforcementGateway.applyBillingEvent", "SUBSCRIPTION_LOADED", {
+      callId: callObjectId ? String(callObjectId) : null,
+      userId: String(uid),
+      subscriptionId: String(subscription._id),
+      eventType: type,
+      idempotencyKey: keyStr,
+      remainingCredits: subscription.remainingCredits,
+      reservedCredits: subscription.reservedCredits,
+    });
 
     const before = Number(subscription.remainingCredits || 0);
     const after = before + amountNum;
@@ -230,12 +335,21 @@ export async function applyBillingEvent(params) {
         duplicate: false,
         status: "insufficient_credits",
       });
-      return {
+      const out = {
         ok: false,
         code: "INSUFFICIENT_CREDITS",
         balanceBefore: before,
         required: Math.abs(amountNum),
       };
+      billingTraceReturn("billingEnforcementGateway.applyBillingEvent", "insufficient_credits", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        subscriptionId: String(subscription._id),
+        eventType: type,
+        idempotencyKey: keyStr,
+        result: out,
+      });
+      return out;
     }
 
     const reservedBefore = Number(subscription.reservedCredits || 0);
@@ -254,13 +368,22 @@ export async function applyBillingEvent(params) {
           duplicate: false,
           status: "insufficient_credits_reservation",
         });
-        return {
+        const out = {
           ok: false,
           code: "INSUFFICIENT_CREDITS",
           balanceBefore: before,
           reservedBefore,
           required: reservedDelta,
         };
+        billingTraceReturn("billingEnforcementGateway.applyBillingEvent", "insufficient_credits_reservation", {
+          callId: callObjectId ? String(callObjectId) : null,
+          userId: String(uid),
+          subscriptionId: String(subscription._id),
+          eventType: type,
+          idempotencyKey: keyStr,
+          result: out,
+        });
+        return out;
       }
     }
 
@@ -280,6 +403,15 @@ export async function applyBillingEvent(params) {
     }
 
     try {
+      billingTrace("billingEnforcementGateway.applyBillingEvent", "SUBSCRIPTION_UPDATE_START", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        subscriptionId: String(subscription._id),
+        eventType: type,
+        idempotencyKey: keyStr,
+        walletFilter,
+        walletInc,
+      });
       const beforeDoc = await Subscription.findOneAndUpdate(
         walletFilter,
         { $inc: walletInc },
@@ -298,17 +430,36 @@ export async function applyBillingEvent(params) {
           duplicate: false,
           status: "insufficient_credits_race",
         });
-        return {
+        const out = {
           ok: false,
           code: "INSUFFICIENT_CREDITS",
           balanceBefore: before,
           required: amountNum < 0 ? Math.abs(amountNum) : 0,
         };
+        billingTraceReturn("billingEnforcementGateway.applyBillingEvent", "insufficient_credits_race", {
+          callId: callObjectId ? String(callObjectId) : null,
+          userId: String(uid),
+          subscriptionId: String(subscription._id),
+          eventType: type,
+          idempotencyKey: keyStr,
+          result: out,
+        });
+        return out;
       }
 
       const balanceBefore = Number(beforeDoc.remainingCredits || 0);
       const balanceAfter = balanceBefore + amountNum;
 
+      billingTrace("billingEnforcementGateway.applyBillingEvent", "LEDGER_INSERT_START", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        subscriptionId: String(subscription._id),
+        eventType: type,
+        idempotencyKey: keyStr,
+        amount: amountNum,
+        balanceBefore,
+        balanceAfter,
+      });
       const ledgerRows = await CreditLedger.create(
         [
           {
@@ -329,8 +480,32 @@ export async function applyBillingEvent(params) {
         opts
       );
       const ledger = ledgerRows[0];
+      billingTrace("billingEnforcementGateway.applyBillingEvent", "LEDGER_INSERT_DONE", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        subscriptionId: String(subscription._id),
+        eventType: type,
+        idempotencyKey: keyStr,
+        ledgerId: ledger?._id ? String(ledger._id) : null,
+        balanceBefore,
+        balanceAfter,
+      });
 
+      billingTrace("billingEnforcementGateway.applyBillingEvent", "USER_CACHE_UPDATE_START", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        subscriptionId: String(subscription._id),
+        eventType: type,
+        idempotencyKey: keyStr,
+      });
       await syncUserCacheFromSubscription(uid, opts).catch(() => {});
+      billingTrace("billingEnforcementGateway.applyBillingEvent", "USER_CACHE_UPDATE_DONE", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        subscriptionId: String(subscription._id),
+        eventType: type,
+        idempotencyKey: keyStr,
+      });
 
       recordBillingTrace({
         userId: String(uid),
@@ -347,7 +522,16 @@ export async function applyBillingEvent(params) {
 
       await mirrorJournal(ledger);
 
-      return { ok: true, duplicate: false, ledger };
+      const out = { ok: true, duplicate: false, ledger };
+      billingTraceExit("billingEnforcementGateway.applyBillingEvent", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        subscriptionId: String(subscription._id),
+        eventType: type,
+        idempotencyKey: keyStr,
+        result: out,
+      });
+      return out;
     } catch (err) {
       if (isDuplicateKeyError(err)) {
         const deduped = await CreditLedger.findOne({ idempotencyKey: keyStr }, null, opts).lean();
@@ -372,7 +556,17 @@ export async function applyBillingEvent(params) {
         });
         await mirrorJournal(deduped);
         await syncUserCacheFromSubscription(uid, opts).catch(() => {});
-        return { ok: true, duplicate: true, ledger: deduped };
+        const out = { ok: true, duplicate: true, ledger: deduped };
+        billingTraceReturn("billingEnforcementGateway.applyBillingEvent", "duplicate_key_race", {
+          callId: callObjectId ? String(callObjectId) : null,
+          userId: String(uid),
+          eventType: type,
+          idempotencyKey: keyStr,
+          ledgerId: deduped?._id ? String(deduped._id) : null,
+          error: err?.message || String(err),
+          result: out,
+        });
+        return out;
       }
       recordLedgerWriteFailure(err, {
         userId: uid,
@@ -382,23 +576,64 @@ export async function applyBillingEvent(params) {
         callId: callObjectId,
         smsId: smsObjectId,
       });
+      billingTraceReturn("billingEnforcementGateway.applyBillingEvent", "ledger_write_exception", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        eventType: type,
+        idempotencyKey: keyStr,
+        error: err?.message || String(err),
+      });
       throw err;
     }
   };
 
   if (outerSession) {
+    billingTrace("billingEnforcementGateway.applyBillingEvent", "USING_OUTER_SESSION", {
+      callId: callObjectId ? String(callObjectId) : null,
+      userId: String(uid),
+      eventType: type,
+      idempotencyKey: keyStr,
+    });
     return runOnce(outerSession);
   }
 
   if (mongoose.connection.readyState !== 1) {
+    billingTrace("billingEnforcementGateway.applyBillingEvent", "NO_MONGO_TRANSACTION_CONNECTION_NOT_READY", {
+      callId: callObjectId ? String(callObjectId) : null,
+      userId: String(uid),
+      eventType: type,
+      idempotencyKey: keyStr,
+      readyState: mongoose.connection.readyState,
+    });
     return runOnce(null);
   }
 
   const session = await mongoose.startSession();
   try {
-    return await session.withTransaction(() => runOnce(session));
+    billingTrace("billingEnforcementGateway.applyBillingEvent", "TRANSACTION_START", {
+      callId: callObjectId ? String(callObjectId) : null,
+      userId: String(uid),
+      eventType: type,
+      idempotencyKey: keyStr,
+    });
+    const result = await session.withTransaction(() => runOnce(session));
+    billingTrace("billingEnforcementGateway.applyBillingEvent", "TRANSACTION_COMMIT", {
+      callId: callObjectId ? String(callObjectId) : null,
+      userId: String(uid),
+      eventType: type,
+      idempotencyKey: keyStr,
+      result,
+    });
+    return result;
   } catch (err) {
     if (isTransactionUnsupportedError(err)) {
+      billingTraceReturn("billingEnforcementGateway.applyBillingEvent", "transaction_unsupported_fallback_no_session", {
+        callId: callObjectId ? String(callObjectId) : null,
+        userId: String(uid),
+        eventType: type,
+        idempotencyKey: keyStr,
+        error: err?.message || String(err),
+      });
       return runOnce(null);
     }
     recordLedgerWriteFailure(err, {
@@ -407,8 +642,21 @@ export async function applyBillingEvent(params) {
       sourceService,
       type,
     });
+    billingTraceReturn("billingEnforcementGateway.applyBillingEvent", "transaction_aborted", {
+      callId: callObjectId ? String(callObjectId) : null,
+      userId: String(uid),
+      eventType: type,
+      idempotencyKey: keyStr,
+      error: err?.message || String(err),
+    });
     throw err;
   } finally {
     await session.endSession().catch(() => {});
+    billingTrace("billingEnforcementGateway.applyBillingEvent", "TRANSACTION_SESSION_END", {
+      callId: callObjectId ? String(callObjectId) : null,
+      userId: String(uid),
+      eventType: type,
+      idempotencyKey: keyStr,
+    });
   }
 }

@@ -37,6 +37,7 @@ import {
   logCallLifecycle,
   shouldBlockAutomaticCleanup,
 } from '../utils/callLifecycleGuards';
+import { notifySubscriptionChanged } from '../utils/subscriptionSync';
 
 const CallContext = createContext(null);
 
@@ -897,15 +898,22 @@ export const CallProvider = ({ children }) => {
             }
           }
         }
-        void API.patch(`/api/calls/${oid}`, {
-          status: terminalStatus,
-          callEndedAt: new Date().toISOString(),
-          durationSeconds: dur,
-          ...(hangupCauseDb ? { hangupCause: hangupCauseDb } : {}),
-          ...(hangupCauseCodeDb ? { hangupCauseCode: hangupCauseCodeDb } : {}),
-        }).catch((e) => {
+        try {
+          await API.patch(`/api/calls/${oid}`, {
+            status: terminalStatus,
+            callEndedAt: new Date().toISOString(),
+            durationSeconds: dur,
+            lastHeartbeatAt: new Date().toISOString(),
+            ...(hangupCauseDb ? { hangupCause: hangupCauseDb } : {}),
+            ...(hangupCauseCodeDb ? { hangupCauseCode: hangupCauseCodeDb } : {}),
+          });
+        } catch (e) {
           console.error("[WEBRTC] terminal PATCH failed:", e);
-        });
+        }
+        notifySubscriptionChanged({ reason: 'call-ended' });
+        window.setTimeout(() => {
+          notifySubscriptionChanged({ reason: 'call-billing-settle' });
+        }, 2500);
       }
       lastOutboundHangupMetaRef.current = null;
 
@@ -1314,6 +1322,7 @@ export const CallProvider = ({ children }) => {
               console.log('[WEBRTC] RINGING (from trying/recovering)');
               void API.patch(`/api/calls/${call._dbCallId}`, {
                 status: 'ringing',
+                lastHeartbeatAt: new Date().toISOString(),
               }).catch((e) => console.warn('[WEBRTC] ringing PATCH:', e));
             }
             setCallState(CALL_STATES.RINGING);
@@ -1372,6 +1381,7 @@ export const CallProvider = ({ children }) => {
             console.log("[WEBRTC] RINGING");
             void API.patch(`/api/calls/${call._dbCallId}`, {
               status: "ringing",
+              lastHeartbeatAt: new Date().toISOString(),
             }).catch((e) => console.warn("[WEBRTC] ringing PATCH:", e));
             void patchCallProviderIds(call._dbCallId, audioSource);
           }
@@ -1460,6 +1470,7 @@ export const CallProvider = ({ children }) => {
             void API.patch(`/api/calls/${audioSource._dbCallId}`, {
               status: "in-progress",
               callStartedAt: new Date().toISOString(),
+              lastHeartbeatAt: new Date().toISOString(),
             }).catch((e) => console.warn("[WEBRTC] active PATCH:", e));
             void patchCallProviderIds(audioSource._dbCallId, audioSource);
           }
@@ -2915,9 +2926,23 @@ export const CallProvider = ({ children }) => {
               ...snapshotEntry(localSession),
               error: saved.error || null,
             });
+            userEndedFullCallRef.current = true;
+            const liveLeg = currentCallRef.current || call;
+            safeHangupTelnyxCall(liveLeg, 'user_hangup');
+            for (const leg of Object.values(telnyxClientRef.current?.calls || {})) {
+              if (leg && leg !== liveLeg && !isTelnyxTerminalCall(leg)) {
+                safeHangupTelnyxCall(leg, 'user_hangup');
+              }
+            }
+            outboundDialActiveRef.current = false;
+            outboundDialStartedAtRef.current = 0;
+            outboundNewCallLegRef.current = null;
+            outboundLegArrivalMsRef.current = {};
+            outboundCallRecordIdRef.current = null;
+            setCallState(CALL_STATES.IDLE);
             setError(
               (saved.error || 'Could not register call with server') +
-                ' — call continues; billing may sync when connected.'
+                ' — call ended to prevent unbilled usage.'
             );
             return;
           }
@@ -2938,6 +2963,29 @@ export const CallProvider = ({ children }) => {
             legId: call.id,
             localCallId: localSession.localCallId,
           });
+          notifySubscriptionChanged({ reason: 'call-reserved' });
+
+          const uiState = callStateRef.current;
+          const catchUpBody = { lastHeartbeatAt: new Date().toISOString() };
+          if (
+            (uiState === CALL_STATES.RINGING || uiState === CALL_STATES.CONNECTING) &&
+            !webRtcDbSyncRef.current.ringing
+          ) {
+            webRtcDbSyncRef.current.ringing = true;
+            catchUpBody.status = 'ringing';
+          } else if (
+            (uiState === CALL_STATES.ACTIVE || uiState === CALL_STATES.HELD) &&
+            !webRtcDbSyncRef.current.active
+          ) {
+            webRtcDbSyncRef.current.active = true;
+            catchUpBody.status = 'in-progress';
+            catchUpBody.callStartedAt = new Date().toISOString();
+          }
+          if (catchUpBody.status) {
+            void API.patch(`/api/calls/${id}`, catchUpBody).catch((e) =>
+              console.warn('[WEBRTC] catch-up status PATCH:', e)
+            );
+          }
 
           if (isCallMinimalClient) {
             console.log('[CALL FLOW] VITE_CALL_MINIMAL_MODE: skipped repair-outbound');
@@ -2981,9 +3029,23 @@ export const CallProvider = ({ children }) => {
             localCallId: localSession.localCallId,
             message: e?.message || String(e),
           });
+          userEndedFullCallRef.current = true;
+          const liveLeg = currentCallRef.current || call;
+          safeHangupTelnyxCall(liveLeg, 'user_hangup');
+          for (const leg of Object.values(telnyxClientRef.current?.calls || {})) {
+            if (leg && leg !== liveLeg && !isTelnyxTerminalCall(leg)) {
+              safeHangupTelnyxCall(leg, 'user_hangup');
+            }
+          }
+          outboundDialActiveRef.current = false;
+          outboundDialStartedAtRef.current = 0;
+          outboundNewCallLegRef.current = null;
+          outboundLegArrivalMsRef.current = {};
+          outboundCallRecordIdRef.current = null;
+          setCallState(CALL_STATES.IDLE);
           setError(
             (e?.message || 'Call registration failed') +
-              ' — call continues locally.'
+              ' — call ended to prevent unbilled usage.'
           );
         }
       })();

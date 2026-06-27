@@ -22,6 +22,13 @@ import {
   getUserProfitGuardrails,
   getReservationMultiplierFromGuardrails,
 } from "./profitGuardrailService.js";
+import {
+  billingTrace,
+  billingTraceEnter,
+  billingTraceExit,
+  billingTraceReturn,
+  traceCall,
+} from "./billingRuntimeTraceService.js";
 
 const ECON_LOCK_PREFIX = "lock:economic:";
 const LOCAL_ECON_LOCKS = new Map();
@@ -95,7 +102,16 @@ async function releaseRedisEconomic(lockKey, ownerId) {
  */
 export async function withEconomicCallLock(callId, fn, options = {}) {
   const lockId = String(callId || "");
-  if (!lockId) return { ok: false, reason: "invalid_call_id" };
+  billingTraceEnter("economicSerializationService.withEconomicCallLock", {
+    callId: lockId || null,
+    options,
+  });
+  if (!lockId) {
+    billingTraceReturn("economicSerializationService.withEconomicCallLock", "invalid_call_id", {
+      callId: null,
+    });
+    return { ok: false, reason: "invalid_call_id" };
+  }
   const lockKey = `${ECON_LOCK_PREFIX}${lockId}`;
   const ownerId = randomUUID();
   const leaseMs = Math.max(500, Number(options.leaseMs || DEFAULT_ECON_LOCK_MS));
@@ -118,11 +134,26 @@ export async function withEconomicCallLock(callId, fn, options = {}) {
 
   if (!acquired) {
     console.warn("[ECONOMIC FLOW]", { event: "lock_not_acquired", callId: lockId, mode, timeoutMs });
+    billingTraceReturn("economicSerializationService.withEconomicCallLock", "economic_lock_not_acquired", {
+      callId: lockId,
+      mode,
+      timeoutMs,
+    });
     return { ok: false, reason: "economic_lock_not_acquired" };
   }
 
   try {
+    billingTrace("economicSerializationService.withEconomicCallLock", "LOCK_ACQUIRED", {
+      callId: lockId,
+      mode,
+      timeoutMs,
+    });
     const value = await fn();
+    billingTraceExit("economicSerializationService.withEconomicCallLock", {
+      callId: lockId,
+      mode,
+      result: value,
+    });
     return { ok: true, value };
   } finally {
     try {
@@ -292,9 +323,25 @@ async function applyEconomicMutationOnce(session, params) {
     sourceService = "economicSerializationService",
   } = params;
 
+  billingTraceEnter("economicSerializationService.applyEconomicMutationOnce", {
+    callId: callId ? String(callId) : null,
+    userId: userId ? String(userId) : null,
+    mutation,
+    eventName: payload?.eventName || null,
+    creditsToCharge: payload?.amount ?? null,
+    sourceService,
+    hasSession: Boolean(session),
+    clientMutationId: payload?.clientMutationId || null,
+  });
+
   const cid = toObjectId(callId);
   const uid = toObjectId(userId);
   if (!cid || !uid) {
+    billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "invalid_ids", {
+      callId: callId ? String(callId) : null,
+      userId: userId ? String(userId) : null,
+      mutation,
+    });
     return { ok: false, code: "INVALID_IDS" };
   }
 
@@ -306,12 +353,24 @@ async function applyEconomicMutationOnce(session, params) {
     .lean();
 
   if (!callLean || String(callLean.user) !== String(uid)) {
+    billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "call_mismatch", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      foundCall: traceCall(callLean),
+    });
     return { ok: false, code: "CALL_MISMATCH" };
   }
 
   if (payload.clientMutationId) {
     const pre = await loadTimeline(session, cid);
     if (pre && hasProcessedId(pre, payload.clientMutationId)) {
+      billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "duplicate_client_mutation_id_pre", {
+        callId: String(cid),
+        userId: String(uid),
+        mutation,
+        clientMutationId: payload.clientMutationId,
+      });
       return { ok: true, duplicate: true, reason: "duplicate_client_mutation_id" };
     }
   }
@@ -321,9 +380,24 @@ async function applyEconomicMutationOnce(session, params) {
   const vCheck = validateEconomicMutationOrder(timeline, mutation);
   if (!vCheck.ok) {
     econLog("mutation_rejected", { callId: String(cid), mutation, code: vCheck.code });
+    billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", vCheck.code || "mutation_rejected", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      timelineState: timeline?.timelineState || null,
+      finalizedAt: timeline?.finalizedAt || null,
+      message: vCheck.message,
+    });
     return { ok: false, code: vCheck.code, message: vCheck.message };
   }
   if (vCheck.duplicateFinalize && mutation === ECONOMIC_MUTATION.FINALIZE) {
+    billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "already_finalized", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      timelineState: timeline?.timelineState || null,
+      finalizedAt: timeline?.finalizedAt || null,
+    });
     return { ok: true, duplicate: true, reason: "already_finalized" };
   }
 
@@ -343,6 +417,12 @@ async function applyEconomicMutationOnce(session, params) {
 
   let doc = await reload();
   if (payload.clientMutationId && hasProcessedId(doc, payload.clientMutationId)) {
+    billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "duplicate_client_mutation_id_reload", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      clientMutationId: payload.clientMutationId,
+    });
     return { ok: true, duplicate: true, reason: "duplicate_client_mutation_id" };
   }
 
@@ -359,10 +439,24 @@ async function applyEconomicMutationOnce(session, params) {
     stampDocHash(doc);
     await EconomicTimeline.replaceOne({ _id: doc._id }, doc, opts);
     econLog("finalized", { callId: String(cid), version: doc.economicVersion });
-    return { ok: true, duplicate: false, timeline: await reload() };
+    const out = { ok: true, duplicate: false, timeline: await reload() };
+    billingTraceExit("economicSerializationService.applyEconomicMutationOnce", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      result: out,
+    });
+    return out;
   }
 
   if (doc.finalizedAt) {
+    billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "timeline_finalized", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      finalizedAt: doc.finalizedAt,
+      timelineState: doc.timelineState,
+    });
     return { ok: false, code: "FINALIZED", message: "timeline_finalized" };
   }
 
@@ -385,7 +479,15 @@ async function applyEconomicMutationOnce(session, params) {
     if (payload.clientMutationId) rememberProcessedId(doc, payload.clientMutationId);
     stampDocHash(doc);
     await EconomicTimeline.replaceOne({ _id: doc._id }, doc, opts);
-    return { ok: true, billing: r, timeline: await reload() };
+    const out = { ok: true, billing: r, timeline: await reload() };
+    billingTraceExit("economicSerializationService.applyEconomicMutationOnce", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      idempotencyKey: key,
+      result: out,
+    });
+    return out;
   }
 
   if (mutation === ECONOMIC_MUTATION.RESERVE) {
@@ -408,7 +510,16 @@ async function applyEconomicMutationOnce(session, params) {
       reservedCreditsInc: hold,
       ...billingOpts,
     });
-    if (!r.ok && r.code === "INSUFFICIENT_CREDITS") return r;
+    if (!r.ok && r.code === "INSUFFICIENT_CREDITS") {
+      billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "insufficient_credits_reserve", {
+        callId: String(cid),
+        userId: String(uid),
+        mutation,
+        idempotencyKey,
+        result: r,
+      });
+      return r;
+    }
     if (!r.duplicate) {
       doc.reservedCredits = Number(doc.reservedCredits || 0) + hold;
     }
@@ -417,7 +528,17 @@ async function applyEconomicMutationOnce(session, params) {
     if (payload.clientMutationId) rememberProcessedId(doc, payload.clientMutationId);
     stampDocHash(doc);
     await EconomicTimeline.replaceOne({ _id: doc._id }, doc, opts);
-    return { ok: true, billing: r, timeline: await reload() };
+    const out = { ok: true, billing: r, timeline: await reload() };
+    billingTraceExit("economicSerializationService.applyEconomicMutationOnce", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      idempotencyKey,
+      creditsToCharge: 0,
+      reservedCreditsInc: hold,
+      result: out,
+    });
+    return out;
   }
 
   if (mutation === ECONOMIC_MUTATION.ATTEMPT_CHARGE) {
@@ -434,7 +555,17 @@ async function applyEconomicMutationOnce(session, params) {
       allowNegative: false,
       ...billingOpts,
     });
-    if (!r.ok && r.code === "INSUFFICIENT_CREDITS") return r;
+    if (!r.ok && r.code === "INSUFFICIENT_CREDITS") {
+      billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "insufficient_credits_attempt", {
+        callId: String(cid),
+        userId: String(uid),
+        mutation,
+        idempotencyKey: key,
+        creditsToCharge: CREDIT_RULES.outboundAttemptCharge,
+        result: r,
+      });
+      return r;
+    }
     if (!r.duplicate) {
       doc.consumedCredits = Number(doc.consumedCredits || 0) + CREDIT_RULES.outboundAttemptCharge;
     }
@@ -443,7 +574,16 @@ async function applyEconomicMutationOnce(session, params) {
     if (payload.clientMutationId) rememberProcessedId(doc, payload.clientMutationId);
     stampDocHash(doc);
     await EconomicTimeline.replaceOne({ _id: doc._id }, doc, opts);
-    return { ok: true, billing: r, timeline: await reload() };
+    const out = { ok: true, billing: r, timeline: await reload() };
+    billingTraceExit("economicSerializationService.applyEconomicMutationOnce", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      idempotencyKey: key,
+      creditsToCharge: CREDIT_RULES.outboundAttemptCharge,
+      result: out,
+    });
+    return out;
   }
 
   if (mutation === ECONOMIC_MUTATION.EVENT_CHARGE) {
@@ -451,13 +591,35 @@ async function applyEconomicMutationOnce(session, params) {
     const eventName = String(payload.eventName || "").trim();
     const amount = Math.max(0, Number(payload.amount ?? rateCallEvent(eventName)) || 0);
     if (!eventName) {
+      billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "invalid_event", {
+        callId: String(cid),
+        userId: String(uid),
+        mutation,
+        eventName,
+      });
       return { ok: false, code: "INVALID_EVENT" };
     }
     if (amount <= 0) {
       // Zero-rated event (e.g. carrier_reject_before_routing) — record nothing, no debit.
+      billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "zero_rated_event", {
+        callId: String(cid),
+        userId: String(uid),
+        mutation,
+        eventName,
+        creditsToCharge: amount,
+      });
       return { ok: true, skipped: true, reason: "zero_rated_event", eventName };
     }
     const key = `call:${String(cid)}:event:${eventName}`;
+    billingTrace("economicSerializationService.applyEconomicMutationOnce", "BEFORE_APPLY_BILLING_EVENT", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      eventName,
+      idempotencyKey: key,
+      creditsToCharge: amount,
+      amount: -amount,
+    });
     const r = await applyBillingEvent({
       userId: uid,
       amount: -amount,
@@ -470,7 +632,18 @@ async function applyEconomicMutationOnce(session, params) {
       allowNegative: Boolean(payload.allowNegative),
       ...billingOpts,
     });
-    if (!r.ok && r.code === "INSUFFICIENT_CREDITS") return r;
+    if (!r.ok && r.code === "INSUFFICIENT_CREDITS") {
+      billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "insufficient_credits_event_charge", {
+        callId: String(cid),
+        userId: String(uid),
+        mutation,
+        eventName,
+        idempotencyKey: key,
+        creditsToCharge: amount,
+        result: r,
+      });
+      return r;
+    }
     if (!r.duplicate) {
       doc.consumedCredits = Number(doc.consumedCredits || 0) + amount;
     }
@@ -486,7 +659,17 @@ async function applyEconomicMutationOnce(session, params) {
     if (payload.clientMutationId) rememberProcessedId(doc, payload.clientMutationId);
     stampDocHash(doc);
     await EconomicTimeline.replaceOne({ _id: doc._id }, doc, opts);
-    return { ok: true, billing: r, eventName, amount, timeline: await reload() };
+    const out = { ok: true, billing: r, eventName, amount, timeline: await reload() };
+    billingTraceExit("economicSerializationService.applyEconomicMutationOnce", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      eventName,
+      idempotencyKey: key,
+      creditsToCharge: amount,
+      result: out,
+    });
+    return out;
   }
 
   if (mutation === ECONOMIC_MUTATION.INTERVAL_CHARGE) {
@@ -494,9 +677,24 @@ async function applyEconomicMutationOnce(session, params) {
     const indexes = new Set((doc.billedIntervalIndexes || []).map(Number));
     if (indexes.has(intervalIndex)) {
       econLog("interval_duplicate_skipped", { callId: String(cid), intervalIndex });
+      billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "interval_already_billed", {
+        callId: String(cid),
+        userId: String(uid),
+        mutation,
+        intervalIndex,
+      });
       return { ok: true, duplicate: true, reason: "interval_already_billed", intervalIndex };
     }
     const key = `call:${String(cid)}:duration:${intervalIndex}`;
+    billingTrace("economicSerializationService.applyEconomicMutationOnce", "BEFORE_APPLY_BILLING_EVENT", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      intervalIndex,
+      idempotencyKey: key,
+      creditsToCharge: CREDIT_RULES.connectedIntervalCharge,
+      amount: -CREDIT_RULES.connectedIntervalCharge,
+    });
     const r = await applyBillingEvent({
       userId: uid,
       amount: -CREDIT_RULES.connectedIntervalCharge,
@@ -513,7 +711,18 @@ async function applyEconomicMutationOnce(session, params) {
       allowNegative: false,
       ...billingOpts,
     });
-    if (!r.ok && r.code === "INSUFFICIENT_CREDITS") return r;
+    if (!r.ok && r.code === "INSUFFICIENT_CREDITS") {
+      billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "insufficient_credits_interval_charge", {
+        callId: String(cid),
+        userId: String(uid),
+        mutation,
+        intervalIndex,
+        idempotencyKey: key,
+        creditsToCharge: CREDIT_RULES.connectedIntervalCharge,
+        result: r,
+      });
+      return r;
+    }
     indexes.add(intervalIndex);
     doc.billedIntervalIndexes = [...indexes].sort((a, b) => a - b);
     if (!r.duplicate) {
@@ -524,7 +733,17 @@ async function applyEconomicMutationOnce(session, params) {
     if (payload.clientMutationId) rememberProcessedId(doc, payload.clientMutationId);
     stampDocHash(doc);
     await EconomicTimeline.replaceOne({ _id: doc._id }, doc, opts);
-    return { ok: true, billing: r, intervalIndex, timeline: await reload() };
+    const out = { ok: true, billing: r, intervalIndex, timeline: await reload() };
+    billingTraceExit("economicSerializationService.applyEconomicMutationOnce", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      intervalIndex,
+      idempotencyKey: key,
+      creditsToCharge: CREDIT_RULES.connectedIntervalCharge,
+      result: out,
+    });
+    return out;
   }
 
   if (mutation === ECONOMIC_MUTATION.SETTLE_RESERVATION) {
@@ -558,7 +777,16 @@ async function applyEconomicMutationOnce(session, params) {
     if (payload.clientMutationId) rememberProcessedId(doc, payload.clientMutationId);
     stampDocHash(doc);
     await EconomicTimeline.replaceOne({ _id: doc._id }, doc, opts);
-    return { ok: true, billing: r, timeline: await reload() };
+    const out = { ok: true, billing: r, timeline: await reload() };
+    billingTraceExit("economicSerializationService.applyEconomicMutationOnce", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      idempotencyKey,
+      reservedCreditsInc: -amount,
+      result: out,
+    });
+    return out;
   }
 
   if (mutation === ECONOMIC_MUTATION.RELEASE_RESERVATION) {
@@ -590,9 +818,23 @@ async function applyEconomicMutationOnce(session, params) {
       "./reservationReconciliationService.js"
     );
     await syncSubscriptionReservedFromTimelines(uid).catch(() => {});
-    return { ok: true, billing: r, timeline: await reload() };
+    const out = { ok: true, billing: r, timeline: await reload() };
+    billingTraceExit("economicSerializationService.applyEconomicMutationOnce", {
+      callId: String(cid),
+      userId: String(uid),
+      mutation,
+      idempotencyKey,
+      reservedCreditsInc: release > 0 ? -release : 0,
+      result: out,
+    });
+    return out;
   }
 
+  billingTraceReturn("economicSerializationService.applyEconomicMutationOnce", "unknown_mutation", {
+    callId: String(cid),
+    userId: String(uid),
+    mutation,
+  });
   return { ok: false, code: "UNKNOWN_MUTATION" };
 }
 
@@ -600,6 +842,12 @@ async function applyEconomicMutationOnce(session, params) {
  * Public API — acquires economic lock and runs mutation inside a Mongo transaction when possible.
  */
 export async function applyEconomicMutation(params) {
+  billingTraceEnter("economicSerializationService.applyEconomicMutation", {
+    callId: params?.callId ? String(params.callId) : null,
+    userId: params?.userId ? String(params.userId) : null,
+    mutation: params?.mutation || null,
+    sourceService: params?.sourceService || null,
+  });
   const callId = params.callId;
   const lock = await withEconomicCallLock(callId, async () => {
     if (mongoose.connection.readyState !== 1) {
@@ -617,7 +865,17 @@ export async function applyEconomicMutation(params) {
       await session.endSession().catch(() => {});
     }
   });
-  if (!lock.ok) return { ok: false, code: lock.reason };
+  if (!lock.ok) {
+    billingTraceReturn("economicSerializationService.applyEconomicMutation", lock.reason || "lock_failed", {
+      callId: callId ? String(callId) : null,
+      result: lock,
+    });
+    return { ok: false, code: lock.reason };
+  }
+  billingTraceExit("economicSerializationService.applyEconomicMutation", {
+    callId: callId ? String(callId) : null,
+    result: lock.value,
+  });
   return lock.value;
 }
 
@@ -734,13 +992,22 @@ async function runPreAnswerIntervalBillingBatch(session, call, maxIdx, bucketSec
 }
 
 export async function billConnectedDurationIntervalsSerialized(call) {
-  if (!call?._id || !call?.user) return { ok: true, skipped: true };
-  const ACTIVE_STATES = new Set(["answered", "in-progress"]);
-  if (!ACTIVE_STATES.has(String(call.status))) {
-    return { ok: true, skipped: true, reason: "not_active" };
+  billingTraceEnter("economicSerializationService.billConnectedDurationIntervalsSerialized", {
+    input: traceCall(call),
+  });
+  if (!call?._id || !call?.user) {
+    billingTraceReturn("economicSerializationService.billConnectedDurationIntervalsSerialized", "missing_call_or_user", {
+      input: traceCall(call),
+    });
+    return { ok: true, skipped: true };
   }
   const answeredAt = call.callAnsweredAt || call.callStartedAt;
-  if (!answeredAt) return { ok: true, skipped: true, reason: "not_answered" };
+  if (!answeredAt) {
+    billingTraceReturn("economicSerializationService.billConnectedDurationIntervalsSerialized", "not_answered", {
+      input: traceCall(call),
+    });
+    return { ok: true, skipped: true, reason: "not_answered" };
+  }
 
   const lock = await withEconomicCallLock(call._id, async () => {
     if (mongoose.connection.readyState !== 1) {
@@ -758,7 +1025,17 @@ export async function billConnectedDurationIntervalsSerialized(call) {
       await session.endSession().catch(() => {});
     }
   });
-  if (!lock.ok) return { ok: false, code: lock.reason };
+  if (!lock.ok) {
+    billingTraceReturn("economicSerializationService.billConnectedDurationIntervalsSerialized", lock.reason || "lock_failed", {
+      input: traceCall(call),
+      result: lock,
+    });
+    return { ok: false, code: lock.reason };
+  }
+  billingTraceExit("economicSerializationService.billConnectedDurationIntervalsSerialized", {
+    input: traceCall(call),
+    result: lock.value,
+  });
   return lock.value;
 }
 
@@ -858,7 +1135,14 @@ export function recomputeTimelineHashFromLean(doc) {
  * Serialized outbound reserve + optional risk pricing (same lock + transaction).
  */
 export async function reserveCreditsForOutboundCallSerialized(call, options = {}) {
+  billingTraceEnter("economicSerializationService.reserveCreditsForOutboundCallSerialized", {
+    input: traceCall(call),
+    options,
+  });
   if (!call?._id || !call?.user || call.direction !== "outbound") {
+    billingTraceReturn("economicSerializationService.reserveCreditsForOutboundCallSerialized", "not_outbound_or_missing_call_user", {
+      input: traceCall(call),
+    });
     return { ok: true, skipped: true };
   }
   const lock = await withEconomicCallLock(call._id, async () => {
@@ -877,7 +1161,17 @@ export async function reserveCreditsForOutboundCallSerialized(call, options = {}
       await session.endSession().catch(() => {});
     }
   });
-  if (!lock.ok) return { ok: false, code: lock.reason };
+  if (!lock.ok) {
+    billingTraceReturn("economicSerializationService.reserveCreditsForOutboundCallSerialized", lock.reason || "lock_failed", {
+      input: traceCall(call),
+      result: lock,
+    });
+    return { ok: false, code: lock.reason };
+  }
+  billingTraceExit("economicSerializationService.reserveCreditsForOutboundCallSerialized", {
+    input: traceCall(call),
+    result: lock.value,
+  });
   return lock.value;
 }
 
@@ -942,7 +1236,14 @@ async function runReserveBatch(session, call, options) {
  * Serialized attempt charge.
  */
 export async function chargeOutboundAttemptSerialized(call) {
+  billingTraceEnter("economicSerializationService.chargeOutboundAttemptSerialized", {
+    input: traceCall(call),
+    creditsToCharge: CREDIT_RULES.outboundAttemptCharge,
+  });
   if (!call?._id || !call?.user || call.direction !== "outbound") {
+    billingTraceReturn("economicSerializationService.chargeOutboundAttemptSerialized", "not_outbound_or_missing_call_user", {
+      input: traceCall(call),
+    });
     return { ok: true, skipped: true };
   }
   const lock = await withEconomicCallLock(call._id, async () => {
@@ -978,7 +1279,17 @@ export async function chargeOutboundAttemptSerialized(call) {
       await session.endSession().catch(() => {});
     }
   });
-  if (!lock.ok) return { ok: false, code: lock.reason };
+  if (!lock.ok) {
+    billingTraceReturn("economicSerializationService.chargeOutboundAttemptSerialized", lock.reason || "lock_failed", {
+      input: traceCall(call),
+      result: lock,
+    });
+    return { ok: false, code: lock.reason };
+  }
+  billingTraceExit("economicSerializationService.chargeOutboundAttemptSerialized", {
+    input: traceCall(call),
+    result: lock.value,
+  });
   return lock.value;
 }
 
@@ -991,7 +1302,17 @@ export async function chargeOutboundAttemptSerialized(call) {
  * @param {object} [options] - { amount?, allowNegative?, reason?, metadata? }
  */
 export async function chargeCallEventSerialized(call, eventName, options = {}) {
+  billingTraceEnter("economicSerializationService.chargeCallEventSerialized", {
+    input: traceCall(call),
+    eventName,
+    creditsToCharge: options.amount ?? rateCallEvent(eventName),
+    options,
+  });
   if (!call?._id || !call?.user) {
+    billingTraceReturn("economicSerializationService.chargeCallEventSerialized", "missing_call_or_user", {
+      input: traceCall(call),
+      eventName,
+    });
     return { ok: true, skipped: true };
   }
   const params = {
@@ -1023,7 +1344,19 @@ export async function chargeCallEventSerialized(call, eventName, options = {}) {
       await session.endSession().catch(() => {});
     }
   });
-  if (!lock.ok) return { ok: false, code: lock.reason };
+  if (!lock.ok) {
+    billingTraceReturn("economicSerializationService.chargeCallEventSerialized", lock.reason || "lock_failed", {
+      input: traceCall(call),
+      eventName,
+      result: lock,
+    });
+    return { ok: false, code: lock.reason };
+  }
+  billingTraceExit("economicSerializationService.chargeCallEventSerialized", {
+    input: traceCall(call),
+    eventName,
+    result: lock.value,
+  });
   return lock.value;
 }
 
@@ -1031,9 +1364,23 @@ export async function chargeCallEventSerialized(call, eventName, options = {}) {
  * Serialized terminal release of unused reservation credits.
  */
 export async function releaseUnusedCallReservationSerialized(call) {
-  if (!call?._id || !call?.user) return { ok: true, skipped: true };
+  billingTraceEnter("economicSerializationService.releaseUnusedCallReservationSerialized", {
+    input: traceCall(call),
+  });
+  if (!call?._id || !call?.user) {
+    billingTraceReturn("economicSerializationService.releaseUnusedCallReservationSerialized", "missing_call_or_user", {
+      input: traceCall(call),
+    });
+    return { ok: true, skipped: true };
+  }
   const held = Math.max(0, Number(call.creditReservationHeld || 0));
-  if (held <= 0) return { ok: true, skipped: true };
+  if (held <= 0) {
+    billingTraceReturn("economicSerializationService.releaseUnusedCallReservationSerialized", "nothing_held", {
+      input: traceCall(call),
+      held,
+    });
+    return { ok: true, skipped: true };
+  }
 
   const alreadyCharged = Math.max(
     0,
@@ -1057,7 +1404,17 @@ export async function releaseUnusedCallReservationSerialized(call) {
       await session.endSession().catch(() => {});
     }
   });
-  if (!lock.ok) return { ok: false, code: lock.reason };
+  if (!lock.ok) {
+    billingTraceReturn("economicSerializationService.releaseUnusedCallReservationSerialized", lock.reason || "lock_failed", {
+      input: traceCall(call),
+      result: lock,
+    });
+    return { ok: false, code: lock.reason };
+  }
+  billingTraceExit("economicSerializationService.releaseUnusedCallReservationSerialized", {
+    input: traceCall(call),
+    result: lock.value,
+  });
   return lock.value;
 }
 
@@ -1091,10 +1448,20 @@ async function runReleaseBatch(session, call, releasable) {
  * Mark economic timeline immutable after terminal billing cleanup.
  */
 export async function finalizeEconomicTimelineForCall(callId, userId) {
-  return applyEconomicMutation({
+  billingTraceEnter("economicSerializationService.finalizeEconomicTimelineForCall", {
+    callId: callId ? String(callId) : null,
+    userId: userId ? String(userId) : null,
+  });
+  const result = await applyEconomicMutation({
     callId,
     userId,
     mutation: ECONOMIC_MUTATION.FINALIZE,
     sourceService: "economicSerializationService.finalizeEconomicTimelineForCall",
   });
+  billingTraceExit("economicSerializationService.finalizeEconomicTimelineForCall", {
+    callId: callId ? String(callId) : null,
+    userId: userId ? String(userId) : null,
+    result,
+  });
+  return result;
 }

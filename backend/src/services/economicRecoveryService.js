@@ -6,7 +6,6 @@
 import Call from "../models/Call.js";
 import EconomicTimeline from "../models/EconomicTimeline.js";
 import { BILLING_MATRIX_CALL_SOURCE } from "../config/creditConfig.js";
-import { billConnectedDurationIntervalsSerialized } from "./economicSerializationService.js";
 
 const TICK_MS = Number(process.env.CALL_CREDIT_TICK_MS || 6000);
 
@@ -34,16 +33,19 @@ export async function recoverActiveCallEconomics(options = {}) {
       recoveryLog("single_skip", { reason: "call_not_found", callId: String(options.callId) });
       return { mode, processed: 0, results: [], reason: "call_not_found" };
     }
+    const answeredAt = live.callAnsweredAt || live.callStartedAt;
+    const isActive = ["answered", "in-progress"].includes(String(live.status || ""));
+    if (!isActive && !answeredAt) {
+      recoveryLog("single_skip", { reason: "not_billable", callId: String(live._id), status: live.status });
+      return { mode, processed: 0, results: [], reason: "not_billable_call" };
+    }
     const tl = await EconomicTimeline.findOne({ callId: live._id }).select("finalizedAt").lean();
-    if (tl?.finalizedAt) {
+    if (tl?.finalizedAt && !answeredAt) {
       recoveryLog("single_skip", { reason: "finalized", callId: String(live._id) });
       return { mode, processed: 0, results: [], reason: "timeline_finalized" };
     }
-    if (!["answered", "in-progress"].includes(String(live.status || ""))) {
-      recoveryLog("single_skip", { reason: "not_active", callId: String(live._id), status: live.status });
-      return { mode, processed: 0, results: [], reason: "not_active_call" };
-    }
-    const r = await billConnectedDurationIntervalsSerialized(live);
+    const { billConnectedDurationIntervals } = await import("./callCreditBillingService.js");
+    const r = await billConnectedDurationIntervals(live);
     recoveryLog("single_applied", { callId: String(live._id), result: r });
     return { mode, processed: 1, results: [{ callId: String(live._id), ok: true, result: r }] };
   }
@@ -69,10 +71,14 @@ export async function recoverActiveCallEconomics(options = {}) {
     if (tl?.finalizedAt) continue;
 
     const live = await Call.findById(c._id).lean();
-    if (!live || !["answered", "in-progress"].includes(String(live.status || ""))) continue;
+    if (!live) continue;
+    const answeredAt = live.callAnsweredAt || live.callStartedAt;
+    const isActive = ["answered", "in-progress"].includes(String(live.status || ""));
+    if (!isActive && !answeredAt) continue;
 
     try {
-      const r = await billConnectedDurationIntervalsSerialized(live);
+      const { billConnectedDurationIntervals } = await import("./callCreditBillingService.js");
+      const r = await billConnectedDurationIntervals(live);
       results.push({ callId: String(c._id), ok: true, result: r });
       recoveryLog("recovered", { callId: String(c._id), mode, chargedNow: r?.chargedNow });
     } catch (err) {

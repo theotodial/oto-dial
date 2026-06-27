@@ -2,8 +2,11 @@ import express from "express";
 import requireAdmin from "../../middleware/requireAdmin.js";
 import Call from "../../models/Call.js";
 import SMS from "../../models/SMS.js";
-import PhoneNumber from "../../models/PhoneNumber.js";
-import TelnyxCost from "../../models/TelnyxCost.js";
+import {
+  getTelnyxBillingSummary,
+  serializeTelnyxDayMap,
+  ACTIVE_PHONE_NUMBER_QUERY,
+} from "../../services/telnyxBillingReportService.js";
 import {
   syncPaidInvoicesFromStripe,
   getStripeRevenueByDayFromMongo
@@ -87,6 +90,7 @@ router.get("/", requireAdmin, async (req, res) => {
   try {
     const wantsStripeSync =
       req.query.stripeSync === "1" || req.query.liveSync === "1";
+    const wantsTelnyxSync = req.query.telnyxSync !== "0";
     const { filter = "30d" } = req.query;
     const { startDate, endDate } = getDateRange(filter);
     const days = buildDays(startDate, endDate);
@@ -113,10 +117,28 @@ router.get("/", requireAdmin, async (req, res) => {
       });
     });
 
-    const [calls, smsList] = await Promise.all([
+    const [calls, smsList, activeNumbers] = await Promise.all([
       Call.find({ createdAt: { $gte: startDate, $lte: endDate } }).lean(),
-      SMS.find({ createdAt: { $gte: startDate, $lte: endDate } }).lean()
+      SMS.find({ createdAt: { $gte: startDate, $lte: endDate } }).lean(),
+      PhoneNumber.find(ACTIVE_PHONE_NUMBER_QUERY).lean(),
     ]);
+
+    const telnyxBilling = wantsTelnyxSync
+      ? await getTelnyxBillingSummary({
+          startDate,
+          endDate,
+          activeNumbers,
+          mongoCalls: calls,
+          mongoSms: smsList,
+        })
+      : await getTelnyxBillingSummary({
+          startDate,
+          endDate,
+          activeNumbers,
+          mongoCalls: calls,
+          mongoSms: smsList,
+          bypassCache: true,
+        });
 
     calls.forEach((call) => {
       const dayKey = new Date(call.createdAt).toISOString().split("T")[0];
@@ -143,50 +165,15 @@ router.get("/", requireAdmin, async (req, res) => {
       }
     });
 
-    // Telnyx immutable ledger by day (call/sms/number).
-    const telnyxCostsByDay = await TelnyxCost.aggregate([
-      {
-        $match: {
-          eventTimestamp: { $gte: startDate, $lte: endDate }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            day: { $dateToString: { format: "%Y-%m-%d", date: "$eventTimestamp" } },
-            resourceType: "$resourceType"
-          },
-          total: { $sum: "$totalCostUsd" }
-        }
+    if (telnyxBilling?.success && telnyxBilling.byDay) {
+      for (const row of serializeTelnyxDayMap(telnyxBilling.byDay)) {
+        const dayData = dailyDataMap.get(row.date);
+        if (!dayData) continue;
+        dayData.telnyxCallCost = row.telnyxCallCost;
+        dayData.telnyxSmsCost = row.telnyxSmsCost;
+        dayData.telnyxNumberCost = row.telnyxNumberCost;
+        dayData.totalTelnyxCost = row.totalTelnyxCost;
       }
-    ]);
-
-    telnyxCostsByDay.forEach((row) => {
-      const dayKey = row._id.day;
-      const resourceType = row._id.resourceType;
-      const amount = Number(row.total || 0);
-      const dayData = dailyDataMap.get(dayKey);
-      if (!dayData) return;
-
-      if (resourceType === "call") {
-        dayData.telnyxCallCost += amount;
-      } else if (resourceType === "sms") {
-        dayData.telnyxSmsCost += amount;
-      } else if (resourceType === "number") {
-        dayData.telnyxNumberCost += amount;
-      }
-    });
-
-    // Fallback for number costs when ledger rows do not exist.
-    const hasNumberCosts = telnyxCostsByDay.some((row) => row._id.resourceType === "number");
-    if (!hasNumberCosts) {
-      const activeNumbers = await PhoneNumber.find({ status: "active" }).lean();
-      const totalMonthlyCost = activeNumbers.reduce((sum, num) => sum + (num.monthlyCost || 0), 0);
-      const dailyNumberCost = totalMonthlyCost / 30;
-
-      dailyDataMap.forEach((dayData) => {
-        dayData.telnyxNumberCost += dailyNumberCost;
-      });
     }
 
     let stripeSync = {
@@ -225,7 +212,9 @@ router.get("/", requireAdmin, async (req, res) => {
     const timeSeriesData = Array.from(dailyDataMap.values())
       .map((day) => {
         day.netRevenue = day.revenue - day.stripeFees - day.refunds;
-        day.totalTelnyxCost = day.telnyxCallCost + day.telnyxSmsCost + day.telnyxNumberCost;
+        if (!day.totalTelnyxCost) {
+          day.totalTelnyxCost = day.telnyxCallCost + day.telnyxSmsCost + day.telnyxNumberCost;
+        }
         day.profit = day.netRevenue - day.totalTelnyxCost;
         return {
           ...day,
@@ -246,11 +235,18 @@ router.get("/", requireAdmin, async (req, res) => {
     res.json({
       success: true,
       filter,
+      telnyxCostSource: telnyxBilling?.success ? "telnyx_api" : "unavailable",
       period: {
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString()
       },
       stripeSync,
+      telnyxSync: {
+        skipped: !wantsTelnyxSync,
+        source: telnyxBilling?.source,
+        recordTypeStats: telnyxBilling?.recordTypeStats || {},
+        fetchedAt: telnyxBilling?.fetchedAt || null,
+      },
       data: timeSeriesData
     });
   } catch (err) {

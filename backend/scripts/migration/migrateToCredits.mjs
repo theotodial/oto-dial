@@ -24,6 +24,8 @@ import {
 } from "../../src/services/migration/migrationSnapshotService.js";
 import { resolvePlanCreditGrant } from "../../src/services/migration/migrationCreditGrant.js";
 import { runMigrationVerification } from "../../src/services/migration/migrationVerifyService.js";
+import { getLatestSubscription } from "../../src/services/subscriptionService.js";
+import User from "../../src/models/User.js";
 
 dotenv.config();
 
@@ -134,11 +136,11 @@ async function run() {
     console.log("[migrateToCredits] dry-run: skipping snapshot creation");
   }
 
-  // 2) Reset balances — one subscription per user (the latest), matching app authority.
+  // 2) Reset balances — one authoritative subscription per user (active Stripe-linked first).
   const latestByUser = new Map();
-  for await (const sub of Subscription.find({}).sort({ createdAt: -1 }).lean().cursor()) {
-    const uid = String(sub.userId);
-    if (!latestByUser.has(uid)) latestByUser.set(uid, sub);
+  for await (const user of User.find({}).select("_id").lean().cursor()) {
+    const sub = await getLatestSubscription(user._id);
+    if (sub) latestByUser.set(String(user._id), sub);
   }
 
   let migrated = 0;

@@ -348,6 +348,26 @@ export function AppStateProvider({ children }) {
             detail: payload && typeof payload === "object" ? payload : {},
           })
         );
+        const status = String(
+          payload?.callStatus || payload?.snapshot?.callStatus || ""
+        ).toLowerCase();
+        const timeline = String(
+          payload?.timelineState || payload?.snapshot?.timelineState || ""
+        ).toLowerCase();
+        const terminalStatuses = new Set([
+          "completed",
+          "failed",
+          "canceled",
+          "busy",
+          "no-answer",
+          "rejected",
+        ]);
+        if (terminalStatuses.has(status) || timeline === "finalized") {
+          requestBootstrapRefresh({
+            reason: "call_authoritative_terminal",
+            preserveUiState: true,
+          });
+        }
       };
       socket.on("call:authoritative_state", onAuthoritativeCall);
       socket.on("connect", () => runtimeSetSocketState("connected"));

@@ -129,8 +129,26 @@ export async function computeUserActivityUsage(userId) {
  * Single source of truth for which subscription row applies to a user.
  * Latest by `createdAt`; never filter by status.
  */
+const ACTIVE_SUBSCRIPTION_STATUSES = ["active", "past_due", "pending_activation"];
+
 export async function getLatestSubscription(userId) {
   if (!userId) return null;
+  const activeStatus = { $in: ACTIVE_SUBSCRIPTION_STATUSES };
+
+  const linkedStripe = await Subscription.findOne({
+    userId,
+    status: activeStatus,
+    stripeSubscriptionId: { $ne: null, $exists: true },
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .lean();
+  if (linkedStripe) return linkedStripe;
+
+  const active = await Subscription.findOne({ userId, status: activeStatus })
+    .sort({ createdAt: -1 })
+    .lean();
+  if (active) return active;
+
   return Subscription.findOne({ userId }).sort({ createdAt: -1 }).lean();
 }
 
