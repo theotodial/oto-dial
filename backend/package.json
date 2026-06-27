@@ -41,7 +41,8 @@
     "validate:billing-matrix:live": "node scripts/validateBillingMatrix.mjs --live",
     "validate:sms-billing": "node scripts/validateSmsBilling.mjs",
     "analyze:failures": "node scripts/analyzeProductionFailures.mjs",
-    "rc3:validate": "node scripts/rc3FinalValidation.mjs"
+    "rc3:validate": "node scripts/rc3FinalValidation.mjs",
+    "rc4:audit": "node scripts/rc4CustomerIntegrityAudit.mjs"
   },
   "keywords": [],
   "author": "",
