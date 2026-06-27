@@ -257,7 +257,8 @@ Outcome        PASS_WITH_WARNINGS (exit 0)
 
 ## Git
 
-Commit after RC3 validation artifacts (see `git log -1` after push).
+**Commit:** `fa20fdc3f75d777fdc9312a112d6f3dbcad47d10`  
+**Pushed:** `origin/main` (`e070e9c..fa20fdc`)
 
 ---
 
