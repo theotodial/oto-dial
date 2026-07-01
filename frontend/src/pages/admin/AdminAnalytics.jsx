@@ -201,7 +201,7 @@ function AdminAnalytics() {
   const spark = useMemo(() => {
     return daily.map((d) => ({
       date: d.date,
-      visitors: d.visitors,
+      visitors: d.uniqueVisitors ?? d.visitors ?? 0,
       newVisitors: d.newVisitors,
       returningVisitors: d.returningVisitors,
       pageViews: d.pageViews,
@@ -297,6 +297,7 @@ function AdminAnalytics() {
           spark={spark}
           errors={meta?.errors}
           onDrill={drill}
+          returningVisitorList={data?.returningVisitorList || []}
         />
       )}
       {activeTab === 'traffic' && (
@@ -318,7 +319,12 @@ function AdminAnalytics() {
 
 /* ---------------- Tabs ---------------- */
 
-function OverviewTab({ overview, deltas, daily, spark, errors, onDrill }) {
+function OverviewTab({ overview, deltas, daily, spark, errors, onDrill, returningVisitorList = [] }) {
+  const returningRate =
+    overview.uniqueVisitors > 0
+      ? ((overview.returningVisitors / overview.uniqueVisitors) * 100).toFixed(1)
+      : '0.0';
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -330,7 +336,8 @@ function OverviewTab({ overview, deltas, daily, spark, errors, onDrill }) {
           sparkData={spark} sparkKey="newVisitors" />
         <KpiCard title="Returning" value={formatNumber(overview.returningVisitors)}
           delta={deltas.returningVisitors} icon={<Repeat className="w-4 h-4" />} accent="cyan"
-          sparkData={spark} sparkKey="returningVisitors" />
+          subtitle={`${returningRate}% of unique`}
+          sparkData={spark} sparkKey="returningVisitors" onClick={() => onDrill('returning')} />
         <KpiCard title="Sessions" value={formatNumber(overview.sessions)}
           delta={deltas.sessions} icon={<Activity className="w-4 h-4" />} accent="blue" />
 
@@ -360,7 +367,7 @@ function OverviewTab({ overview, deltas, daily, spark, errors, onDrill }) {
           icon={<Zap className="w-4 h-4" />} accent="blue" />
       </div>
 
-      <ChartCard title="Visitors over time" subtitle="New vs returning" error={errors?.timeseries}>
+      <ChartCard title="Unique visitors over time" subtitle="New vs returning (daily unique visitors)" error={errors?.timeseries}>
         <ResponsiveContainer width="100%" height={320}>
           <AreaChart data={daily}>
             <defs>
@@ -410,6 +417,53 @@ function OverviewTab({ overview, deltas, daily, spark, errors, onDrill }) {
           </ResponsiveContainer>
         </ChartCard>
       </div>
+
+      <ChartCard
+        title="Returning visitors"
+        subtitle="Unique visitors who had visited before this period (Mongo session + visitor history)"
+      >
+        {returningVisitorList.length === 0 ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400 py-6 text-center">
+            No returning visitors in this range yet. Returning counts appear after someone visits more than once
+            (same browser cookie / visitor ID). GA4 client tracking runs separately in the browser.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-slate-700">
+                  <th className="py-2 pr-4">Last seen</th>
+                  <th className="py-2 pr-4">Visitor</th>
+                  <th className="py-2 pr-4">Location</th>
+                  <th className="py-2 pr-4">Page</th>
+                  <th className="py-2 pr-4">Device</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                {returningVisitorList.map((row) => (
+                  <tr key={row.visitorId || row.sessionId}>
+                    <td className="py-2 pr-4 whitespace-nowrap text-gray-600 dark:text-gray-300">
+                      {row.lastActivityAt ? new Date(row.lastActivityAt).toLocaleString() : '—'}
+                    </td>
+                    <td className="py-2 pr-4 font-mono text-xs text-gray-700 dark:text-gray-200">
+                      {(row.visitorId || row.sessionId || '').slice(0, 12)}…
+                    </td>
+                    <td className="py-2 pr-4 text-gray-600 dark:text-gray-300">
+                      {[row.city, row.country].filter(Boolean).join(', ') || '—'}
+                    </td>
+                    <td className="py-2 pr-4 text-gray-600 dark:text-gray-300 max-w-[180px] truncate">
+                      {row.currentPage || '—'}
+                    </td>
+                    <td className="py-2 pr-4 capitalize text-gray-600 dark:text-gray-300">
+                      {row.device || '—'}{row.browser ? ` · ${row.browser}` : ''}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </ChartCard>
     </div>
   );
 }

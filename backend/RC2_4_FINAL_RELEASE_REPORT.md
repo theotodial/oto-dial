@@ -26,6 +26,8 @@ RC2.4 completes production readiness cleanup after RC2.1–RC2.3 investigations.
 
 **Deployment recommendation:** **Ready for public rollout.** WARN items are historical/informational and do not block billing.
 
+**Git:** `e070e9cee72dd56c9c872952d6ad0e6a40c6e8b2` pushed to `origin/main`.
+
 ---
 
 ## Billing Engine Status

@@ -201,6 +201,21 @@ export function getRecentThrottleEvents() {
   return [...recentEvents.throttle];
 }
 
+export function getRecentLiveCalls() {
+  return [...recentEvents.calls];
+}
+
+export function getRecentLiveSms() {
+  return [...recentEvents.sms];
+}
+
+export function getRecentLiveActivitySnapshot() {
+  return {
+    calls: getRecentLiveCalls(),
+    sms: getRecentLiveSms(),
+  };
+}
+
 export async function emitAdminLiveSms(event = {}) {
   const actor = await getActor(event.userId);
   const payload = {

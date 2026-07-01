@@ -50,6 +50,9 @@ export const AdminSmsApproval = lazy(() => import('../pages/admin/AdminSmsApprov
 export const AdminSupport = lazy(() => import('../pages/admin/AdminSupport.jsx'));
 export const AdminSystemHealth = lazy(() => import('../pages/admin/AdminSystemHealth.jsx'));
 export const AdminLaunchHealth = lazy(() => import('../pages/admin/AdminLaunchHealth.jsx'));
+export const AdminLiveActivity = lazy(() => import('../pages/admin/AdminLiveActivity.jsx'));
+export const AdminTelnyx = lazy(() => import('../pages/admin/AdminTelnyx.jsx'));
+export const AdminStripe = lazy(() => import('../pages/admin/AdminStripe.jsx'));
 export const AdminTeam = lazy(() => import('../pages/admin/AdminTeam.jsx'));
 export const AdminUserDetail = lazy(() => import('../pages/admin/AdminUserDetail.jsx'));
 export const AdminUsers = lazy(() => import('../pages/admin/AdminUsers.jsx'));

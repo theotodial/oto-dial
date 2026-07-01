@@ -38,29 +38,40 @@ function buildAdminUserListQuery(search = "") {
   if (/^[0-9a-fA-F]{24}$/.test(trimmed)) {
     return { _id: trimmed };
   }
-  const anchored = new RegExp(`^${escapeRegex(trimmed)}`, "i");
+  if (/^[0-9a-fA-F]{6,23}$/.test(trimmed)) {
+    return { _id: { $regex: new RegExp(`${escapeRegex(trimmed)}$`, "i") } };
+  }
+  const contains = new RegExp(escapeRegex(trimmed), "i");
   return {
     $or: [
-      { email: anchored },
-      { name: anchored },
-      { firstName: anchored },
-      { lastName: anchored },
+      { email: contains },
+      { name: contains },
+      { firstName: contains },
+      { lastName: contains },
     ],
   };
 }
 
+function buildAdminUserSort(sort = "createdAt", order = "desc") {
+  const dir = String(order || "desc").toLowerCase() === "asc" ? 1 : -1;
+  const key = String(sort || "createdAt").toLowerCase();
+  if (key === "email") return { email: dir, createdAt: -1 };
+  if (key === "credits") return { "subscription.remainingCredits": dir, createdAt: -1 };
+  if (key === "used") return { "subscription.totalCreditsUsed": dir, createdAt: -1 };
+  if (key === "status") return { status: dir, createdAt: -1 };
+  return { createdAt: dir };
+}
+
 function buildAdminUserFilterMatch(filter = "all") {
   const normalized = String(filter || "all").trim().toLowerCase();
+  const billingActiveStatuses = [
+    "active",
+    "trialing",
+    "pending_activation",
+    "past_due",
+  ];
 
   if (normalized === "active") {
-    // Match billing-active states (Stripe + manual). Prefer explicit statuses over "not cancelled"
-    // so incomplete/suspended rows do not appear as "Active" in admin.
-    const billingActiveStatuses = [
-      "active",
-      "trialing",
-      "pending_activation",
-      "past_due",
-    ];
     return {
       $or: [
         {
@@ -68,6 +79,25 @@ function buildAdminUserFilterMatch(filter = "all") {
           "subscription.status": { $in: billingActiveStatuses },
         },
         { customPackage: { $ne: null } },
+      ],
+    };
+  }
+
+  if (normalized === "paid_stripe") {
+    return {
+      "latestPaidStripeInvoice.0": { $exists: true },
+    };
+  }
+
+  if (normalized === "paid_unactivated") {
+    return {
+      "latestPaidStripeInvoice.0": { $exists: true },
+      customPackage: null,
+      $nor: [
+        {
+          subscription: { $ne: null },
+          "subscription.status": { $in: billingActiveStatuses },
+        },
       ],
     };
   }
@@ -231,9 +261,11 @@ router.get(
   async (req, res) => {
     try {
       const page = parseInt(req.query.page, 10) || 1;
-      const limit = Math.min(parseInt(req.query.limit, 10) || 20, 20);
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50);
       const search = req.query.search || "";
       const filter = String(req.query.filter || "all").trim().toLowerCase();
+      const sort = String(req.query.sort || "createdAt").trim().toLowerCase();
+      const order = String(req.query.order || "desc").trim().toLowerCase();
       const skip = (page - 1) * limit;
       const query = buildAdminUserListQuery(search);
       const filterMatch = buildAdminUserFilterMatch(filter);
@@ -241,6 +273,8 @@ router.get(
         page,
         limit,
         filter,
+        sort,
+        order,
         search: String(search || "").trim().toLowerCase(),
       });
       const cached = readAdminUsersCache(cacheKey);
@@ -266,16 +300,35 @@ router.get(
               {
                 $addFields: {
                   __adminListSortPriority: {
-                    $cond: [
-                      {
-                        $and: [
-                          { $ne: ["$$activeSubscriptionId", null] },
-                          { $eq: ["$_id", "$$activeSubscriptionId"] },
+                    $let: {
+                      vars: {
+                        matchesActiveSubId: {
+                          $and: [
+                            { $ne: ["$$activeSubscriptionId", null] },
+                            { $eq: ["$_id", "$$activeSubscriptionId"] },
+                          ],
+                        },
+                        statusRank: {
+                          $switch: {
+                            branches: [
+                              { case: { $eq: ["$status", "active"] }, then: 5 },
+                              { case: { $eq: ["$status", "trialing"] }, then: 4 },
+                              { case: { $eq: ["$status", "pending_activation"] }, then: 4 },
+                              { case: { $eq: ["$status", "past_due"] }, then: 3 },
+                              { case: { $eq: ["$status", "cancelled"] }, then: 1 },
+                            ],
+                            default: 0,
+                          },
+                        },
+                      },
+                      in: {
+                        $cond: [
+                          "$$matchesActiveSubId",
+                          { $add: [10, "$$statusRank"] },
+                          "$$statusRank",
                         ],
                       },
-                      1,
-                      0,
-                    ],
+                    },
                   },
                 },
               },
@@ -339,6 +392,49 @@ router.get(
           }
         },
         {
+          $lookup: {
+            from: "stripeinvoices",
+            let: { userId: "$_id", stripeCustomerId: "$stripeCustomerId" },
+            pipeline: [
+              {
+                $match: {
+                  status: "paid",
+                  $expr: {
+                    $or: [
+                      { $eq: ["$userId", "$$userId"] },
+                      {
+                        $and: [
+                          { $ne: ["$$stripeCustomerId", null] },
+                          { $ne: ["$$stripeCustomerId", ""] },
+                          { $eq: ["$customerId", "$$stripeCustomerId"] },
+                        ],
+                      },
+                    ],
+                  },
+                  $or: [
+                    { purchaseType: "subscription" },
+                    { purchaseType: "unknown", subscriptionId: { $ne: null } },
+                  ],
+                },
+              },
+              { $sort: { issuedAt: -1, createdAt: -1 } },
+              { $limit: 1 },
+              {
+                $project: {
+                  invoiceId: 1,
+                  amountPaid: 1,
+                  currency: 1,
+                  issuedAt: 1,
+                  subscriptionId: 1,
+                  purchaseType: 1,
+                  customerId: 1,
+                },
+              },
+            ],
+            as: "latestPaidStripeInvoice",
+          },
+        },
+        {
           $project: {
             _id: 1,
             email: 1,
@@ -348,14 +444,16 @@ router.get(
             status: 1,
             isEmailVerified: 1,
             createdAt: 1,
+            stripeCustomerId: 1,
             remainingCredits: 1,
             totalCreditsUsed: 1,
             reservedCredits: 1,
             lifetimeCreditsPurchased: 1,
             subscription: { $arrayElemAt: ["$subscription", 0] },
-            customPackage: { $arrayElemAt: ["$customPackage", 0] }
-          }
-        }
+            customPackage: { $arrayElemAt: ["$customPackage", 0] },
+            latestPaidStripeInvoice: { $arrayElemAt: ["$latestPaidStripeInvoice", 0] },
+          },
+        },
       ];
 
       if (filterMatch) {
@@ -365,7 +463,7 @@ router.get(
       const [users, totalRows] = await Promise.all([
         User.aggregate([
           ...basePipeline,
-          { $sort: { createdAt: -1 } },
+          { $sort: buildAdminUserSort(sort, order) },
           { $skip: skip },
           { $limit: limit },
         ]),
@@ -382,6 +480,11 @@ router.get(
           user.subscription || null,
           user.customPackage || null
         );
+        const paidInvoice = user.latestPaidStripeInvoice || null;
+        const billingActive = ["active", "trialing", "pending_activation", "past_due"];
+        const hasBillingActiveSub =
+          Boolean(effectiveSubscription && billingActive.includes(effectiveSubscription.status)) ||
+          Boolean(user.customPackage);
 
         return {
           _id: user._id,
@@ -391,8 +494,20 @@ router.get(
           status: user.status || "active",
           isEmailVerified: user.isEmailVerified !== false,
           createdAt: user.createdAt,
+          stripeCustomerId: user.stripeCustomerId || null,
           subscription: effectiveSubscription,
           customPackage: user.customPackage || null,
+          stripePayment: paidInvoice
+            ? {
+                invoiceId: paidInvoice.invoiceId,
+                amountPaid: Number(paidInvoice.amountPaid || 0),
+                currency: paidInvoice.currency || "usd",
+                paidAt: paidInvoice.issuedAt || null,
+                subscriptionId: paidInvoice.subscriptionId || null,
+                purchaseType: paidInvoice.purchaseType || "unknown",
+                needsActivation: Boolean(paidInvoice && !hasBillingActiveSub),
+              }
+            : null,
           usage: {
             minutesUsed: Number(user.subscription?.usage?.minutesUsed || 0) / 60,
             smsUsed: Number(user.subscription?.usage?.smsUsed || 0),

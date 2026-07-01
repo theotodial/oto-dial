@@ -16,6 +16,7 @@ import AnalyticsPageView from "../../models/analytics/AnalyticsPageView.js";
 import { ANALYTICS_EVENTS } from "../../constants/analyticsEvents.js";
 import { resolveTimeframe, DEFAULT_TIMEFRAME } from "./timeframeService.js";
 import { queryLegacyRealtime, legacySummaryToKpis } from "./legacyRealtimeService.js";
+import { enrichRowsWithReturningStatus, countReturningInRange } from "./visitorClassificationService.js";
 
 function sessionActivityMatch(start, end) {
   return {
@@ -185,11 +186,12 @@ export async function queryWindowSnapshot({ window = DEFAULT_TIMEFRAME, startDat
   ]);
 
   let rows =
-    legacyRealtime.rows.length > 0
-      ? legacyRealtime.rows
-      : sessions.map(mapSessionToVisitorRow);
+    sessions.length > 0
+      ? sessions.map(mapSessionToVisitorRow)
+      : legacyRealtime.rows;
 
-  if (!legacyRealtime.rows.length) {
+  if (rows.length > 0) {
+    rows = await enrichRowsWithReturningStatus(rows);
     rows = await enrichSessionsWithUsers(rows);
   }
 
@@ -214,7 +216,7 @@ export async function queryWindowSnapshot({ window = DEFAULT_TIMEFRAME, startDat
   const revenue = Number((stripeRev[0]?.total || 0).toFixed(2));
   const purchaseCount = stripeRev[0]?.count || 0;
 
-  const useLegacyKpis = legacyRealtime.rows.length > 0;
+  const useLegacyKpis = legacyRealtime.rows.length > 0 && sessions.length === 0;
   const kpis = useLegacyKpis
     ? legacySummaryToKpis(legacyRealtime.summary, {
         calls,

@@ -7,8 +7,34 @@ import { canSeeAdminNavItem, readStoredAdminProfile } from '../utils/adminAccess
 const overviewTabs = [
   { path: '/adminbobby/dashboard', label: 'Dashboard', role: 'dashboard' },
   { path: '/adminbobby/analytics', label: 'Analytics', role: 'analytics' },
+  { path: '/adminbobby/live-activity', label: 'Live Activity', role: 'dashboard' },
+  { path: '/adminbobby/telnyx', label: 'Telnyx', role: 'dashboard' },
+  { path: '/adminbobby/stripe', label: 'Stripe', role: 'analytics' },
   { path: '/adminbobby/analytics/profitability-tools', label: 'Profit tools', role: 'analytics' },
 ];
+
+function isOverviewTabActive(tab, pathname) {
+  if (tab.path === '/adminbobby/analytics/profitability-tools') {
+    return pathname.startsWith('/adminbobby/analytics/profitability-tools');
+  }
+  if (tab.path === '/adminbobby/live-activity') {
+    return pathname === '/adminbobby/live-activity';
+  }
+  if (tab.path === '/adminbobby/telnyx') {
+    return pathname === '/adminbobby/telnyx';
+  }
+  if (tab.path === '/adminbobby/stripe') {
+    return pathname === '/adminbobby/stripe';
+  }
+  if (tab.path === '/adminbobby/analytics') {
+    return (
+      pathname === '/adminbobby/analytics' ||
+      (pathname.startsWith('/adminbobby/analytics/') &&
+        !pathname.startsWith('/adminbobby/analytics/profitability-tools'))
+    );
+  }
+  return pathname === tab.path || pathname.startsWith(`${tab.path}/`);
+}
 
 function AdminOverviewTabs() {
   const location = useLocation();
@@ -20,13 +46,7 @@ function AdminOverviewTabs() {
     <div className="sticky top-0 z-20 border-b border-gray-200 dark:border-slate-700 bg-gray-50/95 dark:bg-slate-900/95 backdrop-blur px-4 sm:px-6 lg:px-8 py-3">
       <div className="flex flex-wrap gap-2">
         {tabs.map((tab) => {
-          const isActive =
-            tab.path === '/adminbobby/analytics/profitability-tools'
-              ? location.pathname.startsWith('/adminbobby/analytics/profitability-tools')
-              : location.pathname === tab.path ||
-                (tab.path === '/adminbobby/analytics' &&
-                  location.pathname.startsWith('/adminbobby/analytics/') &&
-                  !location.pathname.startsWith('/adminbobby/analytics/profitability-tools'));
+          const isActive = isOverviewTabActive(tab, location.pathname);
           return (
             <Link
               key={tab.path}

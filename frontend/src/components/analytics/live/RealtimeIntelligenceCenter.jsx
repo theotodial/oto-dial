@@ -188,6 +188,12 @@ export default function RealtimeIntelligenceCenter({
 
       <LiveFilters search={search} onSearchChange={setSearch} filters={filters} onFilterChange={onFilterChange} />
 
+      {filters.returning && (
+        <p className="text-xs text-violet-700 dark:text-violet-300 px-1">
+          Showing returning visitors only — people who visited before this session (same browser visitor ID).
+        </p>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <LiveFunnel funnel={intel?.funnel || []} />
         <LiveTrafficSources

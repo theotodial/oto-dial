@@ -7,6 +7,7 @@ import {
   REVENUE_EVENTS,
   SUBSCRIPTION_EVENTS
 } from "../../constants/analyticsEvents.js";
+import { countReturningInRange } from "./visitorClassificationService.js";
 
 /** Format a Date to a UTC day key, e.g. "2026-06-26". */
 export function toUtcDayKey(date) {
@@ -44,8 +45,7 @@ export async function computeRollupForDay(dayKeyOrDate) {
 
   const [
     sessionFacet,
-    uniqueVisitorsAgg,
-    newVisitorsAgg,
+    visitorCounts,
     channelAgg,
     countryAgg,
     deviceAgg,
@@ -67,8 +67,7 @@ export async function computeRollupForDay(dayKeyOrDate) {
         }
       }
     ]),
-    AnalyticsSession.distinct("visitorId", sessionMatch),
-    AnalyticsSession.distinct("visitorId", { ...sessionMatch, isReturning: false }),
+    countReturningInRange(start, new Date(end.getTime() - 1)),
     AnalyticsSession.aggregate([
       { $match: sessionMatch },
       { $group: { _id: "$channel", count: { $sum: 1 } } }
@@ -112,9 +111,9 @@ export async function computeRollupForDay(dayKeyOrDate) {
     ])
   ]);
 
-  const uniqueVisitors = uniqueVisitorsAgg.length;
-  const newVisitors = newVisitorsAgg.length;
-  const returningVisitors = Math.max(0, uniqueVisitors - newVisitors);
+  const uniqueVisitors = visitorCounts.uniqueVisitors;
+  const newVisitors = visitorCounts.newVisitors;
+  const returningVisitors = visitorCounts.returningVisitors;
   const sessionStats = sessionFacet[0] || {
     sessions: 0,
     bounces: 0,
@@ -137,7 +136,7 @@ export async function computeRollupForDay(dayKeyOrDate) {
   const doc = {
     date: key,
     metrics: {
-      visitors: sessionStats.sessions,
+      visitors: uniqueVisitors,
       uniqueVisitors,
       newVisitors,
       returningVisitors,

@@ -46,16 +46,25 @@ function AdminAnalyticsDetail() {
       if (shouldBlockRender) {
         setLoading(true);
       }
-      const params = new URLSearchParams();
-      if (dateRange.startDate) params.append('startDate', dateRange.startDate);
-      if (dateRange.endDate) params.append('endDate', dateRange.endDate);
-      params.append('realtimeWindow', realtimeWindow);
       const adminToken = localStorage.getItem('adminToken');
+      const headers = adminToken ? { Authorization: `Bearer ${adminToken}` } : {};
 
-      const response = await API.get(`/api/analytics/admin/dashboard?${params.toString()}`, {
-        headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
-      });
-      
+      const overviewParams = new URLSearchParams();
+      overviewParams.append('range', 'custom');
+      if (dateRange.startDate) overviewParams.append('startDate', `${dateRange.startDate}T00:00:00.000Z`);
+      if (dateRange.endDate) overviewParams.append('endDate', `${dateRange.endDate}T23:59:59.999Z`);
+      overviewParams.append('compare', 'none');
+
+      let response = await API.get(`/api/analytics/admin/overview?${overviewParams.toString()}`, { headers });
+
+      if (response?.error || response?.data?.success === false || (response?.status && response.status >= 400)) {
+        const params = new URLSearchParams();
+        if (dateRange.startDate) params.append('startDate', dateRange.startDate);
+        if (dateRange.endDate) params.append('endDate', dateRange.endDate);
+        params.append('realtimeWindow', realtimeWindow);
+        response = await API.get(`/api/analytics/admin/dashboard?${params.toString()}`, { headers });
+      }
+
       if (response.error) {
         console.error('Error fetching analytics:', response.error);
         if (response.status === 401) {
@@ -78,8 +87,9 @@ function AdminAnalyticsDetail() {
 
       if (response.data?.success) {
         hasLoadedOnceRef.current = true;
-        setData(response.data.data);
-        setMeta(response.data.meta || null);
+        const payload = response.data.data || response.data;
+        setData(payload);
+        setMeta(response.data.meta || payload.meta || null);
       } else {
         hasLoadedOnceRef.current = true;
         if (!background) {
@@ -460,17 +470,49 @@ function AdminAnalyticsDetail() {
                 <div className="text-sm text-purple-600 dark:text-purple-400 mb-1">Returning Visitors</div>
                 <div className="text-3xl font-bold text-purple-600 dark:text-purple-400">{overview.returningVisitors.toLocaleString()}</div>
                 <div className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                  {overview.totalVisitors > 0 ? ((overview.returningVisitors / overview.totalVisitors) * 100).toFixed(1) : 0}% of total
+                  {overview.uniqueVisitors > 0 ? ((overview.returningVisitors / overview.uniqueVisitors) * 100).toFixed(1) : 0}% of unique visitors
                 </div>
               </div>
               <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-6">
                 <div className="text-sm text-green-600 dark:text-green-400 mb-1">New Visitors</div>
                 <div className="text-3xl font-bold text-green-600 dark:text-green-400">{overview.newVisitors.toLocaleString()}</div>
                 <div className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                  {overview.totalVisitors > 0 ? ((overview.newVisitors / overview.totalVisitors) * 100).toFixed(1) : 0}% of total
+                  {overview.uniqueVisitors > 0 ? ((overview.newVisitors / overview.uniqueVisitors) * 100).toFixed(1) : 0}% of unique visitors
                 </div>
               </div>
             </div>
+            {(data?.returningVisitorList || []).length === 0 && (
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                No returning visitors in this date range. Use Live Operations → filter &quot;Returning&quot; for the rolling window.
+              </p>
+            )}
+            {(data?.returningVisitorList || []).length > 0 && (
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Returning visitor list</h3>
+                <div className="overflow-x-auto max-h-96">
+                  <table className="min-w-full text-sm">
+                    <thead className="sticky top-0 bg-white dark:bg-slate-800">
+                      <tr className="text-left text-xs uppercase text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-slate-700">
+                        <th className="py-2 pr-4">Last seen</th>
+                        <th className="py-2 pr-4">Visitor ID</th>
+                        <th className="py-2 pr-4">Location</th>
+                        <th className="py-2 pr-4">Last page</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                      {(data.returningVisitorList || []).map((row) => (
+                        <tr key={row.visitorId || row.sessionId}>
+                          <td className="py-2 pr-4 whitespace-nowrap">{row.lastActivityAt ? new Date(row.lastActivityAt).toLocaleString() : '—'}</td>
+                          <td className="py-2 pr-4 font-mono text-xs">{(row.visitorId || '').slice(0, 16)}…</td>
+                          <td className="py-2 pr-4">{[row.city, row.country].filter(Boolean).join(', ') || '—'}</td>
+                          <td className="py-2 pr-4 truncate max-w-xs">{row.currentPage || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
             {dailyVisitors.length > 0 && (
               <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Returning vs New Visitors Trend</h3>

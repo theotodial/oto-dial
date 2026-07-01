@@ -56,6 +56,9 @@ import {
   AdminSupport,
   AdminSystemHealth,
   AdminLaunchHealth,
+  AdminLiveActivity,
+  AdminTelnyx,
+  AdminStripe,
   AdminTeam,
   AdminUserDetail,
   AdminUsers,
@@ -259,6 +262,9 @@ export default function AppShell() {
         <Route path="/adminbobby/dashboard" element={<AdminProtectedRoute><AdminLayout><AdminDashboardEnterprise /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/system-health" element={<AdminProtectedRoute><AdminLayout><AdminSystemHealth /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/launch-health" element={<AdminProtectedRoute><AdminLayout><AdminLaunchHealth /></AdminLayout></AdminProtectedRoute>} />
+        <Route path="/adminbobby/live-activity" element={<AdminProtectedRoute><AdminLayout><AdminLiveActivity /></AdminLayout></AdminProtectedRoute>} />
+        <Route path="/adminbobby/telnyx" element={<AdminProtectedRoute><AdminLayout><AdminTelnyx /></AdminLayout></AdminProtectedRoute>} />
+        <Route path="/adminbobby/stripe" element={<AdminProtectedRoute><AdminLayout><AdminStripe /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/oto-agents" element={<AdminProtectedRoute><AdminLayout><OtoAgents /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/users" element={<AdminProtectedRoute><AdminLayout><AdminUsers /></AdminLayout></AdminProtectedRoute>} />
         <Route path="/adminbobby/users/:id" element={<AdminProtectedRoute><AdminLayout><AdminUserDetail /></AdminLayout></AdminProtectedRoute>} />

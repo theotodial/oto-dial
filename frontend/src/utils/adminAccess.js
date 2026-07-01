@@ -111,6 +111,9 @@ export const getRequiredRoleForAdminPath = (pathname = "") => {
   if (pathname.startsWith("/adminbobby/dashboard")) return "dashboard";
   if (pathname.startsWith("/adminbobby/oto-agents")) return "dashboard";
   if (pathname.startsWith("/adminbobby/launch-health")) return "dashboard";
+  if (pathname.startsWith("/adminbobby/live-activity")) return "dashboard";
+  if (pathname.startsWith("/adminbobby/telnyx")) return "dashboard";
+  if (pathname.startsWith("/adminbobby/stripe")) return "analytics";
   if (pathname.startsWith("/adminbobby/system-health")) return "dashboard";
   if (pathname.startsWith("/adminbobby/users")) return "users";
   if (pathname.startsWith("/adminbobby/affiliates")) return "affiliates";

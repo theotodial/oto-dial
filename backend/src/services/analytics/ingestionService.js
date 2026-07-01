@@ -18,6 +18,7 @@ import {
   recordLiveCall,
   upsertLiveSession
 } from "./analyticsLiveService.js";
+import { wasVisitorInserted } from "./visitorClassificationService.js";
 import {
   ANALYTICS_EVENTS,
   SIGNUP_EVENTS,
@@ -134,7 +135,7 @@ export async function ingestBatch(req, payload = {}) {
       },
       { upsert: true, new: false, rawResult: true }
     );
-    const visitorIsNew = !visitorRaw?.lastErrorObject?.updatedExisting;
+    const visitorIsNew = wasVisitorInserted(visitorRaw);
 
     // --- Session upsert (resolve attribution + new/returning at insert) ---
     const gaClientId = clampString(context.gaClientId, 120);

@@ -15,6 +15,8 @@ import { resolveRange, resolveComparison } from "./rangeService.js";
 import { runReconciliation } from "./reconciliationService.js";
 import { markAnalyticsSyncSuccess } from "./analyticsHealthService.js";
 import { ANALYTICS_EVENTS } from "../../constants/analyticsEvents.js";
+import { countReturningInRange, fetchReturningVisitorList, buildDailyVisitorSeries, enumerateUtcDayKeys } from "./visitorClassificationService.js";
+import { getGoogleAnalyticsConfigStatus } from "../googleAnalyticsService.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CACHE_TTL_SECONDS = 45;
@@ -94,6 +96,7 @@ async function collectAdditive(start, end) {
     if (!daily.has(dayKey)) {
       daily.set(dayKey, {
         date: dayKey,
+        uniqueVisitors: 0,
         visitors: 0,
         newVisitors: 0,
         returningVisitors: 0,
@@ -131,7 +134,8 @@ async function collectAdditive(start, end) {
       mergeCountMaps(maps.eventCounts, r.eventCounts);
 
       const day = ensureDay(r.date);
-      day.visitors += m.visitors || 0;
+      day.uniqueVisitors += m.uniqueVisitors || m.visitors || 0;
+      day.visitors += m.uniqueVisitors || m.visitors || 0;
       day.newVisitors += m.newVisitors || 0;
       day.returningVisitors += m.returningVisitors || 0;
       day.sessions += m.sessions || 0;
@@ -244,9 +248,6 @@ async function collectAdditive(start, end) {
     for (const row of sessDaily) {
       const day = ensureDay(row._id);
       day.sessions += row.sessions;
-      day.visitors += row.sessions;
-      day.newVisitors += row.newVisitors;
-      day.returningVisitors += row.returningVisitors;
     }
     for (const row of pvDaily) ensureDay(row._id).pageViews += row.pageViews;
     for (const row of eventDaily) {
@@ -262,15 +263,23 @@ async function collectAdditive(start, end) {
     }
   }
 
+  const visitorDaily = await buildDailyVisitorSeries(start, end);
+  for (const [dayKey, metrics] of visitorDaily) {
+    const day = ensureDay(dayKey);
+    day.uniqueVisitors = metrics.uniqueVisitors;
+    day.visitors = metrics.uniqueVisitors;
+    day.newVisitors = metrics.newVisitors;
+    day.returningVisitors = metrics.returningVisitors;
+  }
+
   return { additive, maps, daily };
 }
 
 /** Trustworthy headline metrics sourced from canonical collections. */
 async function collectCoreAccurate(start, end) {
-  const [uniqueVisitorIds, newVisitors, signUps, revenueAgg, totalUsersAllTime, paidSubscribers, callsInRange, smsInRange, numbersInRange] =
+  const [visitorCounts, signUps, revenueAgg, totalUsersAllTime, paidSubscribers, callsInRange, smsInRange, numbersInRange] =
     await Promise.all([
-    AnalyticsSession.distinct("visitorId", { startedAt: { $gte: start, $lte: end } }),
-    AnalyticsVisitor.countDocuments({ firstSeenAt: { $gte: start, $lte: end } }),
+    countReturningInRange(start, end),
     User.countDocuments({ createdAt: { $gte: start, $lte: end }, role: { $ne: "admin" } }),
     StripeInvoice.aggregate([
       {
@@ -304,12 +313,11 @@ async function collectCoreAccurate(start, end) {
     })
   ]);
 
-  const uniqueVisitors = uniqueVisitorIds.length;
   const revenueRow = revenueAgg[0] || { revenue: 0, conversions: [] };
   return {
-    uniqueVisitors,
-    newVisitors,
-    returningVisitors: Math.max(0, uniqueVisitors - newVisitors),
+    uniqueVisitors: visitorCounts.uniqueVisitors,
+    newVisitors: visitorCounts.newVisitors,
+    returningVisitors: visitorCounts.returningVisitors,
     signUps,
     revenue: Number((revenueRow.revenue || 0).toFixed(2)),
     subscriptionConversions: (revenueRow.conversions || []).filter(
@@ -329,7 +337,7 @@ function buildOverview(additive, core) {
   const bounces = additive.bounces || 0;
   const duration = additive.totalDurationSeconds || 0;
   return {
-    totalVisitors: sessions, // total sessions (page visits proxy)
+    totalVisitors: core.uniqueVisitors,
     uniqueVisitors: core.uniqueVisitors,
     newVisitors: core.newVisitors,
     returningVisitors: core.returningVisitors,
@@ -604,9 +612,23 @@ export async function getDashboard(query = {}) {
 
   const overview = buildOverview(additive, core);
 
-  const dailyVisitors = Array.from(dailyMap.values()).sort((a, b) =>
-    a.date < b.date ? -1 : 1
-  );
+  const dailyVisitors = enumerateUtcDayKeys(start, end).map((dayKey) => {
+    const existing = dailyMap.get(dayKey);
+    return (
+      existing || {
+        date: dayKey,
+        uniqueVisitors: 0,
+        visitors: 0,
+        newVisitors: 0,
+        returningVisitors: 0,
+        sessions: 0,
+        pageViews: 0,
+        signups: 0,
+        subscriptions: 0,
+        revenue: 0
+      }
+    );
+  });
 
   const countries = mapToSortedArray(maps.byCountry, "country", 50).map((c) => ({
     country: c.country,
@@ -660,6 +682,11 @@ export async function getDashboard(query = {}) {
 
   const funnel = buildFunnel(overview, maps, core);
 
+  const [returningVisitorList, gaConfig] = await Promise.all([
+    fetchReturningVisitorList({ start, end, limit: 50 }).catch(() => []),
+    Promise.resolve(getGoogleAnalyticsConfigStatus()),
+  ]);
+
   const dbQueryMs = Date.now() - queryStarted;
   const reconciliation = await runReconciliation({
     start,
@@ -692,6 +719,7 @@ export async function getDashboard(query = {}) {
     subscriptions,
     activeUsers,
     topEvents,
+    returningVisitorList,
     reconciliation,
     meta: {
       source: "internal_v2",
@@ -702,6 +730,14 @@ export async function getDashboard(query = {}) {
       errors: Object.keys(errors).length ? errors : null,
       generatedAt: new Date().toISOString(),
       queryDurationMs: dbQueryMs,
+      googleAnalytics: {
+        configured: gaConfig.configured,
+        propertyId: gaConfig.propertyId || null,
+        reason: gaConfig.reason || null,
+        note: gaConfig.configured
+          ? "GA4 Data API available for legacy dashboard; live/historical returning counts use Mongo session + visitor history."
+          : "GA4 server credentials not configured — returning visitors use internal Mongo tracking only.",
+      },
       recordsProcessed: {
         sessions: overview.sessions,
         pageViews: overview.pageViews,

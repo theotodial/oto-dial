@@ -37,6 +37,9 @@ import adminNotifications from "./adminNotifications.js";
 import Plan from "../../models/Plan.js";
 import adminSite from "./adminSite.js";
 import adminSystemHealth from "./adminSystemHealth.js";
+import adminLiveActivity from "./adminLiveActivity.js";
+import adminTelnyx from "./adminTelnyx.js";
+import adminStripe from "./adminStripe.js";
 import otoAgentsRoutes from "../../modules/otoAgents/index.js";
 
 const router = express.Router();
@@ -69,6 +72,9 @@ router.use("/users", adminUsersUpdate);
 // Admin actions (subscription, telnyx controls)
 router.use("/actions", adminActions);
 router.use("/system-health", adminSystemHealth);
+router.use("/live-activity", adminLiveActivity);
+router.use("/telnyx", adminTelnyx);
+router.use("/stripe", adminStripe);
 router.use("/oto-agents", otoAgentsRoutes);
 
 // Drill-down pages

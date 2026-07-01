@@ -98,7 +98,8 @@ export const getRequiredAdminRolesForPath = (path = "") => {
   if (normalizedPath.startsWith("/api/admin/site/builder")) return ["site_builder"];
   if (normalizedPath.startsWith("/api/admin/site/seo")) return ["site_seo"];
   if (normalizedPath.startsWith("/api/admin/site/environment")) return ["site_environment"];
-  if (normalizedPath.startsWith("/api/admin/stats")) return ["dashboard"];
+  if (normalizedPath.startsWith("/api/admin/telnyx")) return ["dashboard"];
+  if (normalizedPath.startsWith("/api/admin/stripe")) return ["analytics", "dashboard"];
   if (normalizedPath.startsWith("/api/admin/usage")) return ["dashboard"];
   if (normalizedPath.startsWith("/api/admin/plans")) return ["dashboard"];
 

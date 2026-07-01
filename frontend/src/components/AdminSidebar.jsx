@@ -25,6 +25,9 @@ const ChevronUpIcon = () => (
 const navItems = [
   { path: '/adminbobby/dashboard', label: 'Dashboard', role: 'dashboard' },
   { path: '/adminbobby/analytics', label: 'Analytics', role: 'analytics' },
+  { path: '/adminbobby/live-activity', label: 'Live Activity', role: 'dashboard' },
+  { path: '/adminbobby/telnyx', label: 'Telnyx', role: 'dashboard' },
+  { path: '/adminbobby/stripe', label: 'Stripe', role: 'analytics' },
   { path: '/adminbobby/analytics/profitability-tools', label: 'Profit tools', role: 'analytics' },
   { path: '/adminbobby/analytics/billing-reconciliation', label: 'Billing Reconciliation', role: 'analytics' },
   { path: '/adminbobby/calls', label: 'Calls', role: 'calls' },
