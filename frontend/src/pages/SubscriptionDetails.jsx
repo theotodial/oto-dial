@@ -1,70 +1,61 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useSubscription } from '../context/SubscriptionContext';
 import API from '../api';
+import SubscriptionCreditHistory from '../components/SubscriptionCreditHistory';
+
+const EMPTY_STATISTICS = {
+  calls: { made: 0, received: 0, rings: 0, total: 0 },
+  sms: { sent: 0, received: 0, total: 0 },
+};
 
 function SubscriptionDetails() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { refreshSubscription, usage } = useSubscription();
-  const [subscription, setSubscription] = useState(null);
+  const { subscription, usage, hydrated, refreshSubscription } = useSubscription();
   const [statistics, setStatistics] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [cancelling, setCancelling] = useState(false);
   const isMountedRef = useRef(true);
-
-  const fetchSubscriptionDetails = useCallback(async () => {
-    if (!isMountedRef.current) return;
-
-    setLoading(true);
-    setError('');
-
-    try {
-      const subData = await refreshSubscription();
-
-      if (!isMountedRef.current) return;
-
-      if (!subData) {
-        setError('Failed to load subscription details');
-        setSubscription(null);
-      } else {
-        setSubscription(subData);
-      }
-
-      const statsRes = await API.get('/api/usage/statistics').catch(() => ({ error: true }));
-
-      if (!isMountedRef.current) return;
-
-      if (!statsRes.error && statsRes.data) {
-        setStatistics(statsRes.data);
-      } else {
-        setStatistics({
-          calls: { made: 0, received: 0, rings: 0, total: 0 },
-          sms: { sent: 0, received: 0, total: 0 }
-        });
-      }
-    } catch (err) {
-      if (!isMountedRef.current) return;
-      console.error('Failed to fetch subscription details:', err);
-      setError('Failed to load subscription details');
-    } finally {
-      if (isMountedRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [refreshSubscription]);
+  const refreshSubscriptionRef = useRef(refreshSubscription);
+  refreshSubscriptionRef.current = refreshSubscription;
 
   useEffect(() => {
     isMountedRef.current = true;
-    fetchSubscriptionDetails();
+    let cancelled = false;
+
+    const fetchStatistics = async () => {
+      try {
+        const statsRes = await API.get('/api/usage/statistics').catch(() => ({ error: true }));
+
+        if (cancelled || !isMountedRef.current) return;
+
+        if (!statsRes.error && statsRes.data) {
+          setStatistics(statsRes.data);
+        } else {
+          setStatistics(EMPTY_STATISTICS);
+        }
+      } catch (err) {
+        if (cancelled || !isMountedRef.current) return;
+        console.error('Failed to fetch usage statistics:', err);
+        setStatistics(EMPTY_STATISTICS);
+      } finally {
+        if (!cancelled && isMountedRef.current) {
+          setStatsLoading(false);
+        }
+      }
+    };
+
+    fetchStatistics();
 
     return () => {
+      cancelled = true;
       isMountedRef.current = false;
     };
-  }, [fetchSubscriptionDetails]);
+  }, []);
+
+  const loading = !hydrated || statsLoading;
 
   const handleCancelSubscription = async () => {
     if (!confirm('Are you sure you want to cancel your subscription? No refunds will be issued. Your account will remain active until the end of the current billing cycle.')) {
@@ -84,8 +75,7 @@ function SubscriptionDetails() {
       if (response.error) {
         setError(response.error);
       } else {
-        // Refresh subscription data to show updated status
-        await fetchSubscriptionDetails();
+        await refreshSubscriptionRef.current();
         setSuccess('Subscription cancelled successfully. Your account will remain active until the end of the current billing cycle.');
       }
     } catch (err) {
@@ -258,6 +248,8 @@ function SubscriptionDetails() {
               })()}
             </div>
           </div>
+
+          <SubscriptionCreditHistory />
 
           {/* Add-on showcase */}
           <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl shadow-lg border border-emerald-100 dark:border-emerald-800 p-6">

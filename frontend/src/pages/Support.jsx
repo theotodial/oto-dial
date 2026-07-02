@@ -106,6 +106,25 @@ export default function Support() {
     }
   };
 
+  const openTicketById = async (ticketId) => {
+    if (!ticketId) return;
+    try {
+      const response = await API.get(`/api/support/tickets/${ticketId}`);
+      if (response.data?.success) {
+        setSelectedTicket(response.data.ticket);
+        setShowCreateForm(false);
+      }
+    } catch (err) {
+      console.error('Failed to load support ticket:', err);
+    }
+  };
+
+  useEffect(() => {
+    const ticketId = (searchParams.get('ticket') || '').trim();
+    if (!ticketId || loading) return;
+    openTicketById(ticketId);
+  }, [searchParams, loading]);
+
   const fileToDataUrl = (file) =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();

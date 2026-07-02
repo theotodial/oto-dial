@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import API from '../api';
@@ -14,7 +14,15 @@ import {
   isComingSoonPlan,
   planMarketingDescription,
 } from '../utils/planDisplay';
+import {
+  ADDONS_TEMPORARILY_UNAVAILABLE,
+  getPlanAvailability,
+  isPlanPurchasable,
+  UNAVAILABLE_CTA,
+} from '../utils/catalogAvailability';
+import CatalogUnavailableNotice from '../components/CatalogUnavailableNotice';
 import CreditTimeline from '../components/CreditTimeline';
+import { findPlanByBillingQuery } from '../utils/billingPlanLink';
 
 const CheckIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -24,6 +32,7 @@ const CheckIcon = () => (
 
 function Billing() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
@@ -31,17 +40,23 @@ function Billing() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [plans, setPlans] = useState([]);
-  const [planCategory, setPlanCategory] = useState('campaign');
+  const [planCategory, setPlanCategory] = useState('bundle');
   const [addonPlans, setAddonPlans] = useState([]);
-  const [currentSubscription, setCurrentSubscription] = useState(null);
   const [buyingAddonId, setBuyingAddonId] = useState(null);
   const [showPaymentIssueCta, setShowPaymentIssueCta] = useState(false);
   const [projectedAvailableCredits, setProjectedAvailableCredits] = useState(null);
 
   const isMountedRef = useRef(true);
+  const appliedPlanFromUrlRef = useRef(null);
   const [searchParams] = useSearchParams();
+  const requestedPlanQuery = searchParams.get('plan');
+  const successParam = searchParams.get('success');
   const { user, isAuthenticated } = useAuth();
   const { subscription, usage, refreshSubscription } = useSubscription();
+  const refreshSubscriptionRef = useRef(refreshSubscription);
+  refreshSubscriptionRef.current = refreshSubscription;
+  const userIdRef = useRef(user?.id);
+  userIdRef.current = user?.id;
 
   const isCampaignPlan = (plan) => {
     if (!plan) return false;
@@ -50,87 +65,83 @@ function Billing() {
   };
 
   useEffect(() => {
-    setCurrentSubscription(subscription);
-  }, [subscription]);
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
-    isMountedRef.current = true;
-    let pollTimeoutId = null;
-    let cancelled = false;
-
     fetchBalance();
     fetchPlans();
     fetchAddonPlans();
-    
-    // Check for successful checkout and poll for backend activation.
-    // Stripe webhooks can arrive a few seconds after redirect.
-    const successParam = searchParams.get('success');
-    if (successParam) {
-      const isAddonCheckout = successParam === 'addon';
-      const maxAttempts = 15;
-      let attempts = 0;
+  }, []);
 
-      setSuccess(
-        isAddonCheckout
-          ? 'Payment confirmed. Applying your add-on now...'
-          : 'Payment confirmed. Activating your subscription now...'
-      );
+  useEffect(() => {
+    if (!successParam) return;
 
-      const pollSubscriptionStatus = async () => {
-        if (!isMountedRef.current || cancelled) return;
-        attempts += 1;
+    let cancelled = false;
+    let pollTimeoutId = null;
+    const isAddonCheckout = successParam === 'addon';
+    const maxAttempts = 15;
+    let attempts = 0;
 
-        const subData = await refreshSubscription();
-        if (!isMountedRef.current || cancelled) return;
+    setSuccess(
+      isAddonCheckout
+        ? 'Payment confirmed. Applying your add-on now...'
+        : 'Payment confirmed. Activating your subscription now...'
+    );
 
-        const hasActivePlan = Boolean(subData?.active);
+    const pollSubscriptionStatus = async () => {
+      if (cancelled || !isMountedRef.current) return;
+      attempts += 1;
 
-        if (hasActivePlan) {
-          setCurrentSubscription(subData);
-          setSuccess(
-            isAddonCheckout
-              ? 'Add-on purchase successful. Your account is updated.'
-              : 'Subscription activated successfully.'
-          );
+      const subData = await refreshSubscriptionRef.current();
+      if (cancelled || !isMountedRef.current) return;
 
-          if (!isAddonCheckout && user?.id && subData?._id) {
-            try {
-              await trackSubscription(user.id, subData._id, {
-                transactionId: String(subData._id),
-                value: Number(subData?.price || subData?.plan?.price || 0),
-                currency: 'usd',
-                planId: subData?.planId || subData?.plan?._id,
-                planName: subData?.planName || subData?.plan?.name
-              });
-            } catch (err) {
-              console.warn('Could not track subscription:', err);
-            }
+      const hasActivePlan = Boolean(subData?.active);
+
+      if (hasActivePlan) {
+        setSuccess(
+          isAddonCheckout
+            ? 'Add-on purchase successful. Your account is updated.'
+            : 'Subscription activated successfully.'
+        );
+
+        if (!isAddonCheckout && userIdRef.current && subData?._id) {
+          try {
+            await trackSubscription(userIdRef.current, subData._id, {
+              transactionId: String(subData._id),
+              value: Number(subData?.price || subData?.plan?.price || 0),
+              currency: 'usd',
+              planId: subData?.planId || subData?.plan?._id,
+              planName: subData?.planName || subData?.plan?.name,
+            });
+          } catch (err) {
+            console.warn('Could not track subscription:', err);
           }
-          return;
         }
+        return;
+      }
 
-        if (attempts < maxAttempts) {
-          pollTimeoutId = setTimeout(pollSubscriptionStatus, 2000);
-          return;
-        }
+      if (attempts < maxAttempts) {
+        pollTimeoutId = setTimeout(pollSubscriptionStatus, 2000);
+        return;
+      }
 
-        if (!isAddonCheckout) {
-          setError('Payment succeeded, but account activation is still processing. Please refresh in a few seconds.');
-          setShowPaymentIssueCta(true);
-        }
-      };
+      if (!isAddonCheckout) {
+        setError('Payment succeeded, but account activation is still processing. Please refresh in a few seconds.');
+        setShowPaymentIssueCta(true);
+      }
+    };
 
-      pollTimeoutId = setTimeout(pollSubscriptionStatus, 1500);
-    }
-    
+    pollTimeoutId = setTimeout(pollSubscriptionStatus, 1500);
+
     return () => {
       cancelled = true;
-      if (pollTimeoutId) {
-        clearTimeout(pollTimeoutId);
-      }
-      isMountedRef.current = false;
+      if (pollTimeoutId) clearTimeout(pollTimeoutId);
     };
-  }, [searchParams, user, isAuthenticated, refreshSubscription]);
+  }, [successParam]);
 
   const fetchPlans = async () => {
     if (!isMountedRef.current) return;
@@ -153,6 +164,7 @@ function Billing() {
             const isUnlimited = isCatalogUnlimitedPlan(plan);
 
             const comingSoon = isComingSoonPlan(plan);
+            const availability = getPlanAvailability(plan);
             return {
               _id: plan._id,
               name: plan.name,
@@ -163,7 +175,8 @@ function Billing() {
               features: getPlanFeatureBullets(plan),
               popular: isUnlimited && !comingSoon,
               comingSoon,
-              available: !comingSoon,
+              temporarilyUnavailable: availability.temporarilyUnavailable,
+              available: availability.available,
             };
           });
 
@@ -209,7 +222,8 @@ function Billing() {
             limits: { creditsTotal: 1500, minutesTotal: 1500, smsTotal: 100 },
           }),
           popular: false,
-          available: true,
+          temporarilyUnavailable: true,
+          available: false,
         },
         {
           _id: 'fallback-super',
@@ -247,6 +261,7 @@ function Billing() {
         type: addon.type,
         price: Number(addon.price).toFixed(2),
         quantity: addon.quantity,
+        temporarilyUnavailable: Boolean(addon.temporarilyUnavailable ?? ADDONS_TEMPORARILY_UNAVAILABLE),
       }));
       setAddonPlans(transformed);
     } catch (err) {
@@ -296,6 +311,18 @@ function Billing() {
   }, [isAuthenticated]);
 
   useEffect(() => {
+    if (!requestedPlanQuery || !Array.isArray(plans) || plans.length === 0) return;
+    if (appliedPlanFromUrlRef.current === requestedPlanQuery) return;
+
+    const match = findPlanByBillingQuery(plans, requestedPlanQuery);
+    if (!match?._id) return;
+
+    appliedPlanFromUrlRef.current = requestedPlanQuery;
+    setPlanCategory(isCampaignPlan(match) ? 'campaign' : 'bundle');
+    setSelectedPlan(String(match._id));
+  }, [requestedPlanQuery, plans]);
+
+  useEffect(() => {
     if (!isAuthenticated) {
       setProjectedAvailableCredits(null);
       return;
@@ -303,7 +330,7 @@ function Billing() {
     refreshProjectedCredits();
     const id = setInterval(refreshProjectedCredits, 15000);
     return () => clearInterval(id);
-  }, [isAuthenticated, currentSubscription?.active, currentSubscription?._id, refreshProjectedCredits]);
+  }, [isAuthenticated, subscription?.active, subscription?._id, refreshProjectedCredits]);
 
   /**
    * 🔴 ONLY LOGIC CHANGE IS HERE
@@ -313,11 +340,18 @@ function Billing() {
     // Require authentication before starting checkout.
     // If user is not logged in, send them to login and then back to billing.
     if (!isAuthenticated) {
-      navigate('/login', { state: { from: { pathname: '/billing' } } });
+      navigate('/login', {
+        state: {
+          from: {
+            pathname: '/billing',
+            search: location.search || '',
+          },
+        },
+      });
       return;
     }
-    // Skip if plan is not available
-    if (plan.available === false) {
+    // Skip if plan is not available for purchase
+    if (!isPlanPurchasable(plan)) {
       return;
     }
 
@@ -372,11 +406,22 @@ function Billing() {
 
   const handleBuyAddon = async (addon) => {
     if (!addon || !addon._id) return;
-    if (!isAuthenticated) {
-      navigate('/login', { state: { from: { pathname: '/billing' } } });
+    if (addon.temporarilyUnavailable || ADDONS_TEMPORARILY_UNAVAILABLE) {
+      setError('Add-ons are not available at the moment. Please contact support.');
       return;
     }
-    const hasActive = Boolean(currentSubscription?.active);
+    if (!isAuthenticated) {
+      navigate('/login', {
+        state: {
+          from: {
+            pathname: '/billing',
+            search: location.search || '',
+          },
+        },
+      });
+      return;
+    }
+    const hasActive = Boolean(subscription?.active);
     if (!hasActive) {
       setError('You need an active subscription before purchasing add-ons.');
       return;
@@ -431,14 +476,14 @@ function Billing() {
   );
   const defaultSelectedId =
     selectedPlan ||
-    effectivePlans.find((p) => p.name === "Basic Plan")?._id ||
+    effectivePlans.find((p) => isPlanPurchasable(p))?._id ||
     effectivePlans[0]?._id ||
     null;
   const activePlan =
     effectivePlans.find((p) => p._id === defaultSelectedId) || effectivePlans[0] || null;
+  const activePlanPurchasable = isPlanPurchasable(activePlan);
 
-  const hasActiveSubscription =
-    Boolean(currentSubscription?.active);
+  const hasActiveSubscription = Boolean(subscription?.active);
 
   return (
     <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900">
@@ -462,12 +507,12 @@ function Billing() {
             <h1 className="text-base font-semibold text-gray-900 dark:text-white truncate">
               Select your subscription
             </h1>
-            {currentSubscription && isAuthenticated && (() => {
+            {subscription && isAuthenticated && (() => {
               const legacyAll = Boolean(
-                currentSubscription.isUnlimited || currentSubscription.displayUnlimited
+                subscription.isUnlimited || subscription.displayUnlimited
               );
               const uMin =
-                currentSubscription.unlimitedMinutesDisplay ?? legacyAll;
+                subscription.unlimitedMinutesDisplay ?? legacyAll;
               if (uMin || projectedAvailableCredits == null) return null;
               return (
                 <p
@@ -494,20 +539,20 @@ function Billing() {
             </p>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            {currentSubscription && (
+            {subscription && (
               (() => {
                 const legacyAll = Boolean(
-                  currentSubscription.isUnlimited || currentSubscription.displayUnlimited
+                  subscription.isUnlimited || subscription.displayUnlimited
                 );
                 const uMin =
-                  currentSubscription.unlimitedMinutesDisplay ?? legacyAll;
+                  subscription.unlimitedMinutesDisplay ?? legacyAll;
                 const creditPart = uMin
                   ? "∞ Telecom Credits"
-                  : `${Math.round(Number(usage?.creditsRemaining ?? currentSubscription?.creditsRemaining ?? 0)).toLocaleString()} Telecom Credits`;
+                  : `${Math.round(Number(usage?.creditsRemaining ?? subscription?.creditsRemaining ?? 0)).toLocaleString()} Telecom Credits`;
                 return (
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
                 <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                  Current plan: {currentSubscription.planName}
+                  Current plan: {subscription.planName}
                 </span>
                 <span className="block mt-0.5">
                         {`${creditPart} remaining`}
@@ -541,13 +586,13 @@ function Billing() {
           </div>
         )}
 
-        {currentSubscription?.active && isAuthenticated && (
+        {subscription?.active && isAuthenticated && (
           <div className="mb-6 max-w-3xl mx-auto">
             <CreditTimeline />
           </div>
         )}
 
-        {showPaymentIssueCta && !currentSubscription && (
+        {showPaymentIssueCta && !subscription?.active && (
           <div className="mb-4 max-w-3xl mx-auto px-4 py-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl">
             <p className="text-amber-800 dark:text-amber-200 font-medium mb-2">
               Payment completed but subscription not active?
@@ -575,7 +620,7 @@ function Billing() {
                   Choose your plan
                 </h2>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Pick a plan category first, then choose a subscription.
+                  Pick a plan category first, then choose a plan.
                 </p>
               </div>
               {activePlan && (
@@ -627,6 +672,7 @@ function Billing() {
                       {effectivePlans.map((plan) => (
                         <option key={plan._id} value={plan._id}>
                           {plan.name} — ${plan.price}/month
+                          {plan.temporarilyUnavailable ? ' (unavailable)' : plan.comingSoon ? ' (coming soon)' : ''}
                         </option>
                       ))}
                     </select>
@@ -638,15 +684,18 @@ function Billing() {
                 <button
                   type="button"
                   onClick={() => activePlan && handleSelectPlan(activePlan)}
-                  disabled={!activePlan || processing || Boolean(activePlan?.comingSoon)}
+                  disabled={!activePlan || processing || !activePlanPurchasable}
                   className="w-full inline-flex justify-center items-center px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-md transition-colors"
                 >
                   {activePlan?.comingSoon
                     ? 'Coming Soon'
+                    : activePlan?.temporarilyUnavailable
+                    ? UNAVAILABLE_CTA
                     : processing
                     ? 'Processing…'
                     : 'Continue to secure checkout'}
                 </button>
+                {activePlan?.temporarilyUnavailable && <CatalogUnavailableNotice className="mt-3" />}
               </div>
 
               {activePlan && (
@@ -663,6 +712,11 @@ function Billing() {
                         {activePlan.comingSoon && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-200">
                             Coming Soon
+                          </span>
+                        )}
+                        {activePlan.temporarilyUnavailable && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-gray-200">
+                            Not available at the moment
                           </span>
                         )}
                       </p>
@@ -721,15 +775,18 @@ function Billing() {
               <button
                 type="button"
                 onClick={() => activePlan && handleSelectPlan(activePlan)}
-                disabled={!activePlan || processing || Boolean(activePlan?.comingSoon)}
+                disabled={!activePlan || processing || !activePlanPurchasable}
                 className="mt-5 w-full inline-flex justify-center items-center px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-md transition-colors"
               >
                 {activePlan?.comingSoon
                   ? 'Coming Soon'
+                  : activePlan?.temporarilyUnavailable
+                  ? UNAVAILABLE_CTA
                   : processing
                   ? 'Processing…'
                   : 'Continue to secure checkout'}
               </button>
+              {activePlan?.temporarilyUnavailable && <CatalogUnavailableNotice className="mt-3" />}
             </div>
 
             <div className="space-y-4">
@@ -776,6 +833,9 @@ function Billing() {
 
                 {addonPlans.length > 0 && (
                   <div className="space-y-2">
+                    {ADDONS_TEMPORARILY_UNAVAILABLE && (
+                      <CatalogUnavailableNotice className="text-[11px] mb-2" />
+                    )}
                     {addonPlans.map((addon) => (
                       <button
                         key={addon._id}
@@ -783,7 +843,9 @@ function Billing() {
                         onClick={() => handleBuyAddon(addon)}
                         disabled={
                           buyingAddonId === addon._id ||
-                          (isAuthenticated && !hasActiveSubscription)
+                          (isAuthenticated && !hasActiveSubscription) ||
+                          addon.temporarilyUnavailable ||
+                          ADDONS_TEMPORARILY_UNAVAILABLE
                         }
                         className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-900 dark:text-emerald-50 text-xs font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                       >
@@ -794,7 +856,9 @@ function Billing() {
                             ? `${addon.quantity.toLocaleString()} legacy minutes`
                             : `${addon.quantity.toLocaleString()} extra SMS`}
                           <span className="block text-[10px] text-emerald-800/80 dark:text-emerald-100/80">
-                            Expires 30 days after purchase
+                            {addon.temporarilyUnavailable || ADDONS_TEMPORARILY_UNAVAILABLE
+                              ? 'Not available at the moment'
+                              : 'Expires 30 days after purchase'}
                           </span>
                         </span>
                         <span className="ml-3 whitespace-nowrap">

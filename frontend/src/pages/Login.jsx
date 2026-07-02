@@ -42,7 +42,11 @@ function Login() {
   const [success, setSuccess] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const from = location.state?.from?.pathname || '/recents';
+  const fromLocation = location.state?.from;
+  const from =
+    fromLocation?.pathname
+      ? `${fromLocation.pathname}${fromLocation.search || ''}`
+      : '/recents';
 
   useEffect(() => {
     if (isAuthenticated) {

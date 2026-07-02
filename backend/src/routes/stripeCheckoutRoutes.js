@@ -9,6 +9,11 @@ import {
   getCanonicalAddonPriceId,
   getCanonicalPlanPriceId
 } from "../config/stripeCatalog.js";
+import {
+  areAddonsPurchasable,
+  isTemporarilyUnavailablePlan,
+  UNAVAILABLE_CHECKOUT_ERROR,
+} from "../config/catalogAvailability.js";
 import { getLatestSubscription } from "../services/subscriptionService.js";
 
 const router = express.Router();
@@ -49,6 +54,12 @@ router.post("/checkout", authenticateUser, async (req, res) => {
     if (plan.comingSoon) {
       return res.status(403).json({
         error: "This plan is coming soon and not yet available for purchase."
+      });
+    }
+
+    if (isTemporarilyUnavailablePlan(plan)) {
+      return res.status(403).json({
+        error: UNAVAILABLE_CHECKOUT_ERROR
       });
     }
 
@@ -164,6 +175,10 @@ router.post("/checkout/addon", authenticateUser, async (req, res) => {
     const addon = await AddonPlan.findById(addonId);
     if (!addon || !addon.active) {
       return res.status(400).json({ error: "Add-on not found or inactive" });
+    }
+
+    if (!areAddonsPurchasable()) {
+      return res.status(403).json({ error: UNAVAILABLE_CHECKOUT_ERROR });
     }
 
     const effectiveAddonPriceId = getCanonicalAddonPriceId(addon);

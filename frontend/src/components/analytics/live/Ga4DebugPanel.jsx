@@ -48,6 +48,8 @@ export default function Ga4DebugPanel() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-4">
         <Cell label="Measurement ID" value={server?.measurementId || '—'} mono />
         <Cell label="MP Configured" value={server?.mpConfigured ? 'yes' : 'no'} />
+        <Cell label="Data API" value={server?.dataApiConfigured ? 'yes' : 'no'} />
+        <Cell label="Overall" value={server?.configured ? 'configured' : 'not configured'} />
         <Cell label="MP Sent" value={mp.sent ?? 0} />
         <Cell label="MP Failed" value={mp.failed ?? 0} />
         <Cell label="MP Retry Queue" value={mp.queueLength ?? 0} />
@@ -55,7 +57,12 @@ export default function Ga4DebugPanel() {
         <Cell label="GA4 Enabled" value={server?.enabled ? 'yes' : 'no'} />
         <Cell label="Debug Mode" value={server?.debug ? 'yes' : 'no'} />
       </div>
-      <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-2">Browser client (this tab)</div>
+      {server?.missing?.length > 0 && (
+        <p className="mt-3 text-[11px] text-amber-600 dark:text-amber-300">
+          Missing on server: {server.missing.join('; ')}
+        </p>
+      )}
+      <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-2 mt-4">Browser client (this tab)</div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         <Cell label="Browser GA" value={client.connected ? 'connected' : 'not active'} />
         <Cell label="Client ID" value={client.clientId || '—'} mono />

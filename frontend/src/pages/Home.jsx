@@ -4,6 +4,7 @@ import Navbar from '../components/Navbar';
 import NewHeroSection from '../components/homepage/NewHeroSection';
 import WhyOtodialSection from '../components/homepage/WhyOtodialSection';
 import FreeUSNumberSection from '../components/homepage/FreeUSNumberSection';
+import OtpVerificationSection from '../components/homepage/OtpVerificationSection';
 import NewFeaturesSection from '../components/homepage/NewFeaturesSection';
 import NewHowItWorks from '../components/homepage/NewHowItWorks';
 import NewPricingSection from '../components/homepage/NewPricingSection';
@@ -17,6 +18,7 @@ import SiteHeader from '../components/site/SiteHeader';
 import HomeConfidenceStrip from '../components/homepage/HomeConfidenceStrip';
 import { fetchHomepageStructure, fetchPublicSeoSettings } from '../services/siteService';
 import { applySeoSettingsToDocument, DEFAULT_HOME_DOCUMENT_SEO } from '../utils/seo';
+import { billingPlanUrl } from '../utils/billingPlanLink';
 
 function Home() {
   const [dynamic, setDynamic] = useState(null);
@@ -92,6 +94,7 @@ function Home() {
       <NewHeroSection />
       <WhyOtodialSection />
       <FreeUSNumberSection />
+      <OtpVerificationSection />
       <NewFeaturesSection />
       <NewHowItWorks />
       <NewPricingSection />
@@ -129,7 +132,7 @@ function Home() {
               </li>
             </ul>
             <PrefetchLink
-              to="/billing"
+              to={billingPlanUrl('SMS Campaign')}
               className="inline-flex items-center justify-center px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md transition-colors"
             >
               View SMS Campaign plan
@@ -163,7 +166,7 @@ function Home() {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <PrefetchLink
-              to="/billing"
+              to={billingPlanUrl('Unlimited Call')}
               className="inline-flex items-center justify-center px-8 py-3.5 rounded-xl bg-white text-emerald-800 font-semibold shadow-lg hover:bg-emerald-50 transition-all duration-200 hover:-translate-y-0.5"
             >
               Choose Unlimited Plan

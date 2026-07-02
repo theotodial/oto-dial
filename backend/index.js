@@ -35,6 +35,7 @@ import { configureAdminLiveEvents } from "./src/services/adminLiveEventsService.
 import { configureAnalyticsLive } from "./src/services/analytics/analyticsLiveService.js";
 import { startRollupWorker } from "./src/services/analytics/rollupService.js";
 import { startGa4MpWorker } from "./src/services/analytics/gaMeasurementProtocolService.js";
+import { logGa4ConfigAtStartup } from "./src/services/analytics/ga4ConfigService.js";
 import { startGa4ReconciliationWorker } from "./src/services/analytics/ga4ReconciliationWorker.js";
 import { registerUserSmsNamespace } from "./src/events/smsEvents.js";
 import {
@@ -284,6 +285,7 @@ console.log(
 );
 console.log("🌐 APP_URL:", process.env.APP_URL || "(not set)");
 logResendConfigAtStartup();
+logGa4ConfigAtStartup();
 const uri = process.env.MONGODB_URI;
 console.log("MONGODB_URI =", uri ? uri.replace(/:[^:@]+@/, ":****@") : "❌ missing");
 console.log("[http] configured bind", JSON.stringify({ HOST, PORT, nodeEnv: process.env.NODE_ENV || null }));

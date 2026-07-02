@@ -1,4 +1,8 @@
 import AdminNotification from "../models/AdminNotification.js";
+import { emitAdminSocketEvent } from "./adminLiveEventsService.js";
+import { BELL_NOTIFICATION_TYPES } from "./adminNavCountsService.js";
+
+const BELL_TYPE_SET = new Set(BELL_NOTIFICATION_TYPES);
 
 function buildAutoDedupeKey() {
   return `auto-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
@@ -38,8 +42,25 @@ export async function createAdminNotification({
     }
   }
 
+  const emitBellSocket = (notification) => {
+    if (!notification || !BELL_TYPE_SET.has(notification.type)) return;
+    emitAdminSocketEvent("admin:bell_notification", {
+      notification: {
+        _id: notification._id,
+        type: notification.type,
+        title: notification.title,
+        message: notification.message,
+        data: notification.data || {},
+        isRead: notification.isRead === true,
+        createdAt: notification.createdAt,
+      },
+    });
+  };
+
   try {
-    return await AdminNotification.create(payload);
+    const created = await AdminNotification.create(payload);
+    emitBellSocket(created);
+    return created;
   } catch (error) {
     if (error?.code === 11000) {
       if (normalizedDedupeKey) {
@@ -48,7 +69,9 @@ export async function createAdminNotification({
 
       // Retry once with a fresh auto key for legacy unique-index edge cases.
       payload.dedupeKey = buildAutoDedupeKey();
-      return AdminNotification.create(payload);
+      const created = await AdminNotification.create(payload);
+      emitBellSocket(created);
+      return created;
     }
 
     throw error;

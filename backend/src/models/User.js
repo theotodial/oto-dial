@@ -430,7 +430,74 @@ const userSchema = new mongoose.Schema(
       rejectionReason: {
         type: String,
         default: null
-      }
+      },
+      legalName: {
+        type: String,
+        default: null
+      },
+      dateOfBirth: {
+        type: String,
+        default: null
+      },
+      documentType: {
+        type: String,
+        enum: ["passport", "drivers_license", "national_id", "other", null],
+        default: null
+      },
+      documentCountry: {
+        type: String,
+        default: null
+      },
+      addressLine1: {
+        type: String,
+        default: null
+      },
+      city: {
+        type: String,
+        default: null
+      },
+      stateRegion: {
+        type: String,
+        default: null
+      },
+      postalCode: {
+        type: String,
+        default: null
+      },
+      idDocumentBack: {
+        type: String,
+        default: null
+      },
+      selfieDocument: {
+        type: String,
+        default: null
+      },
+      selfieLiveness: {
+        sessionId: { type: String, default: null },
+        completedAt: { type: Date, default: null },
+        passed: { type: Boolean, default: false },
+        livenessScore: { type: Number, default: null },
+        faceMatchScore: { type: Number, default: null },
+        faceMatchPassed: { type: Boolean, default: null },
+        faceMatchRequired: { type: Boolean, default: false },
+        challenges: { type: [String], default: [] },
+      },
+      aiVerification: {
+        overallScore: { type: Number, default: null },
+        nameMatchScore: { type: Number, default: null },
+        faceMatchScore: { type: Number, default: null },
+        livenessScore: { type: Number, default: null },
+        faceMatchRequired: { type: Boolean, default: false },
+        faceMatchPassed: { type: Boolean, default: null },
+        autoApproved: { type: Boolean, default: false },
+        decision: {
+          type: String,
+          enum: ["approved", "pending_manual", "rejected", null],
+          default: null,
+        },
+        reasons: { type: [String], default: [] },
+        evaluatedAt: { type: Date, default: null },
+      },
     }
   },
   { timestamps: true }

@@ -8,6 +8,9 @@ import {
   isComingSoonPlan,
   planMarketingDescription,
 } from '../../utils/planDisplay';
+import { getPlanAvailability } from '../../utils/catalogAvailability';
+import { billingPlanUrl } from '../../utils/billingPlanLink';
+import CatalogUnavailableNotice from '../CatalogUnavailableNotice';
 
 /** Homepage public marketing plans (Unlimited Call + Enterprise shown as Coming Soon). */
 const ALLOWED_PRICING_PLAN_NAMES = new Set([
@@ -29,8 +32,9 @@ const DEFAULT_MARKETING_PLANS = [
       "Email Support"
     ],
     cta: "Get Started Instantly",
-    popular: true,
-    available: true
+    popular: false,
+    available: false,
+    temporarilyUnavailable: true,
   },
   {
     name: "Super Plan",
@@ -43,7 +47,7 @@ const DEFAULT_MARKETING_PLANS = [
       "Email Support"
     ],
     cta: "Get Started Instantly",
-    popular: false,
+    popular: true,
     available: true
   },
   {
@@ -80,15 +84,17 @@ function NewPricingSection() {
   const [plans, setPlans] = useState(DEFAULT_MARKETING_PLANS);
 
   const toMarketingPlan = (plan) => {
-    const comingSoon = isComingSoonPlan(plan);
+    const availability = getPlanAvailability(plan);
     return {
       name: plan.name,
       price: Number(plan.price || 0).toFixed(2),
       description: planMarketingDescription(plan),
       features: getPlanFeatureBullets(plan),
-      cta: comingSoon ? 'Coming Soon' : 'Get Started Instantly',
-      popular: plan.name === 'Basic Plan',
-      available: !comingSoon,
+      cta: availability.cta,
+      popular: plan.name === 'Super Plan',
+      available: availability.available,
+      comingSoon: availability.comingSoon,
+      temporarilyUnavailable: availability.temporarilyUnavailable,
     };
   };
 
@@ -157,11 +163,18 @@ function NewPricingSection() {
                 </div>
               )}
 
-              {/* Coming soon badge */}
-              {!plan.available && (
+              {/* Availability badge */}
+              {plan.comingSoon && (
                 <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
                   <span className="bg-amber-500 text-white px-4 py-1 rounded-full text-sm font-semibold shadow-lg">
                     Coming Soon
+                  </span>
+                </div>
+              )}
+              {plan.temporarilyUnavailable && !plan.comingSoon && !plan.popular && (
+                <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
+                  <span className="bg-gray-600 dark:bg-slate-600 text-white px-4 py-1 rounded-full text-sm font-semibold shadow-lg whitespace-nowrap">
+                    Not available at the moment
                   </span>
                 </div>
               )}
@@ -169,6 +182,11 @@ function NewPricingSection() {
               {/* Plan name */}
               <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">{plan.name}</h3>
               <p className="text-gray-600 dark:text-gray-400 mb-6 text-sm md:text-base">{plan.description}</p>
+              {plan.temporarilyUnavailable && plan.popular && (
+                <p className="text-xs font-semibold text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/35 border border-amber-200/80 dark:border-amber-700/40 rounded-lg px-3 py-2 -mt-4 mb-6">
+                  Not available at the moment — contact support if you need this plan.
+                </p>
+              )}
 
               {/* Price */}
               <div className="mb-7 pb-6 border-b border-gray-100 dark:border-slate-800">
@@ -189,7 +207,7 @@ function NewPricingSection() {
               {/* CTA Button */}
               {plan.available ? (
                 <PrefetchLink
-                  to="/billing"
+                  to={billingPlanUrl(plan.name)}
                   className={`block w-full text-center py-3 px-6 rounded-xl font-semibold transition-all duration-200 ${
                     plan.popular
                       ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/30'
@@ -199,13 +217,16 @@ function NewPricingSection() {
                   {plan.cta}
                 </PrefetchLink>
               ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="block w-full text-center py-3 px-6 rounded-xl font-semibold bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 cursor-not-allowed"
-                >
-                  {plan.cta}
-                </button>
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    disabled
+                    className="block w-full text-center py-3 px-6 rounded-xl font-semibold bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                  >
+                    {plan.cta}
+                  </button>
+                  {plan.temporarilyUnavailable && <CatalogUnavailableNotice />}
+                </div>
               )}
             </div>
           ))}

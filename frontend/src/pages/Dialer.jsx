@@ -6,6 +6,7 @@ import { useCall } from '../context/CallContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { useAuth } from '../context/AuthContext';
 import { getDialCountriesForUser } from '../utils/callingCountries';
+import DialCountryFlags from '../components/DialCountryFlags';
 
 const PhoneIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -407,7 +408,7 @@ function Dialer() {
                 onClick={() => setShowDialCountryDropdown(!showDialCountryDropdown)}
                 className="relative px-3 py-1.5 rounded-2xl border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 flex items-center gap-2 text-sm text-gray-900 dark:text-white"
               >
-                <span>{dialCountries.find(c => c.code === dialCountryCode)?.flag || '🌎'}</span>
+                <DialCountryFlags flagCodes={dialCountries.find(c => c.code === dialCountryCode)?.flagCodes || ['US']} />
                 <span>{dialCountryCode}</span>
               </button>
               {showDialCountryDropdown && (
@@ -427,7 +428,7 @@ function Dialer() {
                         }}
                         className="w-full px-3 py-2 text-left flex items-center gap-2 text-sm text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-slate-700"
                       >
-                        <span>{country.flag}</span>
+                        <DialCountryFlags flagCodes={country.flagCodes} />
                         <span className="truncate">{country.name}</span>
                         <span className="ml-auto text-gray-400 dark:text-gray-500">{country.code}</span>
                       </button>

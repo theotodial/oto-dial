@@ -34,6 +34,53 @@ function normalizeIssueType(rawIssueType, rawSubject) {
   return "general";
 }
 
+function serializeUserReply(reply) {
+  return {
+    id: reply._id,
+    message: reply.message,
+    from: reply.from,
+    fromName: reply.fromName,
+    fromEmail: reply.fromEmail,
+    createdAt: reply.createdAt,
+    readAt: reply.readAt || null
+  };
+}
+
+function markAdminRepliesAsRead(ticket) {
+  const now = new Date();
+  let changed = false;
+  (ticket.replies || []).forEach((reply) => {
+    if (reply.from === "admin" && !reply.readAt) {
+      reply.readAt = now;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+function serializeUserTicket(ticket) {
+  return {
+    id: ticket._id,
+    name: ticket.name,
+    email: ticket.email,
+    phone: ticket.phone,
+    issueType: ticket.issueType,
+    subject: ticket.subject,
+    message: ticket.message,
+    screenshotUrl: ticket.screenshotUrl,
+    stripePaymentId: ticket.stripePaymentId,
+    status: ticket.status,
+    priority: ticket.priority,
+    businessCategory: ticket.businessCategory,
+    businessDescription: ticket.businessDescription,
+    serviceRequest: ticket.serviceRequest,
+    isUrgent: ticket.isUrgent,
+    replies: (ticket.replies || []).map(serializeUserReply),
+    createdAt: ticket.createdAt,
+    updatedAt: ticket.updatedAt
+  };
+}
+
 /**
  * POST /api/support/upload-screenshot
  * Upload support screenshot (image only) and return URL.
@@ -227,26 +274,7 @@ router.get("/tickets", authenticateUser, async (req, res) => {
 
     res.json({
       success: true,
-      tickets: tickets.map(ticket => ({
-        id: ticket._id,
-        name: ticket.name,
-        email: ticket.email,
-        phone: ticket.phone,
-        issueType: ticket.issueType,
-        subject: ticket.subject,
-        message: ticket.message,
-        screenshotUrl: ticket.screenshotUrl,
-        stripePaymentId: ticket.stripePaymentId,
-        status: ticket.status,
-        priority: ticket.priority,
-        businessCategory: ticket.businessCategory,
-        businessDescription: ticket.businessDescription,
-        serviceRequest: ticket.serviceRequest,
-        isUrgent: ticket.isUrgent,
-        replies: ticket.replies || [],
-        createdAt: ticket.createdAt,
-        updatedAt: ticket.updatedAt
-      }))
+      tickets: tickets.map(serializeUserTicket)
     });
   } catch (err) {
     console.error("Get user tickets error:", err);
@@ -284,28 +312,13 @@ router.get("/tickets/:id", authenticateUser, async (req, res) => {
       });
     }
 
+    if (markAdminRepliesAsRead(ticket)) {
+      await ticket.save();
+    }
+
     res.json({
       success: true,
-      ticket: {
-        id: ticket._id,
-        name: ticket.name,
-        email: ticket.email,
-        phone: ticket.phone,
-        issueType: ticket.issueType,
-        subject: ticket.subject,
-        message: ticket.message,
-        screenshotUrl: ticket.screenshotUrl,
-        stripePaymentId: ticket.stripePaymentId,
-        status: ticket.status,
-        priority: ticket.priority,
-        businessCategory: ticket.businessCategory,
-        businessDescription: ticket.businessDescription,
-        serviceRequest: ticket.serviceRequest,
-        isUrgent: ticket.isUrgent,
-        replies: ticket.replies || [],
-        createdAt: ticket.createdAt,
-        updatedAt: ticket.updatedAt
-      }
+      ticket: serializeUserTicket(ticket)
     });
   } catch (err) {
     console.error("Get ticket detail error:", err);

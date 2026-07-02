@@ -28,12 +28,26 @@ const stats = {
   lastError: null
 };
 
+function isValidMpApiSecret(secret) {
+  if (!secret || typeof secret !== "string") return false;
+  const value = secret.trim();
+  if (value.length < 8) return false;
+  // Common mistake: pasting the G- measurement ID instead of the MP API secret.
+  if (value.startsWith("G-")) return false;
+  return true;
+}
+
+function resolveMpApiSecret() {
+  const raw = process.env.GA4_MP_API_SECRET || process.env.GA_MP_API_SECRET || null;
+  return isValidMpApiSecret(raw) ? String(raw).trim() : null;
+}
+
 function getConfig() {
   const measurementId =
     process.env.GA4_MEASUREMENT_ID ||
     process.env.GA_MEASUREMENT_ID ||
     "G-X3WN8RYCQ5";
-  const apiSecret = process.env.GA4_MP_API_SECRET || process.env.GA_MP_API_SECRET || null;
+  const apiSecret = resolveMpApiSecret();
   const enabled = String(process.env.GA4_ENABLED || "true").toLowerCase() !== "false";
   const debug = String(process.env.GA4_DEBUG || "false").toLowerCase() === "true";
   return {
@@ -42,6 +56,17 @@ function getConfig() {
     configured: Boolean(measurementId && apiSecret),
     enabled,
     debug
+  };
+}
+
+export function getMpConfigDetails() {
+  const raw = process.env.GA4_MP_API_SECRET || process.env.GA_MP_API_SECRET || null;
+  const apiSecretPresent = Boolean(raw && String(raw).trim());
+  const apiSecretInvalid = apiSecretPresent && !isValidMpApiSecret(raw);
+  return {
+    apiSecretPresent,
+    apiSecretInvalid,
+    measurementId: getConfig().measurementId
   };
 }
 
@@ -307,5 +332,6 @@ export default {
   sendCustomEvent,
   isMeasurementProtocolConfigured,
   getGa4MpStats,
+  getMpConfigDetails,
   startGa4MpWorker
 };

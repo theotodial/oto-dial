@@ -1,8 +1,41 @@
 import express from "express";
 import requireAdmin from "../../middleware/requireAdmin.js";
 import AdminNotification from "../../models/AdminNotification.js";
+import {
+  getAdminNavCounts,
+  markAdminNotificationsReadByType
+} from "../../services/adminNavCountsService.js";
 
 const router = express.Router();
+
+router.get("/nav-counts", requireAdmin, async (req, res) => {
+  try {
+    const counts = await getAdminNavCounts({
+      bellLimit: req.query.bellLimit
+    });
+    return res.json({ success: true, ...counts });
+  } catch (err) {
+    console.error("ADMIN NAV COUNTS ERROR:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to fetch admin nav counts"
+    });
+  }
+});
+
+router.patch("/notifications/read-by-type/:type", requireAdmin, async (req, res) => {
+  try {
+    const { type } = req.params;
+    const modifiedCount = await markAdminNotificationsReadByType(type);
+    return res.json({ success: true, modifiedCount });
+  } catch (err) {
+    console.error("ADMIN NOTIFICATION READ BY TYPE ERROR:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to mark notifications as read"
+    });
+  }
+});
 
 router.get("/notifications", requireAdmin, async (req, res) => {
   try {

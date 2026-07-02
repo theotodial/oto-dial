@@ -32,7 +32,7 @@ router.get("/bootstrap", async (req, res) => {
 
     const [userDoc, latestSub] = await Promise.all([
       User.findById(userId)
-        .select("_id name email isEmailVerified features preferences mode allowedCallCountries")
+        .select("_id name email isEmailVerified features preferences mode allowedCallCountries identityVerification.status")
         .lean(),
       getLatestSubscription(userId),
     ]);
@@ -57,6 +57,8 @@ router.get("/bootstrap", async (req, res) => {
           allowedCallCountries: Array.isArray(userDoc.allowedCallCountries)
             ? userDoc.allowedCallCountries
             : [],
+          identityVerificationStatus:
+            userDoc.identityVerification?.status || "not_submitted",
         }
       : null;
 

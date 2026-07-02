@@ -16,12 +16,6 @@ const CheckIcon = ({ className = 'w-5 h-5' }) => (
   </svg>
 );
 
-const UploadIcon = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-  </svg>
-);
-
 function Profile() {
   const navigate = useNavigate();
   const { user: authUser } = useAuth();
@@ -45,9 +39,7 @@ function Profile() {
   const [verificationData, setVerificationData] = useState({
     isVerified: false,
     verificationStatus: 'not_submitted',
-    verificationType: '',
-    idDocument: null,
-    businessDocument: null,
+    rejectionReason: '',
   });
 
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -131,12 +123,11 @@ function Profile() {
           language: userData.language || prev.language || 'en',
         }));
         if (iv) {
-          setVerificationData((vd) => ({
-            ...vd,
+          setVerificationData({
             isVerified: iv.status === 'approved',
             verificationStatus: iv.status || 'not_submitted',
-            verificationType: iv.verificationType || vd.verificationType,
-          }));
+            rejectionReason: iv.rejectionReason || '',
+          });
         }
       }
     } catch (err) {
@@ -210,60 +201,6 @@ function Profile() {
         setSaving(false);
       }
     }
-  };
-
-  const handleFileUpload = async (type, file) => {
-    if (!file || !isMountedRef.current) return;
-
-    setSaving(true);
-    setError('');
-    setSuccess('');
-
-    const fileReader = new FileReader();
-    fileReader.onload = async (e) => {
-      try {
-        const base64 = e.target.result;
-        const payload = {
-          verificationType: type === 'ID' ? 'individual' : 'business'
-        };
-        if (type === 'ID') {
-          payload.idDocument = base64;
-        } else {
-          payload.businessDocument = base64;
-        }
-
-        const response = await API.post('/api/users/upload-verification', payload);
-
-        if (!isMountedRef.current) return;
-
-        if (response.error) {
-          setError(response.error);
-        } else {
-          setSuccess(`${type} verification initiated. Our team will review your documents within 24-48 hours.`);
-          setTimeout(() => {
-            if (isMountedRef.current) {
-              setSuccess('');
-            }
-          }, 5000);
-          await loadUserProfile();
-        }
-      } catch (err) {
-        if (isMountedRef.current) {
-          setError('Failed to upload document');
-        }
-      } finally {
-        if (isMountedRef.current) {
-          setSaving(false);
-        }
-      }
-    };
-    fileReader.onerror = () => {
-      if (isMountedRef.current) {
-        setError('Failed to read file');
-        setSaving(false);
-      }
-    };
-    fileReader.readAsDataURL(file);
   };
 
   const handleProfilePictureSelect = (e) => {
@@ -705,58 +642,32 @@ function Profile() {
                     {verificationData.isVerified
                       ? 'Your identity has been verified successfully.'
                       : verificationData.verificationStatus === 'rejected'
-                        ? 'Please upload new documents or contact support if you need help.'
+                        ? verificationData.rejectionReason
+                          ? `Verification was not approved: ${verificationData.rejectionReason}`
+                          : 'Your previous submission could not be approved. You may submit again with updated documents.'
                         : verificationData.verificationStatus === 'pending'
-                          ? 'We are reviewing your documents (typically 24–48 hours).'
-                          : 'Upload your documents to verify your identity and unlock all features.'}
+                          ? 'Our compliance team is reviewing your submission. Reviews typically complete within 1 business day.'
+                          : 'Complete a secure identity review to unlock all account features and meet telecom compliance requirements.'}
                   </p>
                 </div>
 
-                {/* Document Upload */}
-                {!verificationData.isVerified && verificationData.verificationStatus !== 'pending' && (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Government ID (Driver's License, Passport, etc.)
-                      </label>
-                      <label className="block">
-                        <input
-                          type="file"
-                          accept="image/*,.pdf"
-                          onChange={(e) => {
-                            const file = e.target.files[0];
-                            if (file) handleFileUpload('ID', file);
-                          }}
-                          className="hidden"
-                        />
-                        <div className="w-full py-4 border-2 border-dashed border-gray-300 dark:border-slate-600 rounded-xl hover:border-indigo-500 dark:hover:border-indigo-400 transition-colors flex flex-col items-center justify-center text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer">
-                          <UploadIcon />
-                          <span className="mt-2 text-sm font-medium">Click to upload ID document</span>
-                        </div>
-                      </label>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Business Verification (Optional - For higher limits)
-                      </label>
-                      <label className="block">
-                        <input
-                          type="file"
-                          accept="image/*,.pdf"
-                          onChange={(e) => {
-                            const file = e.target.files[0];
-                            if (file) handleFileUpload('Business', file);
-                          }}
-                          className="hidden"
-                        />
-                        <div className="w-full py-4 border-2 border-dashed border-gray-300 dark:border-slate-600 rounded-xl hover:border-indigo-500 dark:hover:border-indigo-400 transition-colors flex flex-col items-center justify-center text-gray-600 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer">
-                          <UploadIcon />
-                          <span className="mt-2 text-sm font-medium">Click to upload business documents</span>
-                        </div>
-                      </label>
-                    </div>
-                  </div>
+                {!verificationData.isVerified && (
+                  <button
+                    type="button"
+                    onClick={() => navigate('/identity-verification')}
+                    disabled={verificationData.verificationStatus === 'pending'}
+                    className={`w-full py-3 px-4 rounded-xl font-semibold transition-all ${
+                      verificationData.verificationStatus === 'pending'
+                        ? 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg hover:shadow-xl'
+                    }`}
+                  >
+                    {verificationData.verificationStatus === 'pending'
+                      ? 'Verification in progress'
+                      : verificationData.verificationStatus === 'rejected'
+                        ? 'Resubmit verification'
+                        : 'Verify identity'}
+                  </button>
                 )}
               </div>
             </div>
@@ -780,8 +691,22 @@ function Profile() {
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-indigo-100">Verification</span>
-                  <span className={`font-semibold ${verificationData.isVerified ? 'text-green-200' : 'text-yellow-200'}`}>
-                    {verificationData.isVerified ? 'Verified' : 'Pending'}
+                  <span className={`font-semibold ${
+                    verificationData.isVerified
+                      ? 'text-green-200'
+                      : verificationData.verificationStatus === 'rejected'
+                        ? 'text-red-200'
+                        : verificationData.verificationStatus === 'pending'
+                          ? 'text-amber-200'
+                          : 'text-yellow-200'
+                  }`}>
+                    {verificationData.isVerified
+                      ? 'Verified'
+                      : verificationData.verificationStatus === 'rejected'
+                        ? 'Rejected'
+                        : verificationData.verificationStatus === 'pending'
+                          ? 'In review'
+                          : 'Unverified'}
                   </span>
                 </div>
               </div>

@@ -11,7 +11,7 @@ export const SUPPORTED_COUNTRIES = [
   
   // Europe
   { code: "GB", name: "United Kingdom", iso2: "GB", flag: "🇬🇧", numberProvisioningEnabled: false },
-  { code: "NO", name: "Norway", iso2: "NO", flag: "🇳🇴", numberProvisioningEnabled: true },
+  { code: "NO", name: "Norway", iso2: "NO", flag: "🇳🇴", numberProvisioningEnabled: false },
   { code: "FR", name: "France", iso2: "FR", flag: "🇫🇷", numberProvisioningEnabled: false },
   { code: "IT", name: "Italy", iso2: "IT", flag: "🇮🇹", numberProvisioningEnabled: false },
   { code: "DE", name: "Germany", iso2: "DE", flag: "🇩🇪", numberProvisioningEnabled: false },

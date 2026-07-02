@@ -30,6 +30,7 @@ import {
   BuyNumber,
   SubscriptionDetails,
   Profile,
+  IdentityVerification,
   Support,
   Contact,
   Privacy,
@@ -334,6 +335,7 @@ export default function AppShell() {
         <Route path="/buy-number" element={<ProtectedRoute><DashboardLayout><BuyNumber /></DashboardLayout></ProtectedRoute>} />
         <Route path="/subscription-details" element={<ProtectedRoute><DashboardLayout><SubscriptionDetails /></DashboardLayout></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><DashboardLayout><Profile /></DashboardLayout></ProtectedRoute>} />
+        <Route path="/identity-verification" element={<ProtectedRoute><DashboardLayout><IdentityVerification /></DashboardLayout></ProtectedRoute>} />
         <Route path="/support" element={<ProtectedRoute><DashboardLayout><Support /></DashboardLayout></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

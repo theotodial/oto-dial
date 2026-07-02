@@ -5,6 +5,8 @@ import { useSubscription } from '../context/SubscriptionContext';
 import { useMobileSidebar } from '../context/MobileSidebarContext';
 import API from '../api';
 import { getLocationFromAreaCode } from '../utils/areaCodeMapping';
+import { ADDONS_TEMPORARILY_UNAVAILABLE } from '../utils/catalogAvailability';
+import CatalogUnavailableNotice from '../components/CatalogUnavailableNotice';
 
 // Copy notification component
 function CopyNotification({ show, onClose }) {
@@ -167,7 +169,8 @@ function Dashboard() {
         name: addon.name,
         type: addon.type,
         price: addon.price.toFixed(2),
-        quantity: addon.quantity
+        quantity: addon.quantity,
+        temporarilyUnavailable: Boolean(addon.temporarilyUnavailable ?? ADDONS_TEMPORARILY_UNAVAILABLE),
       })));
     } else {
       setAddonPlans([]);
@@ -229,7 +232,10 @@ function Dashboard() {
 
   const handleBuyAddon = async (addon) => {
     if (!addon || !addon._id) return;
-    
+    if (addon.temporarilyUnavailable || ADDONS_TEMPORARILY_UNAVAILABLE) {
+      setError('Add-ons are not available at the moment. Please contact support.');
+      return;
+    }
     if (packageDetails.planName === 'No Plan') {
       setError('You need an active subscription before purchasing add-ons.');
       return;
@@ -391,7 +397,7 @@ function Dashboard() {
             <p className="text-sm text-gray-600 dark:text-gray-400">Active Numbers</p>
             <p className="text-4xl font-bold text-gray-900 dark:text-white mb-4">{(numbers || []).length}</p>
             <button onClick={handleBuyNumber} disabled={actionLoading} className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-              {actionLoading ? 'Processing...' : 'Buy Number'}
+              {actionLoading ? 'Processing...' : 'Choose OTODIAL Free Number'}
           </button>
         </div>
         )}
@@ -448,12 +454,17 @@ function Dashboard() {
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
                     Each add-on is active for 30 days from purchase.
                   </p>
+                  {ADDONS_TEMPORARILY_UNAVAILABLE && <CatalogUnavailableNotice />}
                   {addonPlans.map((addon) => (
                     <button
                       key={addon._id}
                       type="button"
                       onClick={() => handleBuyAddon(addon)}
-                      disabled={buyingAddonId === addon._id}
+                      disabled={
+                        buyingAddonId === addon._id ||
+                        addon.temporarilyUnavailable ||
+                        ADDONS_TEMPORARILY_UNAVAILABLE
+                      }
                       className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed transition-colors text-left"
                     >
                       <span>
@@ -464,7 +475,11 @@ function Dashboard() {
                             ? `${addon.quantity.toLocaleString()} telecom credits`
                             : `${addon.quantity.toLocaleString()} extra SMS`}
                         </span>
-                        <span className="text-xs opacity-80">30 days after purchase</span>
+                        <span className="text-xs opacity-80">
+                          {addon.temporarilyUnavailable || ADDONS_TEMPORARILY_UNAVAILABLE
+                            ? 'Not available at the moment'
+                            : '30 days after purchase'}
+                        </span>
                       </span>
                       <span className="ml-3 whitespace-nowrap font-bold">
                         {buyingAddonId === addon._id ? '…' : `$${addon.price}`}

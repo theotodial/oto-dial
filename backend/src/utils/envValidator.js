@@ -35,8 +35,8 @@ const optionalEnvVars = {
   EMAIL_PORT: '587',
   EMAIL_USER: '',
   EMAIL_PASS: '',
-  GA4_PROPERTY_ID: '',
-  GA4_MEASUREMENT_ID: '',
+  GA4_PROPERTY_ID: '523626440',
+  GA4_MEASUREMENT_ID: 'G-X3WN8RYCQ5',
   GA4_MP_API_SECRET: '', // GA4 Admin > Data Streams > Measurement Protocol API secret (server-side purchase tracking)
   GA4_ENABLED: 'true',
   GA4_DEBUG: 'false',

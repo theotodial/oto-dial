@@ -1,9 +1,78 @@
 import { BetaAnalyticsDataClient } from "@google-analytics/data";
 import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function normalizePrivateKey(value) {
   if (!value) return null;
   return value.replace(/\\n/g, "\n");
+}
+
+function stripWrappingQuotes(value) {
+  if (value == null) return "";
+  let s = String(value).trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+function parseServiceAccountJson(jsonRaw) {
+  if (!jsonRaw) return null;
+  const candidates = [String(jsonRaw), stripWrappingQuotes(jsonRaw)];
+  for (const raw of candidates) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed?.client_email || !parsed?.private_key) continue;
+      return {
+        client_email: parsed.client_email,
+        private_key: normalizePrivateKey(parsed.private_key)
+      };
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
+function readServiceAccountFile(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      client_email: parsed.client_email,
+      private_key: normalizePrivateKey(parsed.private_key)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function discoverServiceAccountFilePaths() {
+  const paths = [];
+  const credPath = String(process.env.GOOGLE_APPLICATION_CREDENTIALS || "").trim();
+  if (credPath) {
+    paths.push(credPath);
+    if (!path.isAbsolute(credPath)) {
+      paths.push(path.resolve(process.cwd(), credPath));
+      paths.push(path.join(backendRoot, credPath));
+    }
+  }
+  try {
+    for (const name of fs.readdirSync(backendRoot)) {
+      if (name.startsWith("otodial-") && name.endsWith(".json")) {
+        paths.push(path.join(backendRoot, name));
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return [...new Set(paths)];
 }
 
 function resolveGaPropertyId() {
@@ -21,29 +90,17 @@ function resolveServiceAccountCredentials() {
     process.env.GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON ||
     process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ||
     null;
-  if (jsonRaw) {
-    try {
-      const parsed = JSON.parse(jsonRaw);
-      return {
-        client_email: parsed.client_email,
-        private_key: normalizePrivateKey(parsed.private_key)
-      };
-    } catch (err) {
-      return null;
-    }
-  }
+  const fromJson = parseServiceAccountJson(jsonRaw);
+  if (fromJson) return fromJson;
 
   const jsonBase64 = process.env.GOOGLE_ANALYTICS_SERVICE_ACCOUNT_BASE64 || null;
   if (jsonBase64) {
     try {
       const decoded = Buffer.from(jsonBase64, "base64").toString("utf8");
-      const parsed = JSON.parse(decoded);
-      return {
-        client_email: parsed.client_email,
-        private_key: normalizePrivateKey(parsed.private_key)
-      };
-    } catch (err) {
-      return null;
+      const parsed = parseServiceAccountJson(decoded);
+      if (parsed) return parsed;
+    } catch {
+      /* fall through */
     }
   }
 
@@ -63,19 +120,10 @@ function resolveServiceAccountCredentials() {
     };
   }
 
-  const credPath = String(process.env.GOOGLE_APPLICATION_CREDENTIALS || "").trim();
-  if (credPath) {
-    try {
-      const resolved = credPath.endsWith(".json") ? credPath : `${credPath}.json`;
-      const raw = fs.readFileSync(resolved, "utf8");
-      const parsed = JSON.parse(raw);
-      return {
-        client_email: parsed.client_email,
-        private_key: normalizePrivateKey(parsed.private_key)
-      };
-    } catch {
-      return null;
-    }
+  for (const filePath of discoverServiceAccountFilePaths()) {
+    const resolved = filePath.endsWith(".json") ? filePath : `${filePath}.json`;
+    const creds = readServiceAccountFile(resolved);
+    if (creds) return creds;
   }
 
   return null;

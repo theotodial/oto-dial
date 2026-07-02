@@ -12,6 +12,7 @@ import {
 } from "../utils/countryUtils.js";
 import { isSameCountryOutboundOnlyEnabled } from "../utils/telecomCountryLock.js";
 import { extractTelnyxErrorMessage } from "../utils/telnyxErrorMessage.js";
+import { createAdminNotification } from "../services/adminNotificationService.js";
 
 const router = express.Router();
 const MAX_MONTHLY_NUMBER_COST = Number(process.env.TELNYX_MAX_MONTHLY_NUMBER_COST || 3.0);
@@ -40,7 +41,7 @@ const purchasableNumberCache = new Map();
 
 function buildComingSoonMessage(countryInfo) {
   const countryName = countryInfo?.name || "This country";
-  return `${countryName} numbers are coming soon. Right now, phone number purchase is available for United States and Norway.`;
+  return `${countryName} numbers are coming soon. Right now, phone number purchase is available for the United States only.`;
 }
 
 function getCacheValue(store, key) {
@@ -1875,6 +1876,23 @@ router.post(
       );
       
       console.log(`✅ Number ${phoneNumber} purchased successfully for user ${user._id}`);
+
+      await createAdminNotification({
+        type: "number_purchase",
+        title: "Phone number purchased",
+        message: `${user.email || user._id} bought ${phoneNumber}`,
+        sourceModel: "PhoneNumber",
+        sourceId: phoneNumberDoc._id,
+        dedupeKey: `number_purchase:${phoneNumberDoc._id}`,
+        data: {
+          userId: String(user._id),
+          email: user.email || null,
+          phoneNumber,
+          countryCode: resolvedCountryInfo?.code || null
+        }
+      }).catch((err) => {
+        console.warn("Failed to create number purchase notification:", err.message);
+      });
 
       try {
         const { recordServerEvent } = await import("../services/analytics/serverEventService.js");

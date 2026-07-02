@@ -8,6 +8,8 @@ import {
   isSuperAdmin,
   readStoredAdminProfile
 } from '../utils/adminAccess';
+import { useAdminNavCounts } from '../context/AdminNavCountsContext';
+import AdminNavBadge from './admin/AdminNavBadge';
 
 // Chevron icons for expandable sections
 const ChevronDownIcon = () => (
@@ -28,16 +30,16 @@ const navItems = [
   { path: '/adminbobby/live-activity', label: 'Live Activity', role: 'dashboard' },
   { path: '/adminbobby/telnyx', label: 'Telnyx', role: 'dashboard' },
   { path: '/adminbobby/stripe', label: 'Stripe', role: 'analytics' },
+  { path: '/adminbobby/users', label: 'Users', role: 'users', badgeKey: 'users' },
+  { path: '/adminbobby/support', label: 'Support', role: 'support', badgeKey: 'support' },
   { path: '/adminbobby/analytics/profitability-tools', label: 'Profit tools', role: 'analytics' },
   { path: '/adminbobby/analytics/billing-reconciliation', label: 'Billing Reconciliation', role: 'analytics' },
   { path: '/adminbobby/calls', label: 'Calls', role: 'calls' },
   { path: '/adminbobby/oto-agents', label: 'OTO Agents', role: 'dashboard', ai: true },
   { path: '/adminbobby/system-health', label: 'System Health', role: 'dashboard' },
   { path: '/adminbobby/launch-health', label: 'Launch health', role: 'dashboard' },
-  { path: '/adminbobby/users', label: 'Users', role: 'users' },
   { path: '/adminbobby/affiliates', label: 'Affiliates', role: 'affiliates' },
-  { path: '/adminbobby/notifications', label: 'Notifications', role: 'notifications' },
-  { path: '/adminbobby/support', label: 'Support', role: 'support' },
+  { path: '/adminbobby/notifications', label: 'Notifications', role: 'notifications', badgeKey: 'notifications' },
   { path: '/adminbobby/team', label: 'Team', role: 'team' },
   { path: '/adminbobby/blog', label: 'Blog', role: 'blog' },
 ];
@@ -61,6 +63,7 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
   const [communicationsOpen, setCommunicationsOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const adminProfile = readStoredAdminProfile();
+  const { counts } = useAdminNavCounts();
   const visibleNavItems = navItems.filter((item) => canSeeAdminNavItem(adminProfile, item));
   const visibleCommunicationsItems = communicationsItems.filter((item) =>
     hasAdminRole(adminProfile, item.role)
@@ -127,13 +130,14 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
               if (item.path === '/adminbobby/analytics' && location.pathname.startsWith('/adminbobby/analytics/profitability-tools')) {
                 isActive = false;
               }
+              const badgeCount = item.badgeKey ? counts[item.badgeKey] || 0 : 0;
               return (
                 <Link
                   key={item.path}
                   to={item.path}
                   onClick={() => setMobileMenuOpen(false)}
                   className={`
-                    flex items-center px-3 py-2.5 rounded-lg
+                    flex items-center justify-between px-3 py-2.5 rounded-lg
                     transition-all duration-200 text-sm font-medium
                     ${isActive 
                       ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400' 
@@ -141,12 +145,13 @@ function AdminSidebar({ mobileMenuOpen = false, setMobileMenuOpen = () => {} }) 
                     }
                   `}
                 >
-                  <span className="inline-flex items-center gap-2">
+                  <span className="inline-flex items-center gap-2 min-w-0">
                     {item.ai && (
                       <span className="h-2 w-2 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.9)]" />
                     )}
-                    {item.label}
+                    <span className="truncate">{item.label}</span>
                   </span>
+                  {badgeCount > 0 && <AdminNavBadge count={badgeCount} />}
                 </Link>
               );
             })}

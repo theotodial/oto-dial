@@ -311,27 +311,99 @@ export function upgradePlanEmail(input) {
             </tr>`);
 }
 
-/**
- * 10 — Support reply to user
- * @param {object} opts — { name, message, subject?, ticketUrl? }
- */
-export function supportMessageEmail({ name, message, subject, ticketUrl } = {}) {
-  const displayName = escHtml(name || "there");
-  const subj = subject ? `<p style="color:#64748b;font-size:14px;"><strong>Ticket:</strong> ${escHtml(subject)}</p>` : "";
-  const bodyHtml = escHtml(message || "").replace(/\r\n/g, "\n").split("\n").join("<br/>");
-  const supportPath = escAttr(ticketUrl || `${frontBase()}/support`);
+/** 10 — Support admin reply to user */
+export function supportAdminReplyEmail({
+  name,
+  adminMessage,
+  adminName,
+  subject,
+  ticketUrl,
+} = {}) {
+  const displayName = resolveName(name);
+  const responder = escHtml(String(adminName || "OTODIAL Support").trim() || "OTODIAL Support");
+  const ticketSubject = subject
+    ? `<p style="color:#64748b;font-size:14px;margin:0 0 16px;"><strong>Your request:</strong> ${escHtml(subject)}</p>`
+    : "";
+  const bodyHtml = escHtml(adminMessage || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .join("<br/>");
+  const supportUrl = escAttr(ticketUrl || `${frontBase()}/support`);
+
   return shell(`<tr>
               <td style="padding:30px;">
-                <h2 style="color:#0f172a;">Message from OTODIAL Support</h2>
-                <p>Hi ${displayName},</p>
-                ${subj}
-                <p style="margin-top:16px; line-height:1.6; color:#334155;">${bodyHtml}</p>
-                <div style="text-align:center; margin:28px 0;">
-                  <a href="${supportPath}" style="background:#2563eb; color:#fff; padding:12px 24px; border-radius:6px; text-decoration:none; display:inline-block;">
-                    View support tickets
+                <h2 style="color:#0f172a;margin:0 0 12px;">We've replied to your support request</h2>
+                <p style="margin:0 0 16px;">Hi ${displayName},</p>
+                <p style="margin:0 0 16px;line-height:1.6;color:#334155;">
+                  Our support team has responded to your request. Here is the message from <strong>${responder}</strong>:
+                </p>
+                ${ticketSubject}
+                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px;margin:0 0 24px;">
+                  <p style="margin:0;line-height:1.7;color:#0f172a;">${bodyHtml}</p>
+                </div>
+                <div style="text-align:center;margin:28px 0;">
+                  <a href="${supportUrl}" style="background:#2563eb;color:#fff;padding:14px 28px;border-radius:6px;text-decoration:none;display:inline-block;font-weight:600;">
+                    Open OTODIAL Support to view your request
                   </a>
                 </div>
-                <p style="font-size:13px; color:#64748b;">Reply to this email or open the support page if you have follow-up questions.</p>
+                <p style="font-size:13px;color:#64748b;margin:0;line-height:1.6;">
+                  You can reply directly on the support page to continue the conversation.
+                </p>
+              </td>
+            </tr>`);
+}
+
+/** @deprecated Use supportAdminReplyEmail */
+export function supportMessageEmail({ name, message, subject, ticketUrl } = {}) {
+  return supportAdminReplyEmail({
+    name,
+    adminMessage: message,
+    subject,
+    ticketUrl,
+  });
+}
+
+/** 11 — Identity verification submitted */
+export function identityVerificationSubmittedEmail({ name, autoApproved = false } = {}) {
+  const displayName = resolveName(name);
+  const profileUrl = escAttr(`${frontBase()}/profile`);
+  const body = autoApproved
+    ? `<p>Our AI verification system matched your live selfie with your government ID and validated your details. Your account is <strong>verified</strong>.</p>
+       <p>You now have full access to OTODIAL features that require identity confirmation.</p>`
+    : `<p>We received your identity documents and live selfie. Our compliance team will complete a final review, typically within <strong>1 business day</strong>.</p>
+       <p>You'll receive another email once verification is approved.</p>`;
+
+  return shell(`<tr>
+              <td style="padding:30px;">
+                <h2 style="color:#0f172a;">Identity verification submitted</h2>
+                <p>Hi ${displayName},</p>
+                ${body}
+                <div style="text-align:center; margin:28px 0;">
+                  <a href="${profileUrl}" style="background:#2563eb; color:#fff; padding:12px 24px; border-radius:6px; text-decoration:none; display:inline-block;">
+                    View profile status
+                  </a>
+                </div>
+                <p style="font-size:13px; color:#64748b;">If you did not submit this request, contact <a href="mailto:info@otodial.com">info@otodial.com</a> immediately.</p>
+              </td>
+            </tr>`);
+}
+
+/** 12 — Identity verification approved */
+export function identityVerificationApprovedEmail({ name } = {}) {
+  const displayName = resolveName(name);
+  const dashboardUrl = escAttr(`${frontBase()}/dashboard`);
+  return shell(`<tr>
+              <td style="padding:30px;">
+                <h2 style="color:#16a34a;">Identity verified ✅</h2>
+                <p>Hi ${displayName},</p>
+                <p>Your identity verification has been <strong>approved</strong>.</p>
+                <p>Your account now meets OTODIAL KYC requirements. You can use all verified features without restriction.</p>
+                <div style="text-align:center; margin:28px 0;">
+                  <a href="${dashboardUrl}" style="background:#16a34a; color:#fff; padding:12px 24px; border-radius:6px; text-decoration:none; display:inline-block;">
+                    Go to dashboard
+                  </a>
+                </div>
+                <p style="font-size:13px; color:#64748b;">Thank you for helping us keep OTODIAL secure and compliant.</p>
               </td>
             </tr>`);
 }

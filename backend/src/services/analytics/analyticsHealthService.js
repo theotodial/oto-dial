@@ -6,7 +6,7 @@
 import mongoose from "mongoose";
 import AnalyticsEvent from "../../models/analytics/AnalyticsEvent.js";
 import { getRedisClient } from "../cache.service.js";
-import { isMeasurementProtocolConfigured, getGa4MpStats } from "./gaMeasurementProtocolService.js";
+import { getGa4ConfigSummary } from "./ga4ConfigService.js";
 import { getAllSessions } from "./liveIntelligenceStore.js";
 import { runReconciliation } from "./reconciliationService.js";
 import { resolveTimeframe, DEFAULT_TIMEFRAME } from "./timeframeService.js";
@@ -67,7 +67,7 @@ export async function getAnalyticsHealth({ window = DEFAULT_TIMEFRAME } = {}) {
   ]);
 
   const liveSessions = getAllSessions().length;
-  const ga4Configured = isMeasurementProtocolConfigured();
+  const ga4 = getGa4ConfigSummary();
 
   const trackingStatus =
     mongo.status === "healthy" && recentEventRate >= 0 ? "healthy" : "degraded";
@@ -77,9 +77,12 @@ export async function getAnalyticsHealth({ window = DEFAULT_TIMEFRAME } = {}) {
     durationMs: Date.now() - started,
     tracking: { status: trackingStatus, eventsLast5Min: recentEventRate },
     ga4: {
-      status: ga4Configured ? "configured" : "not_configured",
-      measurementProtocol: ga4Configured,
-      mp: getGa4MpStats()
+      status: ga4.status,
+      measurementProtocol: ga4.mpConfigured,
+      dataApi: ga4.dataApiConfigured,
+      missing: ga4.missing,
+      mp: ga4.measurementProtocol,
+      dataApiStatus: ga4.dataApi
     },
     stripe: { status: "connected", note: "Revenue reconciled via StripeInvoice collection" },
     websocket: { status: "active", liveSessionsInMemory: liveSessions },

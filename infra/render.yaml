@@ -14,5 +14,17 @@ services:
         # Example value: https://your-frontend.vercel.app
       - key: PORT
         value: 5000
+      - key: GA4_MEASUREMENT_ID
+        value: G-X3WN8RYCQ5
+      - key: GA4_PROPERTY_ID
+        value: "523626440"
+      - key: GA4_ENABLED
+        value: true
+      - key: GA4_MP_API_SECRET
+        sync: false
+      - key: GOOGLE_ANALYTICS_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GOOGLE_ANALYTICS_SERVICE_ACCOUNT_BASE64
+        sync: false
     healthCheckPath: /
 

@@ -145,4 +145,91 @@ export function enrichLedgerRow(row, context = {}) {
   };
 }
 
+/**
+ * Customer-facing timeline row with call/SMS usage context.
+ */
+export function formatCustomerTimelineEntry(enriched, context = {}) {
+  const callMap = context.callMap || {};
+  const smsMap = context.smsMap || {};
+  const type = String(enriched?.type || "");
+  const meta = enriched?.metadata || {};
+  const direction = enriched.direction || meta.direction || null;
+
+  const callTypes = new Set([
+    "call_event_charge",
+    "connected_duration_charge",
+    "outbound_attempt_charge",
+    "reservation_hold",
+    "failed_reservation_release",
+  ]);
+
+  let channel = "other";
+  if (callTypes.has(type)) channel = "call";
+  else if (type === "sms_charge") channel = "sms";
+  else if (type === "subscription_credit_grant" || type === "add_on_purchase") channel = "grant";
+
+  const call = enriched.callId ? callMap[String(enriched.callId)] : null;
+  const sms = enriched.smsId ? smsMap[String(enriched.smsId)] : null;
+
+  let counterparty = null;
+  if (call) {
+    counterparty =
+      direction === "inbound"
+        ? call.phoneNumber || call.fromNumber || null
+        : call.toNumber || call.phoneNumber || null;
+  } else if (sms) {
+    counterparty =
+      direction === "inbound"
+        ? sms.from || sms.externalNumber || null
+        : sms.to || sms.externalNumber || null;
+  }
+
+  let callDurationSeconds = null;
+  if (channel === "call") {
+    if (type === "connected_duration_charge") {
+      const secs = meta.connectedSeconds ?? meta.bucketSeconds ?? meta.seconds;
+      callDurationSeconds = Number.isFinite(Number(secs)) ? Number(secs) : null;
+    } else if (call) {
+      const secs = call.billedSeconds ?? call.durationSeconds ?? call.answeredDuration;
+      callDurationSeconds = Number.isFinite(Number(secs)) && Number(secs) > 0 ? Number(secs) : null;
+    }
+  }
+
+  let smsParts = null;
+  let smsEncoding = null;
+  if (channel === "sms") {
+    const parts = meta.smsParts ?? meta.segments ?? meta.billedParts ?? sms?.smsCostInfo?.smsParts ?? sms?.smsParts;
+    smsParts = Number.isFinite(Number(parts)) && Number(parts) > 0 ? Number(parts) : null;
+    smsEncoding = meta.encoding || sms?.smsCostInfo?.encoding || sms?.encoding || null;
+  }
+
+  const directionLabel =
+    direction === "inbound" ? "Inbound" : direction === "outbound" ? "Outbound" : null;
+
+  const callEventLabel = enriched.callEvent
+    ? EVENT_LABELS[enriched.callEvent] || enriched.callEvent
+    : null;
+
+  return {
+    id: enriched.id,
+    label: enriched.label,
+    creditsDisplay: enriched.creditsDisplay,
+    amount: enriched.amount,
+    balance: enriched.remainingBalance,
+    timestamp: enriched.timestamp,
+    type: enriched.type,
+    callId: enriched.callId,
+    smsId: enriched.smsId,
+    channel,
+    direction,
+    directionLabel,
+    counterparty,
+    callDurationSeconds,
+    callEventLabel,
+    smsParts,
+    smsEncoding,
+    billingStatus: enriched.billingStatus,
+  };
+}
+
 export { TYPE_LABELS, EVENT_LABELS, formatCredits };

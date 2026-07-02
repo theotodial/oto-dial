@@ -19,7 +19,7 @@ import {
 import { reconcileUserReservations } from "./reservationReconciliationService.js";
 import { rateSms, rateConnectedSeconds, rateCallEvent, isRatingV1Enabled } from "./telecomRatingEngine.js";
 import { CONNECTED_INTERVAL_SECONDS } from "../config/creditConfig.js";
-import { enrichLedgerRow } from "./creditLedgerFormatService.js";
+import { enrichLedgerRow, formatCustomerTimelineEntry } from "./creditLedgerFormatService.js";
 
 const EPS = 1e-4;
 const TERMINAL_CALL_STATUSES = ["completed", "failed", "rejected", "canceled", "busy", "no-answer"];
@@ -662,26 +662,29 @@ export async function getCustomerCreditTimeline(userId, options = {}) {
   ]);
 
   const callIds = [...new Set(rows.filter((r) => r.callId).map((r) => String(r.callId)))];
-  const calls = callIds.length
-    ? await Call.find({ _id: { $in: callIds } }).select("_id telnyxCallControlId toNumber phoneNumber").lean()
-    : [];
+  const smsIds = [...new Set(rows.filter((r) => r.smsId).map((r) => String(r.smsId)))];
+
+  const [calls, smsRows] = await Promise.all([
+    callIds.length
+      ? Call.find({ _id: { $in: callIds } })
+          .select("_id telnyxCallControlId toNumber phoneNumber fromNumber direction billedSeconds durationSeconds answeredDuration")
+          .lean()
+      : [],
+    smsIds.length
+      ? SMS.find({ _id: { $in: smsIds } })
+          .select("_id to from externalNumber direction smsParts smsCostInfo encoding")
+          .lean()
+      : [],
+  ]);
+
   const callMap = Object.fromEntries(calls.map((c) => [String(c._id), c]));
+  const smsMap = Object.fromEntries(smsRows.map((s) => [String(s._id), s]));
 
   const timeline = rows
     .filter((r) => r.type !== "reservation_hold" || options.includeHolds)
     .map((row) => {
       const enriched = enrichLedgerRow(row, { callMap });
-      return {
-        id: enriched.id,
-        label: enriched.label,
-        creditsDisplay: enriched.creditsDisplay,
-        amount: enriched.amount,
-        balance: enriched.remainingBalance,
-        timestamp: enriched.timestamp,
-        type: enriched.type,
-        callId: enriched.callId,
-        smsId: enriched.smsId,
-      };
+      return formatCustomerTimelineEntry(enriched, { callMap, smsMap });
     });
 
   return {

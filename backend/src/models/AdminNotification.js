@@ -4,7 +4,16 @@ const adminNotificationSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ["sale", "support", "blog", "affiliate_approval_request", "system"],
+      enum: [
+        "sale",
+        "support",
+        "blog",
+        "affiliate_approval_request",
+        "system",
+        "signup",
+        "number_purchase",
+        "identity_verification"
+      ],
       required: true,
       index: true
     },

@@ -1,35 +1,101 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import API from '../../api';
+import AdminKycReview from '../../components/admin/AdminKycReview';
+import AdminSupportUserContext from '../../components/admin/AdminSupportUserContext';
+import SupportReplyReadReceipt from '../../components/admin/SupportReplyReadReceipt';
 
-function AdminSupport() {
+const ISSUE_LABELS = {
+  subscription_not_activated: 'Subscription not activated',
+  billing_issue: 'Billing issue',
+  number_issue: 'Number issue',
+  general: 'General support',
+};
+
+const STATUS_STYLES = {
+  open: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+  in_progress: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
+  resolved: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
+  closed: 'bg-gray-100 text-gray-700 dark:bg-slate-700 dark:text-gray-300',
+};
+
+const PRIORITY_STYLES = {
+  urgent: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
+  high: 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300',
+  medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300',
+  low: 'bg-gray-100 text-gray-700 dark:bg-slate-700 dark:text-gray-300',
+};
+
+function StatCard({ label, value, hint, accent = 'indigo' }) {
+  const accents = {
+    indigo: 'border-indigo-200/70 dark:border-indigo-800/50',
+    amber: 'border-amber-200/70 dark:border-amber-800/50',
+    emerald: 'border-emerald-200/70 dark:border-emerald-800/50',
+  };
+  return (
+    <div className={`rounded-xl border bg-white dark:bg-slate-800/80 p-4 shadow-sm ${accents[accent] || accents.indigo}`}>
+      <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</p>
+      <p className="text-2xl font-semibold text-gray-900 dark:text-white mt-1">{value}</p>
+      {hint && <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+function formatWhen(value) {
+  if (!value) return '—';
+  return new Date(value).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export default function AdminSupport() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => (searchParams.get('tab') === 'kyc' ? 'kyc' : 'tickets'));
+  const [stats, setStats] = useState(null);
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalTickets, setTotalTickets] = useState(0);
   const [filters, setFilters] = useState({
     search: '',
     status: '',
     priority: '',
     startDate: '',
-    endDate: ''
+    endDate: '',
   });
   const [selectedTicket, setSelectedTicket] = useState(null);
+  const [userContext, setUserContext] = useState(null);
+  const [userContextLoading, setUserContextLoading] = useState(false);
   const [error, setError] = useState('');
   const [adminReply, setAdminReply] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
   const [repairingSubscription, setRepairingSubscription] = useState(false);
 
-  useEffect(() => {
-    fetchTickets();
-  }, [page, filters]);
+  const authHeaders = useMemo(
+    () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('adminToken')}` } }),
+    []
+  );
 
-  const fetchTickets = async () => {
+  const fetchStats = useCallback(async () => {
+    try {
+      const response = await API.get('/api/admin/support/stats', authHeaders);
+      if (response.data?.success) {
+        setStats(response.data.stats);
+      }
+    } catch {
+      // Non-blocking.
+    }
+  }, [authHeaders]);
+
+  const fetchTickets = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const token = localStorage.getItem('adminToken');
       const params = new URLSearchParams();
       params.append('page', page);
       params.append('limit', '50');
@@ -39,15 +105,14 @@ function AdminSupport() {
       if (filters.startDate) params.append('startDate', filters.startDate);
       if (filters.endDate) params.append('endDate', filters.endDate);
 
-      const response = await API.get(`/api/admin/support?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const response = await API.get(`/api/admin/support?${params.toString()}`, authHeaders);
 
       if (response.error) {
         setError(response.error);
       } else if (response.data?.success) {
         setTickets(response.data.tickets || []);
         setTotalPages(response.data.pagination?.pages || 1);
+        setTotalTickets(response.data.pagination?.total || 0);
       } else {
         setError('Failed to load tickets');
       }
@@ -61,43 +126,80 @@ function AdminSupport() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [authHeaders, filters, navigate, page]);
+
+  const loadTicketDetails = useCallback(
+    async (ticketId) => {
+      if (!ticketId) return;
+      setUserContextLoading(true);
+      try {
+        const response = await API.get(`/api/admin/support/${ticketId}`, authHeaders);
+        if (response.data?.success) {
+          setSelectedTicket(response.data.ticket);
+          setUserContext(response.data.userContext || null);
+          setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            next.set('ticket', String(ticketId));
+            next.delete('tab');
+            return next;
+          }, { replace: true });
+        }
+      } catch (err) {
+        console.error('Failed to load ticket details:', err);
+      } finally {
+        setUserContextLoading(false);
+      }
+    },
+    [authHeaders, setSearchParams]
+  );
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'kyc') setActiveTab('kyc');
+  }, [searchParams]);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  useEffect(() => {
+    if (activeTab === 'tickets') fetchTickets();
+  }, [activeTab, fetchTickets]);
+
+  useEffect(() => {
+    const ticketId = searchParams.get('ticket');
+    if (ticketId && activeTab === 'tickets') {
+      loadTicketDetails(ticketId);
+    }
+  }, [searchParams, activeTab, loadTicketDetails]);
+
+  useEffect(() => {
+    if (!selectedTicket?.id || activeTab !== 'tickets') return undefined;
+    const interval = setInterval(() => {
+      loadTicketDetails(selectedTicket.id);
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [selectedTicket?.id, activeTab, loadTicketDetails]);
 
   const handleFilterChange = (key, value) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
+    setFilters((prev) => ({ ...prev, [key]: value }));
     setPage(1);
   };
 
-  const loadTicketDetails = async (ticketId) => {
-    try {
-      const token = localStorage.getItem('adminToken');
-      const response = await API.get(`/api/admin/support/${ticketId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (response.data?.success) {
-        setSelectedTicket(response.data.ticket);
-      }
-    } catch (err) {
-      console.error('Failed to load ticket details:', err);
-    }
+  const applyQuickFilter = (status) => {
+    setFilters((prev) => ({ ...prev, status }));
+    setPage(1);
   };
 
   const handleStatusUpdate = async (ticketId, newStatus) => {
     try {
-      const token = localStorage.getItem('adminToken');
-      const response = await API.patch(`/api/admin/support/${ticketId}`, {
-        status: newStatus
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
+      const response = await API.patch(`/api/admin/support/${ticketId}`, { status: newStatus }, authHeaders);
       if (response.error) {
         alert(response.error);
       } else if (response.data?.success) {
         await fetchTickets();
-        if (selectedTicket?.id === ticketId) {
-          await loadTicketDetails(ticketId);
-        }
+        await fetchStats();
+        if (selectedTicket?.id === ticketId) await loadTicketDetails(ticketId);
       }
     } catch (err) {
       alert(err?.error || 'Failed to update ticket');
@@ -106,13 +208,7 @@ function AdminSupport() {
 
   const handleNotesUpdate = async (ticketId, notes) => {
     try {
-      const token = localStorage.getItem('adminToken');
-      const response = await API.patch(`/api/admin/support/${ticketId}`, {
-        adminNotes: notes
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
+      const response = await API.patch(`/api/admin/support/${ticketId}`, { adminNotes: notes }, authHeaders);
       if (response.error) {
         alert(response.error);
       } else if (response.data?.success) {
@@ -128,24 +224,16 @@ function AdminSupport() {
 
   const handleAdminReply = async (ticketId) => {
     if (!adminReply.trim() || sendingReply) return;
-    
     setSendingReply(true);
     try {
-      const token = localStorage.getItem('adminToken');
-      const response = await API.patch(`/api/admin/support/${ticketId}`, {
-        reply: adminReply
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
+      const response = await API.patch(`/api/admin/support/${ticketId}`, { reply: adminReply }, authHeaders);
       if (response.error) {
         alert(response.error);
       } else if (response.data?.success) {
         setAdminReply('');
         await fetchTickets();
-        if (selectedTicket?.id === ticketId) {
-          setSelectedTicket(response.data.ticket);
-        }
+        await fetchStats();
+        await loadTicketDetails(ticketId);
       }
     } catch (err) {
       alert(err?.error || 'Failed to send reply');
@@ -156,23 +244,15 @@ function AdminSupport() {
 
   const handleRepairSubscription = async (ticketId) => {
     if (!ticketId || repairingSubscription) return;
-
     setRepairingSubscription(true);
     try {
-      const token = localStorage.getItem('adminToken');
-      const response = await API.post(`/api/admin/support/${ticketId}/repair-subscription`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
+      const response = await API.post(`/api/admin/support/${ticketId}/repair-subscription`, {}, authHeaders);
       if (response.error || !response.data) {
         alert(response.error || 'Failed to repair subscription');
       } else {
         await fetchTickets();
-        if (response.data.ticket) {
-          setSelectedTicket(response.data.ticket);
-        } else {
-          await loadTicketDetails(ticketId);
-        }
+        await fetchStats();
+        await loadTicketDetails(ticketId);
         alert(response.data.message || 'Repair flow completed');
       }
     } catch (err) {
@@ -182,12 +262,30 @@ function AdminSupport() {
     }
   };
 
-  if (loading && tickets.length === 0) {
+  const switchTab = (tab) => {
+    setActiveTab(tab);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (tab === 'kyc') {
+        next.set('tab', 'kyc');
+        next.delete('ticket');
+      } else {
+        next.delete('tab');
+      }
+      return next;
+    }, { replace: true });
+    if (tab === 'kyc') {
+      setSelectedTicket(null);
+      setUserContext(null);
+    }
+  };
+
+  if (loading && tickets.length === 0 && activeTab === 'tickets' && !selectedTicket) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex items-center justify-center">
+      <div className="min-h-[60vh] flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600 dark:text-gray-400">Loading support tickets...</p>
+          <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-gray-600 dark:text-gray-400">Loading support center…</p>
         </div>
       </div>
     );
@@ -195,350 +293,409 @@ function AdminSupport() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-900">
-      {/* Header */}
-      {/* Header removed - navigation is in sidebar */}
-      <header className="hidden">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <button
-                onClick={() => navigate('/adminbobby/dashboard')}
-                className="text-indigo-600 hover:text-indigo-700 mb-2"
-              >
-                ← Back to Dashboard
-              </button>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Support Center</h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400">Manage customer support tickets</p>
-            </div>
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Support Center</h1>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+              Triage tickets, view customer accounts, and resolve billing or number issues.
+            </p>
           </div>
-        </div>
-      </header>
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* Filters */}
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <input
-              type="text"
-              placeholder="Search..."
-              value={filters.search}
-              onChange={(e) => handleFilterChange('search', e.target.value)}
-              className="px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
-            />
-            <select
-              value={filters.status}
-              onChange={(e) => handleFilterChange('status', e.target.value)}
-              className="px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
-            >
-              <option value="">All Status</option>
-              <option value="open">Open</option>
-              <option value="in_progress">In Progress</option>
-              <option value="resolved">Resolved</option>
-              <option value="closed">Closed</option>
-            </select>
-            <select
-              value={filters.priority}
-              onChange={(e) => handleFilterChange('priority', e.target.value)}
-              className="px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
-            >
-              <option value="">All Priorities</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
-            </select>
-            <input
-              type="date"
-              value={filters.startDate}
-              onChange={(e) => handleFilterChange('startDate', e.target.value)}
-              className="px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
-            />
+          <div className="flex gap-2">
             <button
-              onClick={() => setFilters({ search: '', status: '', priority: '', startDate: '', endDate: '' })}
-              className="px-4 py-2 bg-gray-200 dark:bg-slate-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-slate-600"
+              type="button"
+              onClick={() => switchTab('tickets')}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                activeTab === 'tickets'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700'
+              }`}
             >
-              Clear
+              Support tickets
+              {stats?.actionable > 0 && (
+                <span className="inline-flex min-w-[20px] h-5 px-1.5 items-center justify-center rounded-full bg-emerald-500 text-white text-[10px] font-bold">
+                  {stats.actionable}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => switchTab('kyc')}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                activeTab === 'kyc'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700'
+              }`}
+            >
+              KYC & identity
+              {stats?.pendingKyc > 0 && (
+                <span className="inline-flex min-w-[20px] h-5 px-1.5 items-center justify-center rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                  {stats.pendingKyc}
+                </span>
+              )}
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Tickets List */}
-          <div className="lg:col-span-2">
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
-                  <thead className="bg-gray-50 dark:bg-slate-700">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Ticket ID</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Name</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Email</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Status</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Priority</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Date</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
-                    {tickets.length === 0 ? (
-                      <tr>
-                        <td colSpan="6" className="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
-                          No tickets found
-                        </td>
-                      </tr>
-                    ) : (
-                      tickets.map((ticket) => (
-                        <tr
-                          key={ticket.id}
-                          onClick={() => loadTicketDetails(ticket.id)}
-                          className={`hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer ${
-                            selectedTicket?.id === ticket.id ? 'bg-indigo-50 dark:bg-indigo-900/30' : ''
-                          }`}
-                        >
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 dark:text-white">
-                            {ticket.id.toString().slice(-8)}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                            {ticket.name}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                            {ticket.email}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                              ticket.status === 'open' ? 'bg-yellow-100 text-yellow-800' :
-                              ticket.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
-                              ticket.status === 'resolved' ? 'bg-green-100 text-green-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {ticket.status}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                              ticket.priority === 'urgent' ? 'bg-red-100 text-red-800' :
-                              ticket.priority === 'high' ? 'bg-orange-100 text-orange-800' :
-                              ticket.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {ticket.priority}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                            {new Date(ticket.createdAt).toLocaleDateString()}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+        {activeTab === 'kyc' ? (
+          <AdminKycReview />
+        ) : (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <StatCard label="Needs attention" value={stats?.actionable ?? '—'} hint="Open + in progress" accent="amber" />
+              <StatCard label="Open" value={stats?.open ?? '—'} accent="indigo" />
+              <StatCard label="In progress" value={stats?.inProgress ?? '—'} accent="indigo" />
+              <StatCard label="All tickets" value={stats?.total ?? totalTickets ?? '—'} hint={`${stats?.resolved ?? 0} resolved/closed`} accent="emerald" />
+            </div>
+
+            <div className="rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 p-4 shadow-sm space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { id: '', label: 'All' },
+                  { id: 'open', label: 'Open' },
+                  { id: 'in_progress', label: 'In progress' },
+                  { id: 'resolved', label: 'Resolved' },
+                  { id: 'closed', label: 'Closed' },
+                ].map((chip) => (
+                  <button
+                    key={chip.id || 'all'}
+                    type="button"
+                    onClick={() => applyQuickFilter(chip.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      filters.status === chip.id
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-600'
+                    }`}
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                <input
+                  type="text"
+                  placeholder="Search name, email, subject…"
+                  value={filters.search}
+                  onChange={(e) => handleFilterChange('search', e.target.value)}
+                  className="xl:col-span-2 px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                />
+                <select
+                  value={filters.priority}
+                  onChange={(e) => handleFilterChange('priority', e.target.value)}
+                  className="px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                >
+                  <option value="">All priorities</option>
+                  <option value="urgent">Urgent</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+                <input
+                  type="date"
+                  value={filters.startDate}
+                  onChange={(e) => handleFilterChange('startDate', e.target.value)}
+                  className="px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilters({ search: '', status: '', priority: '', startDate: '', endDate: '' });
+                    setPage(1);
+                  }}
+                  className="px-3 py-2 text-sm bg-gray-100 dark:bg-slate-700 text-gray-800 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-600"
+                >
+                  Clear filters
+                </button>
               </div>
             </div>
 
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="mt-6 flex justify-center gap-2">
-                <button
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="px-4 py-2 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-lg disabled:opacity-50"
-                >
-                  Previous
-                </button>
-                <span className="px-4 py-2 text-gray-700 dark:text-gray-300">
-                  Page {page} of {totalPages}
-                </span>
-                <button
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                  className="px-4 py-2 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-lg disabled:opacity-50"
-                >
-                  Next
-                </button>
+            {error && (
+              <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+                {error}
               </div>
             )}
-          </div>
 
-          {/* Ticket Detail Sidebar */}
-          {selectedTicket && (
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Ticket Details</h2>
-                <button
-                  onClick={() => setSelectedTicket(null)}
-                  className="text-gray-500 hover:text-gray-700"
-                >
-                  ✕
-                </button>
+            <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 items-start">
+              <div className="xl:col-span-2 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {totalTickets} ticket{totalTickets === 1 ? '' : 's'}
+                  </p>
+                  {loading && <span className="text-xs text-gray-400">Refreshing…</span>}
+                </div>
+
+                {tickets.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800/50 p-10 text-center">
+                    <p className="text-gray-600 dark:text-gray-400">No tickets match your filters.</p>
+                  </div>
+                ) : (
+                  <ul className="space-y-2">
+                    {tickets.map((ticket) => {
+                      const isSelected = selectedTicket?.id === ticket.id;
+                      const replyCount = ticket.replies?.length || 0;
+                      return (
+                        <li key={ticket.id}>
+                          <button
+                            type="button"
+                            onClick={() => loadTicketDetails(ticket.id)}
+                            className={`w-full text-left rounded-xl border p-4 transition-all ${
+                              isSelected
+                                ? 'border-indigo-400 dark:border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/30 shadow-sm ring-1 ring-indigo-200 dark:ring-indigo-800'
+                                : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 hover:border-gray-300 dark:hover:border-slate-600 hover:shadow-sm'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2 mb-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+                                  {ticket.subject || ISSUE_LABELS[ticket.issueType] || 'Support request'}
+                                </p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
+                                  {ticket.name} · {ticket.email}
+                                </p>
+                              </div>
+                              <span className="text-[10px] font-mono text-gray-400 shrink-0">
+                                #{String(ticket.id).slice(-6)}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize ${STATUS_STYLES[ticket.status] || STATUS_STYLES.open}`}>
+                                {ticket.status?.replace('_', ' ')}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize ${PRIORITY_STYLES[ticket.priority] || PRIORITY_STYLES.medium}`}>
+                                {ticket.priority}
+                              </span>
+                              {replyCount > 0 && (
+                                <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                                  {replyCount} repl{replyCount === 1 ? 'y' : 'ies'}
+                                </span>
+                              )}
+                              {ticket.unreadAdminReplies > 0 && (
+                                <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                                  Not seen by customer
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 line-clamp-2">{ticket.message}</p>
+                            <p className="text-[10px] text-gray-400 mt-2">{formatWhen(ticket.createdAt)}</p>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                      className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-600 disabled:opacity-40"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-xs text-gray-500">Page {page} of {totalPages}</span>
+                    <button
+                      type="button"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page === totalPages}
+                      className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-600 disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedTicket.name}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedTicket.email}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Subject</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedTicket.subject || 'No subject'}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Issue Type</label>
-                  <p className="text-sm text-gray-900 dark:text-white">{selectedTicket.issueType || 'general'}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Message</label>
-                  <p className="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">{selectedTicket.message}</p>
-                </div>
-                {selectedTicket.stripePaymentId && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Stripe Payment ID</label>
-                    <p className="text-sm font-mono text-gray-900 dark:text-white">{selectedTicket.stripePaymentId}</p>
+              <div className="xl:col-span-3">
+                {!selectedTicket ? (
+                  <div className="rounded-xl border border-dashed border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800/40 p-12 text-center min-h-[420px] flex flex-col items-center justify-center">
+                    <p className="text-gray-600 dark:text-gray-400">Select a ticket to view details and customer account data.</p>
                   </div>
-                )}
-                {selectedTicket.screenshotUrl && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Screenshot</label>
-                    <a
-                      href={selectedTicket.screenshotUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm text-indigo-600 hover:text-indigo-700 underline"
-                    >
-                      View uploaded screenshot
-                    </a>
-                  </div>
-                )}
-                <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Billing Context</p>
-                  <p className="text-sm text-gray-900 dark:text-white">
-                    Subscription Status: <span className="font-semibold">{selectedTicket.subscriptionStatus || 'none'}</span>
-                  </p>
-                  <p className="text-sm text-gray-900 dark:text-white break-all">
-                    Stripe Customer ID: <span className="font-mono">{selectedTicket.stripeCustomerId || 'N/A'}</span>
-                  </p>
-                  <p className="text-sm text-gray-900 dark:text-white break-all">
-                    Stripe Subscription ID: <span className="font-mono">{selectedTicket.stripeSubscriptionId || 'N/A'}</span>
-                  </p>
-                  <button
-                    onClick={() => handleRepairSubscription(selectedTicket.id)}
-                    disabled={repairingSubscription}
-                    className="mt-3 w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {repairingSubscription ? 'Repairing…' : 'Repair Subscription'}
-                  </button>
-                </div>
+                ) : (
+                  <div className="rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-sm overflow-hidden">
+                    <div className="px-5 py-4 border-b border-gray-200 dark:border-slate-700 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-mono text-gray-400">#{String(selectedTicket.id).slice(-8)}</p>
+                        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mt-0.5">
+                          {selectedTicket.subject || ISSUE_LABELS[selectedTicket.issueType] || 'Support request'}
+                        </h2>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                          {ISSUE_LABELS[selectedTicket.issueType] || selectedTicket.issueType} · {formatWhen(selectedTicket.createdAt)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTicket(null);
+                          setUserContext(null);
+                          setSearchParams((prev) => {
+                            const next = new URLSearchParams(prev);
+                            next.delete('ticket');
+                            return next;
+                          }, { replace: true });
+                        }}
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1"
+                        aria-label="Close ticket"
+                      >
+                        ✕
+                      </button>
+                    </div>
 
-                {/* Replies/Conversation */}
-                {selectedTicket.replies && selectedTicket.replies.length > 0 && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Conversation</label>
-                    <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {selectedTicket.replies.map((reply, idx) => (
-                        <div
-                          key={idx}
-                          className={`p-3 rounded-lg ${
-                            reply.from === 'admin'
-                              ? 'bg-indigo-50 dark:bg-indigo-900/20 border-l-4 border-indigo-500'
-                              : 'bg-gray-50 dark:bg-slate-700 border-l-4 border-gray-400'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
-                              {reply.from === 'admin' ? 'Admin' : reply.fromName || 'User'}
-                            </span>
-                            <span className="text-xs text-gray-500 dark:text-gray-400">
-                              {new Date(reply.createdAt).toLocaleString()}
-                            </span>
-                          </div>
-                          <p className="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">
-                            {reply.message}
+                    <div className="p-5 space-y-5 max-h-[calc(100vh-220px)] overflow-y-auto">
+                      <AdminSupportUserContext userContext={userContext} loading={userContextLoading} />
+
+                      <div className="rounded-xl border border-gray-200 dark:border-slate-700 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+                          Customer message
+                        </p>
+                        <p className="text-sm text-gray-900 dark:text-white whitespace-pre-wrap leading-relaxed">
+                          {selectedTicket.message}
+                        </p>
+                        {selectedTicket.screenshotUrl && (
+                          <a
+                            href={selectedTicket.screenshotUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex mt-3 text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
+                          >
+                            View screenshot attachment
+                          </a>
+                        )}
+                        {selectedTicket.stripePaymentId && (
+                          <p className="mt-2 text-xs font-mono text-gray-500 dark:text-gray-400">
+                            Payment ref: {selectedTicket.stripePaymentId}
                           </p>
+                        )}
+                      </div>
+
+                      {selectedTicket.replies?.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-3">
+                            Conversation
+                          </p>
+                          <div className="space-y-2">
+                            {selectedTicket.replies.map((reply, idx) => (
+                              <div
+                                key={reply.id || idx}
+                                className={`rounded-xl p-3 border ${
+                                  reply.from === 'admin'
+                                    ? 'bg-indigo-50/80 dark:bg-indigo-950/20 border-indigo-200 dark:border-indigo-800'
+                                    : 'bg-gray-50 dark:bg-slate-900/50 border-gray-200 dark:border-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2 mb-1">
+                                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                                    {reply.from === 'admin' ? 'Support team' : reply.fromName || 'Customer'}
+                                  </span>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className="text-[10px] text-gray-400">{formatWhen(reply.createdAt)}</span>
+                                    {reply.from === 'admin' && (
+                                      <SupportReplyReadReceipt readAt={reply.readAt} />
+                                    )}
+                                  </div>
+                                </div>
+                                <p className="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">{reply.message}</p>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      ))}
+                      )}
+
+                      <div className="rounded-xl border border-gray-200 dark:border-slate-700 p-4 space-y-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                          Reply to customer
+                        </p>
+                        <textarea
+                          value={adminReply}
+                          onChange={(e) => setAdminReply(e.target.value)}
+                          placeholder="Write a reply — the customer receives an email with a link back to Support."
+                          rows={4}
+                          className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAdminReply(selectedTicket.id)}
+                          disabled={!adminReply.trim() || sendingReply}
+                          className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {sendingReply ? 'Sending…' : 'Send reply & email customer'}
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+                            Ticket status
+                          </label>
+                          <select
+                            value={selectedTicket.status}
+                            onChange={(e) => handleStatusUpdate(selectedTicket.id, e.target.value)}
+                            className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                          >
+                            <option value="open">Open</option>
+                            <option value="in_progress">In progress</option>
+                            <option value="resolved">Resolved</option>
+                            <option value="closed">Closed</option>
+                          </select>
+                        </div>
+                        <div className="rounded-xl border border-indigo-200/70 dark:border-indigo-800/50 bg-indigo-50/40 dark:bg-indigo-950/10 p-3">
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Billing context</p>
+                          <p className="text-sm text-gray-900 dark:text-white">
+                            Subscription: <span className="font-medium">{selectedTicket.subscriptionStatus || 'none'}</span>
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => handleRepairSubscription(selectedTicket.id)}
+                            disabled={repairingSubscription}
+                            className="mt-2 w-full px-3 py-2 text-xs font-medium rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"
+                          >
+                            {repairingSubscription ? 'Repairing…' : 'Repair subscription from Stripe'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+                          Internal notes (team only)
+                        </label>
+                        <textarea
+                          value={selectedTicket.adminNotes || ''}
+                          onChange={(e) =>
+                            setSelectedTicket((prev) => ({ ...prev, adminNotes: e.target.value }))
+                          }
+                          rows={3}
+                          className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
+                          placeholder="Notes visible only to admins…"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleNotesUpdate(selectedTicket.id, selectedTicket.adminNotes || '')}
+                          className="mt-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-700 hover:bg-slate-600 text-white"
+                        >
+                          Save internal notes
+                        </button>
+                      </div>
+
+                      {userContext?.userId && (
+                        <div className="pt-2 border-t border-gray-200 dark:border-slate-700">
+                          <Link
+                            to={`/adminbobby/users/${userContext.userId}`}
+                            className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
+                          >
+                            Manage subscription, numbers, credits & features in Users →
+                          </Link>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
-
-                {/* Admin Reply Form */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Reply to User</label>
-                  <textarea
-                    value={adminReply}
-                    onChange={(e) => setAdminReply(e.target.value)}
-                    placeholder="Type your reply to the user..."
-                    rows={3}
-                    className="w-full px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white mb-2"
-                  />
-                  <button
-                    onClick={() => handleAdminReply(selectedTicket.id)}
-                    disabled={!adminReply.trim() || sendingReply}
-                    className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                      !adminReply.trim() || sendingReply
-                        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                    }`}
-                  >
-                    {sendingReply ? 'Sending...' : 'Send Reply'}
-                  </button>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Status</label>
-                  <select
-                    value={selectedTicket.status}
-                    onChange={(e) => handleStatusUpdate(selectedTicket.id, e.target.value)}
-                    className="w-full px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
-                  >
-                    <option value="open">Open</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="resolved">Resolved</option>
-                    <option value="closed">Closed</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Admin Notes</label>
-                  <textarea
-                    value={selectedTicket.adminNotes || ''}
-                    onChange={(e) =>
-                      setSelectedTicket((prev) => ({
-                        ...prev,
-                        adminNotes: e.target.value
-                      }))
-                    }
-                    rows={3}
-                    className="w-full px-4 py-2 bg-gray-50 dark:bg-slate-700 border border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white"
-                    placeholder="Internal admin notes..."
-                  />
-                  <button
-                    onClick={() => handleNotesUpdate(selectedTicket.id, selectedTicket.adminNotes || '')}
-                    className="mt-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium"
-                  >
-                    Save Notes
-                  </button>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Created</label>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {new Date(selectedTicket.createdAt).toLocaleString()}
-                  </p>
-                </div>
-                {selectedTicket.resolvedAt && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Resolved</label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {new Date(selectedTicket.resolvedAt).toLocaleString()}
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
-
-export default AdminSupport;

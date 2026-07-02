@@ -15,6 +15,7 @@ import {
   parseOAuthState
 } from "../services/affiliateService.js";
 import { sendEmailSafe } from "../services/email.service.js";
+import { createAdminNotification } from "../services/adminNotificationService.js";
 import {
   newDeviceEmail,
   passwordResetSuccessEmail,
@@ -282,6 +283,22 @@ if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_CALLBACK_URL) {
               "Google signup welcome"
             );
             schedulePricingOnboardingEmail(user._id);
+
+            await createAdminNotification({
+              type: "signup",
+              title: "New user signed up",
+              message: `${user.email} registered via Google`,
+              sourceModel: "User",
+              sourceId: user._id,
+              dedupeKey: `signup:${user._id}`,
+              data: {
+                userId: String(user._id),
+                email: user.email,
+                source: "google"
+              }
+            }).catch((err) => {
+              console.warn("Failed to create signup notification:", err.message);
+            });
           }
 
           return done(null, user);
@@ -549,6 +566,22 @@ router.post("/register", async (req, res) => {
     });
 
     schedulePricingOnboardingEmail(user._id);
+
+    await createAdminNotification({
+      type: "signup",
+      title: "New user signed up",
+      message: `${user.email} registered`,
+      sourceModel: "User",
+      sourceId: user._id,
+      dedupeKey: `signup:${user._id}`,
+      data: {
+        userId: String(user._id),
+        email: user.email,
+        source: "register"
+      }
+    }).catch((err) => {
+      console.warn("Failed to create signup notification:", err.message);
+    });
 
     if (affiliateCode) {
       try {

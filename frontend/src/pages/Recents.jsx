@@ -13,6 +13,7 @@ import { OTODIAL_SMS_OUTBOUND_EVENT } from '../constants/smsOutboundEvents';
 import { loadSmsFavorites, addSmsFavorite, removeSmsFavorite } from '../utils/smsFavoritesStorage';
 import { loadArchivedPhones, archiveSmsChat, unarchiveSmsChat } from '../utils/smsChatArchiveStorage';
 import { getDialCountriesForUser } from '../utils/callingCountries';
+import DialCountryFlags from '../components/DialCountryFlags';
 import { fetchProjectedBalance } from '../services/projectedCreditService';
 
 const ClockIcon = () => (
@@ -2152,7 +2153,7 @@ function Recents() {
                   onClick={() => setShowDialCountryDropdown(!showDialCountryDropdown)}
                   className="px-2.5 py-1.5 rounded-xl border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 flex items-center gap-1.5 text-xs font-medium text-gray-900 dark:text-white"
                 >
-                  <span className="text-sm">{dialCountries.find(c => c.code === dialCountryCode)?.flag || '🇺🇸'}</span>
+                  <DialCountryFlags flagCodes={dialCountries.find(c => c.code === dialCountryCode)?.flagCodes || ['US']} />
                   <span>{dialCountryCode}</span>
                 </button>
                 {showDialCountryDropdown && (
@@ -2169,7 +2170,7 @@ function Recents() {
                           }}
                           className="w-full px-3 py-2 text-left flex items-center gap-2 text-sm text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-slate-700"
                         >
-                          <span>{country.flag}</span>
+                          <DialCountryFlags flagCodes={country.flagCodes} />
                           <span className="truncate">{country.name}</span>
                           <span className="ml-auto text-gray-400 dark:text-gray-500">{country.code}</span>
                         </button>
@@ -2759,7 +2760,7 @@ function Recents() {
                       onClick={() => setShowDialCountryDropdown(!showDialCountryDropdown)}
                       className="px-2.5 py-1.5 rounded-xl border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 flex items-center gap-1.5 text-xs font-medium text-gray-900 dark:text-white"
                     >
-                      <span className="text-sm">{dialCountries.find(c => c.code === dialCountryCode)?.flag || '🇺🇸'}</span>
+                      <DialCountryFlags flagCodes={dialCountries.find(c => c.code === dialCountryCode)?.flagCodes || ['US']} />
                       <span>{dialCountryCode}</span>
                     </button>
                     {showDialCountryDropdown && (
@@ -2779,7 +2780,7 @@ function Recents() {
                               }}
                               className="w-full px-3 py-2 text-left flex items-center gap-2 text-sm text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-slate-700"
                             >
-                              <span>{country.flag}</span>
+                              <DialCountryFlags flagCodes={country.flagCodes} />
                               <span className="truncate">{country.name}</span>
                               <span className="ml-auto text-gray-400 dark:text-gray-500">{country.code}</span>
                             </button>

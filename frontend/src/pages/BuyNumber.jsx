@@ -35,7 +35,7 @@ function BuyNumber() {
   const buildComingSoonMessage = (countryCode = selectedCountry) => {
     const countryMeta = SUPPORTED_COUNTRIES.find((country) => country.code === countryCode);
     const countryName = countryMeta?.name || 'This country';
-    return `${countryName} numbers are coming soon. Right now, number purchase is available for United States and Norway.`;
+    return `${countryName} numbers are coming soon. Right now, number purchase is available for the United States only.`;
   };
 
   // Check if user already has a number and subscription status
@@ -276,6 +276,21 @@ function BuyNumber() {
     return (
       <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900 p-6">
         <div className="max-w-2xl mx-auto">
+          <div className="mb-6 lg:hidden flex items-start gap-3">
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-gray-300 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"
+              aria-label="Go back"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Active Phone Number</h1>
+            </div>
+          </div>
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-gray-200 dark:border-slate-700 p-8 text-center">
             <div className="w-16 h-16 mx-auto mb-4 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center">
               <svg className="w-8 h-8 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -307,7 +322,26 @@ function BuyNumber() {
   return (
     <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-900 p-6">
       <div className="max-w-4xl mx-auto">
-        <div className="mb-6">
+        <div className="mb-6 lg:hidden flex items-start gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-gray-300 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700"
+            aria-label="Go back"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-1">Buy Phone Number</h1>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Search and select a local phone number. Only the cheapest eligible numbers are shown.
+            </p>
+          </div>
+        </div>
+
+        <div className="mb-6 hidden lg:block">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Buy Phone Number</h1>
           <p className="text-gray-600 dark:text-gray-400">Search and select a local phone number. Only the cheapest eligible numbers are shown.</p>
         </div>
@@ -477,7 +511,7 @@ function BuyNumber() {
                               {SUPPORTED_COUNTRIES.find(c => c.code === num.countryCode)?.flag || ''} {num.country}
                             </span>
                           )}
-                          Carrier Group: {num.carrier_group} | Monthly: ${num.monthly_cost.toFixed(2)}
+                          Carrier Group: {num.carrier_group} · Included in your subscription
                         </div>
                       </div>
                       {selectedNumber?.phone_number === num.phone_number && (
@@ -511,14 +545,14 @@ function BuyNumber() {
                   Processing...
                 </span>
               ) : selectedNumber ? (
-                `Purchase ${selectedNumber.phone_number} ($${selectedNumber.monthly_cost.toFixed(2)}/month)`
+                `Choose ${selectedNumber.phone_number}`
               ) : (
                 'Select a number to purchase'
               )}
             </button>
 
             <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
-              Maximum 1 phone number per account. Number purchase is currently available for United States and Norway.
+              Maximum 1 phone number per account. Number purchase is currently available for the United States only.
               <br />
               <span className="text-yellow-600 dark:text-yellow-400 font-semibold">
                 ⚠️ Country Lock: Numbers can only call/SMS within their own country.

@@ -1,6 +1,10 @@
 import express from "express";
 import Plan from "../models/Plan.js";
 import AddonPlan from "../models/AddonPlan.js";
+import {
+  areAddonsPurchasable,
+  isTemporarilyUnavailablePlan,
+} from "../config/catalogAvailability.js";
 
 /**
  * Public catalog routes (no auth) — mounted before protected /api/subscription
@@ -33,6 +37,7 @@ router.get("/plans", async (req, res) => {
         stripePriceId: plan.stripePriceId,
         smsCampaignPlan: Boolean(plan.smsCampaignPlan),
         comingSoon: Boolean(plan.comingSoon),
+        temporarilyUnavailable: isTemporarilyUnavailablePlan(plan),
       })),
     });
   } catch (err) {
@@ -56,6 +61,7 @@ router.get("/addons", async (req, res) => {
         price: addon.price,
         currency: addon.currency,
         quantity: addon.quantity,
+        temporarilyUnavailable: !areAddonsPurchasable(),
       })),
     });
   } catch (err) {

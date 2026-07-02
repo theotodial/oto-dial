@@ -82,6 +82,10 @@ function normalizeUserFromLoginOrMe(u) {
     preferences: normalizeClientPreferences(u),
     mode: u.mode === "campaign" ? "campaign" : "voice",
     allowedCallCountries: Array.isArray(u.allowedCallCountries) ? u.allowedCallCountries : [],
+    identityVerificationStatus:
+      u.identityVerificationStatus ||
+      u.identityVerification?.status ||
+      "not_submitted",
   };
 }
 
@@ -99,6 +103,7 @@ export function createBootstrapPlaceholderUser() {
     preferences: normalizeClientPreferences({}),
     mode: "voice",
     allowedCallCountries: [],
+    identityVerificationStatus: "not_submitted",
   };
 }
 

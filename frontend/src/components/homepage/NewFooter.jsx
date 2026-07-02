@@ -1,4 +1,5 @@
 import PrefetchLink from '../PrefetchLink';
+import { billingPlanUrl } from '../../utils/billingPlanLink';
 import logo from '../../assets/otodial-logo.png';
 
 function NewFooter() {
@@ -74,7 +75,7 @@ function NewFooter() {
             <ul className="space-y-3">
               <li><PrefetchLink to="/billing" className="text-gray-400 hover:text-white transition-colors">Pricing &amp; Plans</PrefetchLink></li>
               <li><PrefetchLink to="/billing" className="text-gray-400 hover:text-white transition-colors">Free US Virtual Number</PrefetchLink></li>
-              <li><PrefetchLink to="/billing" className="text-gray-400 hover:text-white transition-colors">Unlimited Calling Plan</PrefetchLink></li>
+              <li><PrefetchLink to={billingPlanUrl('Unlimited Call')} className="text-gray-400 hover:text-white transition-colors">Unlimited Calling Plan</PrefetchLink></li>
               <li><a href="#telecom-credits" className="text-gray-400 hover:text-white transition-colors">Telecom Credits</a></li>
               <li><a href="#faq" className="text-gray-400 hover:text-white transition-colors">FAQ</a></li>
             </ul>

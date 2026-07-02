@@ -3,31 +3,31 @@ import requireAdmin from "../../middleware/requireAdmin.js";
 import SupportTicket from "../../models/SupportTicket.js";
 import User from "../../models/User.js";
 import Subscription from "../../models/Subscription.js";
+import PhoneNumber from "../../models/PhoneNumber.js";
 import { repairUserSubscriptionFromStripe } from "../../services/stripeSubscriptionService.js";
-import { sendEmailSafe } from "../../services/email.service.js";
-import { frontBase, supportMessageEmail } from "../../emails/templates.js";
+import { sendIdentityApprovedEmail } from "../../services/identityVerificationEmailService.js";
+import { sendSupportAdminReplyEmail } from "../../services/supportReplyEmailService.js";
 
 const router = express.Router();
 
-function normalizeAdminNotesForWrite(adminNotes) {
-  if (adminNotes === undefined) {
-    return undefined;
-  }
-  if (Array.isArray(adminNotes)) {
-    return adminNotes
-      .map((note) => {
-        if (!note) return "";
-        if (typeof note === "string") return note.trim();
-        if (typeof note === "object" && typeof note.note === "string") return note.note.trim();
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  return String(adminNotes || "").trim();
+function serializeSupportReply(reply) {
+  return {
+    id: reply._id,
+    message: reply.message,
+    from: reply.from,
+    fromName: reply.fromName,
+    fromEmail: reply.fromEmail,
+    createdAt: reply.createdAt,
+    readAt: reply.readAt || null
+  };
+}
+
+function countUnreadAdminReplies(replies = []) {
+  return replies.filter((reply) => reply.from === "admin" && !reply.readAt).length;
 }
 
 function serializeTicket(ticket, subscriptionContext = null) {
+  const replies = (ticket.replies || []).map(serializeSupportReply);
   return {
     id: ticket._id,
     userId: ticket.user?._id,
@@ -51,7 +51,8 @@ function serializeTicket(ticket, subscriptionContext = null) {
     businessDescription: ticket.businessDescription,
     serviceRequest: ticket.serviceRequest,
     isUrgent: ticket.isUrgent,
-    replies: ticket.replies || [],
+    replies,
+    unreadAdminReplies: countUnreadAdminReplies(ticket.replies || []),
     createdAt: ticket.createdAt,
     updatedAt: ticket.updatedAt,
     subscriptionStatus: subscriptionContext?.status || "none",
@@ -59,6 +60,24 @@ function serializeTicket(ticket, subscriptionContext = null) {
     stripeSubscriptionId: subscriptionContext?.stripeSubscriptionId || null,
     activeSubscriptionId: ticket.user?.activeSubscriptionId || subscriptionContext?._id || null
   };
+}
+
+function normalizeAdminNotesForWrite(adminNotes) {
+  if (adminNotes === undefined) {
+    return undefined;
+  }
+  if (Array.isArray(adminNotes)) {
+    return adminNotes
+      .map((note) => {
+        if (!note) return "";
+        if (typeof note === "string") return note.trim();
+        if (typeof note === "object" && typeof note.note === "string") return note.note.trim();
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return String(adminNotes || "").trim();
 }
 
 async function buildSubscriptionContextMap(tickets) {
@@ -85,6 +104,269 @@ async function buildSubscriptionContextMap(tickets) {
 
   return contextByUserId;
 }
+
+async function buildUserContextForTicket(ticket) {
+  let userDoc = ticket.user?._id ? ticket.user : null;
+  if (!userDoc && ticket.email) {
+    userDoc = await User.findOne({ email: String(ticket.email).trim().toLowerCase() })
+      .select(
+        "_id email name firstName lastName status stripeCustomerId activeSubscriptionId isEmailVerified identityVerification.status features createdAt phone"
+      )
+      .lean();
+  } else if (userDoc?._id) {
+    userDoc = await User.findById(userDoc._id)
+      .select(
+        "_id email name firstName lastName status stripeCustomerId activeSubscriptionId isEmailVerified identityVerification.status features createdAt phone"
+      )
+      .lean();
+  }
+
+  if (!userDoc) return null;
+
+  const [subscription, phoneNumbers] = await Promise.all([
+    Subscription.findOne({
+      userId: userDoc._id,
+      status: { $in: ["active", "pending_activation", "past_due", "incomplete", "cancelled"] }
+    })
+      .sort({ updatedAt: -1 })
+      .select("status planName stripeSubscriptionId limits numbers updatedAt")
+      .lean(),
+    PhoneNumber.find({ userId: userDoc._id })
+      .select("phoneNumber status country countryCode countryName monthlyCost purchaseDate")
+      .sort({ purchaseDate: -1 })
+      .lean()
+  ]);
+
+  return {
+    userId: userDoc._id,
+    email: userDoc.email,
+    name:
+      userDoc.name ||
+      `${userDoc.firstName || ""} ${userDoc.lastName || ""}`.trim() ||
+      userDoc.email,
+    phone: userDoc.phone || null,
+    accountStatus: userDoc.status || "active",
+    isEmailVerified: userDoc.isEmailVerified !== false,
+    identityStatus: userDoc.identityVerification?.status || "not_submitted",
+    stripeCustomerId: userDoc.stripeCustomerId || null,
+    features: userDoc.features || {},
+    createdAt: userDoc.createdAt,
+    subscription: subscription
+      ? {
+          status: subscription.status,
+          planName: subscription.planName || null,
+          stripeSubscriptionId: subscription.stripeSubscriptionId || null,
+          numbersLimit: subscription.limits?.numbersTotal ?? null,
+          numbersUsed: Array.isArray(subscription.numbers) ? subscription.numbers.length : 0
+        }
+      : null,
+    phoneNumbers: phoneNumbers.map((row) => ({
+      id: row._id,
+      number: row.phoneNumber,
+      status: row.status,
+      country: row.countryCode || row.country || row.countryName || null,
+      monthlyCost: row.monthlyCost ?? null
+    }))
+  };
+}
+
+function serializeKycSummary(user) {
+  const iv = user.identityVerification || {};
+  const ai = iv.aiVerification || {};
+  return {
+    userId: user._id,
+    email: user.email,
+    name: user.name || `${user.firstName || ""} ${user.lastName || ""}`.trim(),
+    status: iv.status || "not_submitted",
+    submittedAt: iv.submittedAt,
+    reviewedAt: iv.reviewedAt,
+    legalName: iv.legalName,
+    dateOfBirth: iv.dateOfBirth,
+    documentType: iv.documentType,
+    documentCountry: iv.documentCountry,
+    verificationType: iv.verificationType,
+    aiDecision: ai.decision,
+    aiOverallScore: ai.overallScore,
+    autoApproved: ai.autoApproved === true,
+    faceMatchScore: ai.faceMatchScore ?? iv.selfieLiveness?.faceMatchScore,
+    livenessScore: ai.livenessScore ?? iv.selfieLiveness?.livenessScore,
+    nameMatchScore: ai.nameMatchScore,
+    hasIdDocument: Boolean(iv.idDocument),
+    hasSelfie: Boolean(iv.selfieDocument),
+  };
+}
+
+function serializeKycDetail(user) {
+  const iv = user.identityVerification || {};
+  const ai = iv.aiVerification || {};
+  return {
+    ...serializeKycSummary(user),
+    phone: user.phone,
+    company: user.company,
+    addressLine1: iv.addressLine1,
+    city: iv.city,
+    stateRegion: iv.stateRegion,
+    postalCode: iv.postalCode,
+    rejectionReason: iv.rejectionReason,
+    aiVerification: ai,
+    selfieLiveness: iv.selfieLiveness,
+    idDocument: iv.idDocument,
+    idDocumentBack: iv.idDocumentBack,
+    businessDocument: iv.businessDocument,
+    selfieDocument: iv.selfieDocument,
+    reviewedBy: iv.reviewedBy,
+  };
+}
+
+/**
+ * GET /api/admin/support/kyc
+ * Identity verification queue for manual KYC review
+ */
+router.get("/kyc", requireAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 50, status, search } = req.query;
+    const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+    const query = {
+      "identityVerification.status": { $in: ["pending", "approved", "rejected"] },
+    };
+
+    if (status) {
+      query["identityVerification.status"] = status;
+    }
+
+    if (search) {
+      query.$or = [
+        { email: { $regex: search, $options: "i" } },
+        { name: { $regex: search, $options: "i" } },
+        { "identityVerification.legalName": { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const users = await User.find(query)
+      .select("email name firstName lastName identityVerification createdAt")
+      .sort({ "identityVerification.submittedAt": -1 })
+      .skip(skip)
+      .limit(parseInt(limit, 10));
+
+    const total = await User.countDocuments(query);
+
+    res.json({
+      success: true,
+      verifications: users.map(serializeKycSummary),
+      pagination: {
+        page: parseInt(page, 10),
+        limit: parseInt(limit, 10),
+        total,
+        pages: Math.ceil(total / parseInt(limit, 10)),
+      },
+    });
+  } catch (err) {
+    console.error("Admin KYC list error:", err);
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch KYC queue" });
+  }
+});
+
+/**
+ * GET /api/admin/support/kyc/users/:userId
+ */
+router.get("/kyc/users/:userId", requireAdmin, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.userId).select(
+      "email name firstName lastName phone company identityVerification createdAt"
+    );
+    if (!user || !user.identityVerification?.submittedAt) {
+      return res.status(404).json({ success: false, error: "Verification not found" });
+    }
+    res.json({ success: true, verification: serializeKycDetail(user) });
+  } catch (err) {
+    console.error("Admin KYC detail error:", err);
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch KYC detail" });
+  }
+});
+
+/**
+ * PATCH /api/admin/support/kyc/users/:userId
+ * Manual approve / reject
+ */
+router.patch("/kyc/users/:userId", requireAdmin, async (req, res) => {
+  try {
+    const { status, rejectionReason, adminNotes } = req.body;
+    if (!["approved", "rejected", "pending"].includes(status)) {
+      return res.status(400).json({ success: false, error: "Invalid status" });
+    }
+
+    const user = await User.findById(req.params.userId);
+    if (!user?.identityVerification?.submittedAt) {
+      return res.status(404).json({ success: false, error: "Verification not found" });
+    }
+
+    const wasApproved = user.identityVerification.status === "approved";
+    user.identityVerification.status = status;
+    user.identityVerification.reviewedAt = new Date();
+    user.identityVerification.reviewedBy = req.userId;
+    if (status === "rejected") {
+      user.identityVerification.rejectionReason = String(rejectionReason || adminNotes || "Rejected by compliance review").trim();
+    } else {
+      user.identityVerification.rejectionReason = null;
+    }
+
+    if (!user.identityVerification.aiVerification) {
+      user.identityVerification.aiVerification = {};
+    }
+    user.identityVerification.aiVerification.decision =
+      status === "approved" ? "approved" : status === "rejected" ? "rejected" : "pending_manual";
+
+    await user.save();
+
+    if (status === "approved" && !wasApproved) {
+      await sendIdentityApprovedEmail(user);
+    }
+
+    res.json({
+      success: true,
+      verification: serializeKycDetail(user),
+      message: `Verification marked as ${status}`,
+    });
+  } catch (err) {
+    console.error("Admin KYC update error:", err);
+    res.status(500).json({ success: false, error: err.message || "Failed to update verification" });
+  }
+});
+
+/**
+ * GET /api/admin/support/stats
+ * Queue counts for support dashboard
+ */
+router.get("/stats", requireAdmin, async (_req, res) => {
+  try {
+    const [open, inProgress, pendingKyc, total, resolved] = await Promise.all([
+      SupportTicket.countDocuments({ status: "open" }),
+      SupportTicket.countDocuments({ status: "in_progress" }),
+      User.countDocuments({ "identityVerification.status": "pending" }),
+      SupportTicket.countDocuments({}),
+      SupportTicket.countDocuments({ status: { $in: ["resolved", "closed"] } })
+    ]);
+
+    return res.json({
+      success: true,
+      stats: {
+        open,
+        inProgress,
+        actionable: open + inProgress,
+        pendingKyc,
+        total,
+        resolved
+      }
+    });
+  } catch (err) {
+    console.error("Admin support stats error:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Failed to fetch support stats"
+    });
+  }
+});
 
 /**
  * GET /api/admin/support
@@ -190,9 +472,12 @@ router.get("/:id", requireAdmin, async (req, res) => {
         }).sort({ updatedAt: -1 })
       : null;
 
+    const userContext = await buildUserContextForTicket(ticket);
+
     res.json({
       success: true,
-      ticket: serializeTicket(ticket, subscriptionContext)
+      ticket: serializeTicket(ticket, subscriptionContext),
+      userContext
     });
   } catch (err) {
     console.error("Admin support detail error:", err);
@@ -222,38 +507,28 @@ router.patch("/:id", requireAdmin, async (req, res) => {
 
     // Handle admin reply
     if (reply && reply.trim()) {
+      const trimmedReply = reply.trim();
       ticket.replies = ticket.replies || [];
       ticket.replies.push({
-        message: reply.trim(),
+        message: trimmedReply,
         from: "admin",
         fromName: req.user?.name || "Admin",
         fromEmail: req.user?.email || "admin@otodial.com",
         createdAt: new Date()
       });
 
-      const recipient = String(ticket.email || "").trim();
-      if (recipient) {
-        const base = frontBase();
-        const ticketUrl = `${base}/support`;
-        const mailResult = await sendEmailSafe(
-          {
-            to: recipient,
-            subject: `Re: ${ticket.subject} — OTODIAL Support`,
-            html: supportMessageEmail({
-              name: ticket.name || recipient.split("@")[0] || "there",
-              message: reply.trim(),
-              subject: ticket.subject,
-              ticketUrl,
-            }),
-            emailType: "support_reply",
-            templateUsed: "supportMessageEmail",
-          },
-          "support_reply"
-        );
-        if (mailResult == null) {
-          console.warn("⚠️ Support reply email not delivered (see Resend logs). Ticket reply was saved.");
-        }
+      if (ticket.status === "open") {
+        ticket.status = "in_progress";
       }
+
+      await sendSupportAdminReplyEmail({
+        to: ticket.email,
+        name: ticket.name,
+        adminMessage: trimmedReply,
+        adminName: req.user?.name || "OTODIAL Support",
+        subject: ticket.subject,
+        ticketId: ticket._id,
+      });
     }
 
     // Handle status update

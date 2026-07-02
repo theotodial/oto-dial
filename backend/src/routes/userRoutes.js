@@ -9,6 +9,16 @@ import {
   loadUserSubscription,
 } from "../services/subscriptionService.js";
 import { normalizeFeatures } from "../utils/userFeatures.js";
+import {
+  normalizeSelfieLiveness,
+  validateSelfieLiveness,
+} from "../services/faceVerificationService.js";
+import { evaluateIdentityVerificationAi } from "../services/identityVerificationAiService.js";
+import {
+  sendIdentityApprovedEmail,
+  sendIdentitySubmittedEmail,
+} from "../services/identityVerificationEmailService.js";
+import { createAdminNotification } from "../services/adminNotificationService.js";
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -415,27 +425,146 @@ router.post("/upload-profile-picture", async (req, res) => {
  */
 router.post("/upload-verification", async (req, res) => {
   try {
-    const { idDocument, businessDocument, verificationType } = req.body;
+    const {
+      idDocument,
+      idDocumentBack,
+      businessDocument,
+      selfieDocument,
+      selfieLiveness,
+      verificationType,
+      legalName,
+      dateOfBirth,
+      documentType,
+      documentCountry,
+      addressLine1,
+      city,
+      stateRegion,
+      postalCode,
+    } = req.body;
 
     const user = await User.findById(req.user._id);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Update verification documents
-    if (idDocument) user.identityVerification.idDocument = idDocument;
-    if (businessDocument) user.identityVerification.businessDocument = businessDocument;
-    if (verificationType) user.identityVerification.verificationType = verificationType;
-    
-    user.identityVerification.status = "pending";
+    if (!user.identityVerification) {
+      user.identityVerification = {};
+    }
+
+    if (user.identityVerification.status === "pending") {
+      return res.status(409).json({
+        error: "Your identity verification is already under review.",
+      });
+    }
+
+    if (user.identityVerification.status === "approved") {
+      return res.status(409).json({
+        error: "Your identity is already verified.",
+      });
+    }
+
+    const type = verificationType === "business" ? "business" : "individual";
+    const trimmedName = String(legalName || "").trim();
+
+    if (!trimmedName) {
+      return res.status(400).json({ error: "Legal name is required." });
+    }
+    if (!dateOfBirth) {
+      return res.status(400).json({ error: "Date of birth is required." });
+    }
+    if (!documentType) {
+      return res.status(400).json({ error: "Document type is required." });
+    }
+    if (!idDocument) {
+      return res.status(400).json({ error: "Government ID document is required." });
+    }
+    if (!selfieDocument) {
+      return res.status(400).json({ error: "Live selfie verification is required." });
+    }
+
+    const livenessCheck = validateSelfieLiveness(selfieLiveness);
+    if (!livenessCheck.ok) {
+      return res.status(400).json({ error: livenessCheck.error });
+    }
+
+    const normalizedLiveness = normalizeSelfieLiveness(selfieLiveness);
+
+    const aiResult = evaluateIdentityVerificationAi({
+      user,
+      legalName: trimmedName,
+      dateOfBirth,
+      documentType,
+      documentCountry,
+      selfieLiveness: normalizedLiveness,
+    });
+
+    user.identityVerification.verificationType = type;
+    user.identityVerification.legalName = trimmedName;
+    user.identityVerification.dateOfBirth = String(dateOfBirth);
+    user.identityVerification.documentType = documentType;
+    user.identityVerification.documentCountry = documentCountry ? String(documentCountry).trim() : null;
+    user.identityVerification.addressLine1 = addressLine1 ? String(addressLine1).trim() : null;
+    user.identityVerification.city = city ? String(city).trim() : null;
+    user.identityVerification.stateRegion = stateRegion ? String(stateRegion).trim() : null;
+    user.identityVerification.postalCode = postalCode ? String(postalCode).trim() : null;
+    user.identityVerification.idDocument = idDocument;
+    user.identityVerification.idDocumentBack = idDocumentBack || null;
+    user.identityVerification.selfieDocument = selfieDocument;
+    user.identityVerification.selfieLiveness = normalizedLiveness;
+    user.identityVerification.aiVerification = aiResult;
+    if (businessDocument) {
+      user.identityVerification.businessDocument = businessDocument;
+    }
+
     user.identityVerification.submittedAt = new Date();
-    
+    user.identityVerification.rejectionReason = null;
+
+    if (aiResult.autoApproved) {
+      user.identityVerification.status = "approved";
+      user.identityVerification.reviewedAt = new Date();
+      user.identityVerification.reviewedBy = null;
+    } else {
+      user.identityVerification.status = "pending";
+      user.identityVerification.reviewedAt = null;
+      user.identityVerification.reviewedBy = null;
+    }
+
     await user.save();
     await deleteCachedKey(cacheKeys.userProfile(req.user._id));
 
+    await sendIdentitySubmittedEmail(user, { autoApproved: aiResult.autoApproved });
+    if (aiResult.autoApproved) {
+      await sendIdentityApprovedEmail(user);
+    } else {
+      await createAdminNotification({
+        type: "identity_verification",
+        title: "Identity verification submitted",
+        message: `${user.email} submitted identity documents for review`,
+        sourceModel: "User",
+        sourceId: user._id,
+        dedupeKey: `identity_verification:${user._id}:${user.identityVerification.submittedAt?.getTime()}`,
+        data: {
+          userId: String(user._id),
+          email: user.email,
+          legalName: trimmedName
+        }
+      }).catch((err) => {
+        console.warn("Failed to create identity verification notification:", err.message);
+      });
+    }
+
     return res.json({
       success: true,
-      message: "Verification documents submitted successfully"
+      autoApproved: aiResult.autoApproved,
+      status: user.identityVerification.status,
+      aiVerification: {
+        overallScore: aiResult.overallScore,
+        decision: aiResult.decision,
+        reasons: aiResult.reasons,
+      },
+      message: aiResult.autoApproved
+        ? "Identity verified instantly. Your account has been approved."
+        : "Identity verification submitted. Our compliance team will complete final review within 1 business day.",
     });
   } catch (err) {
     console.error("POST /upload-verification error:", err);

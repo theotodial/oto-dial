@@ -1,28 +1,24 @@
 /**
  * GA4 debug + status for admin analytics panel.
  */
-import {
-  isMeasurementProtocolConfigured,
-  getGa4MpStats
-} from "./gaMeasurementProtocolService.js";
+import { getGa4ConfigSummary } from "./ga4ConfigService.js";
 import { runReconciliation } from "./reconciliationService.js";
 import { resolveTimeframe, DEFAULT_TIMEFRAME } from "./timeframeService.js";
 
 export function getGa4AdminStatus() {
-  const config = {
-    measurementId:
-      process.env.GA4_MEASUREMENT_ID ||
-      process.env.GA_MEASUREMENT_ID ||
-      "G-X3WN8RYCQ5",
-    enabled: String(process.env.GA4_ENABLED || "true").toLowerCase() !== "false",
-    debug: String(process.env.GA4_DEBUG || "false").toLowerCase() === "true",
-    mpConfigured: isMeasurementProtocolConfigured()
-  };
+  const ga4 = getGa4ConfigSummary();
 
   return {
     at: new Date().toISOString(),
-    ...config,
-    measurementProtocol: getGa4MpStats(),
+    measurementId: ga4.measurementId,
+    enabled: ga4.enabled,
+    debug: ga4.debug,
+    configured: ga4.configured,
+    mpConfigured: ga4.mpConfigured,
+    dataApiConfigured: ga4.dataApiConfigured,
+    missing: ga4.missing,
+    measurementProtocol: ga4.measurementProtocol,
+    dataApi: ga4.dataApi,
     note: "Internal analytics is primary; GA4 is verification layer"
   };
 }

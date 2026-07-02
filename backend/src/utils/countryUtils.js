@@ -12,7 +12,7 @@ export const SUPPORTED_COUNTRIES = [
   
   // Europe
   { code: "GB", name: "United Kingdom", iso2: "GB", telnyxCode: "GB", numberProvisioningEnabled: false },
-  { code: "NO", name: "Norway", iso2: "NO", telnyxCode: "NO", numberProvisioningEnabled: true },
+  { code: "NO", name: "Norway", iso2: "NO", telnyxCode: "NO", numberProvisioningEnabled: false },
   { code: "FR", name: "France", iso2: "FR", telnyxCode: "FR", numberProvisioningEnabled: false },
   { code: "IT", name: "Italy", iso2: "IT", telnyxCode: "IT", numberProvisioningEnabled: false },
   { code: "DE", name: "Germany", iso2: "DE", telnyxCode: "DE", numberProvisioningEnabled: false },

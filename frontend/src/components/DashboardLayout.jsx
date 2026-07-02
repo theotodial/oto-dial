@@ -2,8 +2,10 @@ import { Suspense, useState, useEffect } from 'react';
 import { DashboardPageFallback } from './loadingFallbacks';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import IdentityVerificationBanner from './IdentityVerificationBanner';
 import { MobileSidebarContext } from '../context/MobileSidebarContext';
 import { useAuth } from '../context/AuthContext';
+import { shouldShowIdentityBanner } from '../utils/identityBanner';
 
 const MenuIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -45,7 +47,7 @@ function DashboardLayout({ children }) {
   ];
 
   // Sidebar toggle is merged into the page header (Dashboard / Profile / Billing)
-  const pagesWithMergedMobileHeader = ['/dashboard', '/profile', '/billing'];
+  const pagesWithMergedMobileHeader = ['/dashboard', '/profile', '/billing', '/buy-number', '/identity-verification'];
 
   const shouldToggleSidebar = pagesWithSidebarToggle.includes(location.pathname);
   const shouldHideMobileButton = pagesWithOwnBackButton.includes(location.pathname);
@@ -107,11 +109,41 @@ function DashboardLayout({ children }) {
   const hideFloatingOnRecentsInlineChat =
     location.pathname === '/recents' && isChatOpen;
 
+  const identityBannerVisible = shouldShowIdentityBanner({
+    token,
+    user,
+    pathname: location.pathname,
+  });
+
   const showFloatingMobileBtn =
     !shouldHideMobileButton &&
     !isDialerActive &&
     !mergedMobileHeader &&
-    !hideFloatingOnRecentsInlineChat;
+    !hideFloatingOnRecentsInlineChat &&
+    !identityBannerVisible;
+
+  const mobileMenuForBanner =
+    identityBannerVisible &&
+    !shouldHideMobileButton &&
+    !isDialerActive &&
+    !mergedMobileHeader &&
+    !hideFloatingOnRecentsInlineChat
+      ? {
+          onClick: handleButtonClick,
+          ariaLabel: isChatOpen
+            ? 'Go back to chats'
+            : shouldToggleSidebar
+              ? 'Toggle menu'
+              : 'Go back',
+          icon: isChatOpen
+            ? 'back'
+            : shouldToggleSidebar
+              ? mobileMenuOpen
+                ? 'close'
+                : 'menu'
+              : 'back',
+        }
+      : null;
 
   const sidebarContextValue = {
     toggleSidebar: () => setMobileMenuOpen((o) => !o),
@@ -141,6 +173,7 @@ function DashboardLayout({ children }) {
             emailBannerPad ? 'pt-12 sm:pt-14' : 'pt-0'
           }`}
         >
+          <IdentityVerificationBanner mobileMenuButton={mobileMenuForBanner} />
           <Suspense fallback={<DashboardPageFallback />}>{children}</Suspense>
         </div>
       </div>

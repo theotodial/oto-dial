@@ -111,6 +111,11 @@ const supportTicketSchema = new mongoose.Schema(
       createdAt: {
         type: Date,
         default: Date.now
+      },
+      /** Set when the customer opens the ticket (admin replies only). */
+      readAt: {
+        type: Date,
+        default: null
       }
     }]
   },

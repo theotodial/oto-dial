@@ -14,6 +14,7 @@ export const Billing = lazy(() => import('../pages/Billing.jsx'));
 export const BuyNumber = lazy(() => import('../pages/BuyNumber.jsx'));
 export const SubscriptionDetails = lazy(() => import('../pages/SubscriptionDetails.jsx'));
 export const Profile = lazy(() => import('../pages/Profile.jsx'));
+export const IdentityVerification = lazy(() => import('../pages/IdentityVerification.jsx'));
 export const Support = lazy(() => import('../pages/Support.jsx'));
 export const ForgotPassword = lazy(() => import('../pages/ForgotPassword.jsx'));
 export const ResetPassword = lazy(() => import('../pages/ResetPassword.jsx'));
