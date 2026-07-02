@@ -12,7 +12,7 @@ import { threadMatchesPeerPhone } from '../utils/phoneThreadMatch';
 import { OTODIAL_SMS_OUTBOUND_EVENT } from '../constants/smsOutboundEvents';
 import { loadSmsFavorites, addSmsFavorite, removeSmsFavorite } from '../utils/smsFavoritesStorage';
 import { loadArchivedPhones, archiveSmsChat, unarchiveSmsChat } from '../utils/smsChatArchiveStorage';
-import { getDialCountriesForUser } from '../utils/callingCountries';
+import { getDialCountriesForUser, validateOutboundDestination } from '../utils/callingCountries';
 import DialCountryFlags from '../components/DialCountryFlags';
 import { fetchProjectedBalance } from '../services/projectedCreditService';
 
@@ -1189,6 +1189,12 @@ function Recents() {
 
     if (userNumbers.length === 0) {
       setSendError('You need to purchase a number first.');
+      return;
+    }
+
+    const smsDestinationCheck = validateOutboundDestination(selectedChat, user?.allowedCallCountries);
+    if (!smsDestinationCheck.ok) {
+      setSendError(smsDestinationCheck.error);
       return;
     }
 

@@ -447,7 +447,7 @@ router.get("/", requireAdmin, async (req, res) => {
  */
 router.get("/:id", requireAdmin, async (req, res) => {
   try {
-    const call = await Call.findById(req.params.id).populate("user", "email name");
+    const call = await Call.findById(req.params.id).populate("user", "email name allowedCallCountries");
 
     if (!call) {
       return res.status(404).json({
@@ -455,6 +455,25 @@ router.get("/:id", requireAdmin, async (req, res) => {
         error: "Call not found"
       });
     }
+
+    const [lifecycleEvents, webhookEvents] = await Promise.all([
+      CallLifecycleEvent.find({ callId: call._id })
+        .sort({ timestamp: -1 })
+        .limit(25)
+        .lean(),
+      call.telnyxCallControlId
+        ? ProcessedWebhookEvent.find({
+            $or: [
+              { "payload.call_control_id": call.telnyxCallControlId },
+              { "payload.data.payload.call_control_id": call.telnyxCallControlId }
+            ]
+          })
+            .sort({ processedAt: -1 })
+            .limit(15)
+            .lean()
+            .catch(() => [])
+        : Promise.resolve([])
+    ]);
 
     res.json({
       success: true,
@@ -464,16 +483,19 @@ router.get("/:id", requireAdmin, async (req, res) => {
         userId: call.user?._id,
         userEmail: call.user?.email,
         userName: call.user?.name,
+        userAllowedCallCountries: call.user?.allowedCallCountries || [],
         phoneNumber: call.phoneNumber,
         fromNumber: call.fromNumber,
         toNumber: call.toNumber,
         direction: call.direction,
+        source: call.source || null,
         status: call.status,
         callInitiatedAt: call.callInitiatedAt,
         callStartedAt: call.callStartedAt,
         callAnsweredAt: call.callAnsweredAt || call.callStartedAt || null,
         callBridgedAt: call.callBridgedAt || null,
         callEndedAt: call.callEndedAt,
+        callRingingAt: call.callRingingAt || null,
         ringingDuration: call.ringingDuration || 0,
         answeredDuration: call.answeredDuration || 0,
         durationSeconds: call.durationSeconds,
@@ -481,10 +503,37 @@ router.get("/:id", requireAdmin, async (req, res) => {
         costPerSecond: call.costPerSecond || (call.cost / Math.max(call.durationSeconds, 1)),
         totalCost: call.cost,
         hangupCause: call.hangupCause,
+        hangupCauseCode: call.hangupCauseCode || null,
         failReason: call.failReason || null,
+        orphanRootCause: call.orphanRootCause || null,
+        terminationSource: call.terminationSource || null,
+        lastHeartbeatAt: call.lastHeartbeatAt || null,
+        lastClientSyncAt: call.lastClientSyncAt || null,
+        telnyxLastWebhookAt: call.telnyxLastWebhookAt || null,
+        telnyxCallControlId: call.telnyxCallControlId || null,
+        telnyxCallSessionId: call.telnyxCallSessionId || null,
+        lastEventType: call.lastEventType || null,
+        lastEventSource: call.lastEventSource || null,
         createdAt: call.createdAt,
         updatedAt: call.updatedAt
-      }
+      },
+      lifecycleEvents: lifecycleEvents.map((event) => ({
+        id: String(event._id),
+        event: event.event || null,
+        severity: event.severity || null,
+        previousState: event.previousState || null,
+        nextState: event.nextState || null,
+        action: event.action || null,
+        details: event.details || {},
+        timestamp: event.timestamp || event.createdAt || null,
+      })),
+      webhookEvents: (webhookEvents || []).map((event) => ({
+        id: String(event._id),
+        eventType: event.eventType || null,
+        processedAt: event.processedAt || null,
+        success: event.success,
+        error: event.error || null,
+      })),
     });
   } catch (err) {
     console.error("Admin call detail error:", err);

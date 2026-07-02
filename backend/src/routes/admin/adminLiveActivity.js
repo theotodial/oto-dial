@@ -35,7 +35,7 @@ function mapCallToEvent(call) {
       name: user?.name || user?.email || "Unknown user",
     },
     callId: call._id ? String(call._id) : null,
-    destination: call.toNumber || null,
+    destination: call.toNumber || call.phoneNumber || null,
     from: call.fromNumber || null,
     direction: call.direction || "outbound",
     status: call.status || null,

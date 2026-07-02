@@ -1,4 +1,5 @@
 import API from '../api';
+import { validateOutboundDestination } from '../utils/callingCountries';
 
 export const getChat = async (phoneNumber) => {
   const response = phoneNumber
@@ -25,6 +26,13 @@ export const getChat = async (phoneNumber) => {
 export const sendMessage = async (message, phoneNumber, options = {}) => {
   if (!phoneNumber) {
     throw new Error('Phone number is required to send a message');
+  }
+
+  if (Array.isArray(options.allowedCallCountries)) {
+    const destinationCheck = validateOutboundDestination(phoneNumber, options.allowedCallCountries);
+    if (!destinationCheck.ok) {
+      throw new Error(destinationCheck.error);
+    }
   }
 
   const idempotencyKey =

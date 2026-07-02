@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import useAdminLiveFeed from '../../hooks/useAdminLiveFeed';
 import LiveTimeframeSelector from '../../components/analytics/live/LiveTimeframeSelector';
 import TelnyxCostPanel from '../../components/admin/TelnyxCostPanel';
+import AdminCallFailureDetailModal, {
+  isInspectableCallFailure,
+} from '../../components/admin/AdminCallFailureDetailModal';
 
 const STATUS_COLORS = {
   completed: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
@@ -104,6 +107,7 @@ function AdminLiveActivity() {
   const [activeTab, setActiveTab] = useState('calls');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [selectedCallId, setSelectedCallId] = useState(null);
 
   const filteredCalls = useMemo(() => {
     return liveCalls.filter((event) => {
@@ -297,8 +301,18 @@ function AdminLiveActivity() {
                           </td>
                         </tr>
                       ) : (
-                        filteredCalls.map((event, idx) => (
-                          <tr key={`${event.callId || idx}-${event.at}`} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                        filteredCalls.map((event, idx) => {
+                          const inspectable = isInspectableCallFailure(event.status);
+                          return (
+                          <tr
+                            key={`${event.callId || idx}-${event.at}`}
+                            className={`hover:bg-gray-50 dark:hover:bg-slate-700/50 ${
+                              inspectable ? 'cursor-pointer' : ''
+                            }`}
+                            onClick={() => {
+                              if (inspectable && event.callId) setSelectedCallId(event.callId);
+                            }}
+                          >
                             <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300 whitespace-nowrap">{formatTime(event.at)}</td>
                             <td className="px-4 py-3 text-sm">
                               {event.actor?.userId ? (
@@ -321,9 +335,22 @@ function AdminLiveActivity() {
                             <td className="px-4 py-3"><StatusBadge status={event.status} /></td>
                             <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{formatDuration(event.durationSeconds)}</td>
                             <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{event.eventType || '—'}</td>
-                            <td className="px-4 py-3 text-xs font-mono text-gray-500 dark:text-gray-400">{event.callId ? String(event.callId).slice(-12) : '—'}</td>
+                            <td className="px-4 py-3 text-xs font-mono text-gray-500 dark:text-gray-400">
+                              {event.callId ? (
+                                inspectable ? (
+                                  <span className="text-indigo-600 dark:text-indigo-400 underline-offset-2">
+                                    {String(event.callId).slice(-12)}
+                                  </span>
+                                ) : (
+                                  String(event.callId).slice(-12)
+                                )
+                              ) : (
+                                '—'
+                              )}
+                            </td>
                           </tr>
-                        ))
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -439,11 +466,19 @@ function AdminLiveActivity() {
 
         <p className="text-xs text-gray-500 dark:text-gray-400">
           Showing up to 200 events per channel for {windowLabel}. Live WebSocket events are merged when in range.
+          Click a failed call row to inspect hangup cause, lifecycle, and routing details.
           For full records, see{' '}
           <Link to="/adminbobby/calls" className="text-indigo-600 dark:text-indigo-400 hover:underline">Calls</Link>
           {' '}and{' '}
           <Link to="/adminbobby/sms" className="text-indigo-600 dark:text-indigo-400 hover:underline">SMS</Link>.
         </p>
+
+        {selectedCallId && (
+          <AdminCallFailureDetailModal
+            callId={selectedCallId}
+            onClose={() => setSelectedCallId(null)}
+          />
+        )}
       </div>
     </div>
   );

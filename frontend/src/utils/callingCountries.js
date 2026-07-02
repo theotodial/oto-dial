@@ -76,3 +76,57 @@ export function getDialCountriesForUser(allowedCallCountries) {
   if (result.length > 0) return result;
   return [{ code: "+1", name: "USA / Canada", flagCodes: ["US", "CA"], countryCodes: ["US", "CA"] }];
 }
+
+const DIAL_CODE_TO_COUNTRY = Object.values(COUNTRY_DIAL_DATA).reduce((acc, entry) => {
+  acc[entry.dialCode] = entry.code;
+  return acc;
+}, {});
+
+function normalizeDigits(value) {
+  return String(value || "").replace(/[^\d+]/g, "");
+}
+
+/**
+ * Client-side guard — backend enforces the same rules on POST /api/calls and /api/sms/send.
+ */
+export function validateOutboundDestination(destinationNumber, allowedCallCountries) {
+  const allowed = normalizeCountryCodes(allowedCallCountries);
+  const effective = allowed.length > 0 ? allowed : DEFAULT_ALLOWED_CALL_COUNTRIES;
+  const cleaned = normalizeDigits(destinationNumber);
+
+  if (!cleaned) {
+    return { ok: false, error: "Enter a destination number." };
+  }
+
+  if (cleaned.startsWith("+1") || /^\d{10}$/.test(cleaned.replace(/^\+/, ""))) {
+    if (!effective.includes("US") && !effective.includes("CA")) {
+      return {
+        ok: false,
+        error: "Calls and SMS are limited to USA and Canada on your account.",
+      };
+    }
+    return { ok: true, destinationCountry: effective.includes("US") ? "US" : "CA" };
+  }
+
+  if (cleaned.startsWith("+")) {
+    const dialCodes = Object.keys(DIAL_CODE_TO_COUNTRY).sort((a, b) => b.length - a.length);
+    for (const dialCode of dialCodes) {
+      if (cleaned.startsWith(dialCode)) {
+        const country = DIAL_CODE_TO_COUNTRY[dialCode];
+        if (!effective.includes(country)) {
+          return {
+            ok: false,
+            error: "Calls and SMS are limited to USA and Canada unless your admin enables more countries.",
+          };
+        }
+        return { ok: true, destinationCountry: country };
+      }
+    }
+    return {
+      ok: false,
+      error: "International numbers are not enabled on your account. USA and Canada only.",
+    };
+  }
+
+  return { ok: false, error: "Use a valid number with country code (e.g. +16465550100)." };
+}

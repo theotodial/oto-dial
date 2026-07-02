@@ -303,24 +303,25 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
       phoneNumber = destE164;
       toNumber = destE164;
 
-      if (!isCallMinimalMode()) {
-        const policyCheck = await enforceTelecomPolicy({
-          userId: req.userId,
-          channel: "call",
-          destinationNumber: destE164,
+      const policyCheck = await enforceTelecomPolicy({
+        userId: req.userId,
+        channel: "call",
+        destinationNumber: destE164,
+      });
+      if (!policyCheck.allowed) {
+        await persistFailedCallAttempt(
+          req,
+          { phoneNumber: destE164, fromNumber, toNumber: destE164 },
+          policyCheck.error
+        );
+        return res.status(403).json({
+          success: false,
+          error: policyCheck.error,
+          ...(policyCheck.countryRestricted ? { countryRestricted: true } : {}),
         });
-        if (!policyCheck.allowed) {
-          await persistFailedCallAttempt(
-            req,
-            { phoneNumber: destE164, fromNumber, toNumber: destE164 },
-            policyCheck.error
-          );
-          return res.status(403).json({
-            success: false,
-            error: policyCheck.error,
-          });
-        }
+      }
 
+      if (!isCallMinimalMode()) {
         const fraudCheck = await evaluateFraudEvent({
           userId: req.userId,
           channel: "call",
@@ -344,7 +345,7 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
           await new Promise((r) => setTimeout(r, fraudCheck.throttleDelayMs));
         }
       } else {
-        console.warn("[CALL_MINIMAL_MODE] skipping enforceTelecomPolicy + evaluateFraudEvent");
+        console.warn("[CALL_MINIMAL_MODE] skipping evaluateFraudEvent only");
       }
 
       const callerRaw = fromNumber;

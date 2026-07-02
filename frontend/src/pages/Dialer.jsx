@@ -5,7 +5,7 @@ import { fetchProjectedBalance } from '../services/projectedCreditService';
 import { useCall } from '../context/CallContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { useAuth } from '../context/AuthContext';
-import { getDialCountriesForUser } from '../utils/callingCountries';
+import { getDialCountriesForUser, validateOutboundDestination } from '../utils/callingCountries';
 import DialCountryFlags from '../components/DialCountryFlags';
 
 const PhoneIcon = () => (
@@ -245,6 +245,12 @@ function Dialer() {
     const destination = rawDestination.startsWith('+')
       ? rawDestination
       : `${dialCountryCode}${rawDestination}`;
+
+    const destinationCheck = validateOutboundDestination(destination, user?.allowedCallCountries);
+    if (!destinationCheck.ok) {
+      setError(destinationCheck.error);
+      return;
+    }
 
     // Get caller ID
     const callerId = userNumbers?.[0]?.number || userNumbers?.[0]?.phoneNumber || userNumbers?.[0];
