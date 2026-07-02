@@ -1,8 +1,14 @@
-import { detectCountryFromPhoneNumber } from "../utils/countryUtils.js";
+import { detectCountryFromPhoneNumber, resolveTelnyxDestinationCountry } from "../utils/countryUtils.js";
 import { getActiveCustomPackage, isCountryAllowedByPolicy } from "./customPackageService.js";
 import User from "../models/User.js";
 
-const DEFAULT_ALLOWED_CALL_COUNTRIES = ["US", "CA"];
+const DEFAULT_ALLOWED_CALL_COUNTRIES = (
+  process.env.TELECOM_DEFAULT_ALLOWED_CALL_COUNTRIES ||
+  "US,CA,VE,MX,CO,PE,BR,AR,CL,GB,DE,FR,ES,IT,PH"
+)
+  .split(/[,;\s]+/)
+  .map((value) => value.trim().toUpperCase())
+  .filter(Boolean);
 
 function normalizeCountryList(values = []) {
   return Array.from(
@@ -48,7 +54,7 @@ export async function getEffectiveTelecomPolicy(userId) {
 export async function enforceTelecomPolicy({ userId, channel, destinationNumber }) {
   const userCallCountryPolicy = await getUserCallCountryPolicy(userId);
   const policy = await getEffectiveTelecomPolicy(userId);
-  const destinationCountry = detectCountryFromPhoneNumber(destinationNumber);
+  const destinationCountry = resolveTelnyxDestinationCountry(destinationNumber);
 
   if (
     channel === "call" &&

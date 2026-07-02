@@ -13,6 +13,7 @@ import { tryDeductVoiceUsageForCall } from "../services/voiceCallUsageService.js
 import { recordCallCost } from "../services/telnyxCostCalculator.js";
 import { emitAdminLiveCall } from "../services/adminLiveEventsService.js";
 import { emitAdminCallDebugEvent } from "../services/adminLiveEventsService.js";
+import { queueOutboundCallSelfRepair } from "../services/callSelfRepairService.js";
 import { evaluateFraudEvent } from "../services/fraudDetectionService.js";
 import { enforceTelecomPolicy } from "../services/telecomPolicyService.js";
 import { enforceUsageRateLimit } from "../services/usageRateLimitService.js";
@@ -642,6 +643,15 @@ router.post("/", requireActiveSubscriptionUnlessDebug, async (req, res) => {
     }).catch((error) => {
       console.warn("[ADMIN LIVE] failed to emit call start:", error?.message || error);
     });
+
+    if (direction === "outbound" && source === "webrtc") {
+      queueOutboundCallSelfRepair({
+        userId: req.userId,
+        destinationNumber: toNumber || phoneNumber,
+        callerNumber: fromNumber,
+        reason: `call_created:${call._id}`
+      });
+    }
 
     billingTraceExit("callRoutes.POST /api/calls", {
       callId: call?._id ? String(call._id) : null,

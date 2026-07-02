@@ -582,6 +582,7 @@ export const CallProvider = ({ children }) => {
   const outboundRingbackStartedRef = useRef(false);
   /** DB row id for this outbound session — copy onto any adopted Telnyx leg */
   const outboundCallRecordIdRef = useRef(null);
+  const lastOutboundDialRef = useRef({ destination: null, caller: null });
   /** Canonical frontend session id (registered before SDK newCall) */
   const outboundLocalCallIdRef = useRef(null);
   /** Stable Telnyx SDK call.id for the active UI leg (survives React rerenders). */
@@ -909,6 +910,27 @@ export const CallProvider = ({ children }) => {
           });
         } catch (e) {
           console.error("[WEBRTC] terminal PATCH failed:", e);
+        }
+        if (terminalStatus === 'failed' && !sawRinging && !isCallMinimalClient) {
+          const dial = lastOutboundDialRef.current;
+          if (dial?.destination) {
+            void API.post(
+              '/api/webrtc/repair-outbound',
+              {
+                destinationNumber: dial.destination,
+                callerNumber: dial.caller,
+                forceSyncCallerConnectionId: true,
+              },
+              { timeout: TELECOM_HTTP_TIMEOUT_MS }
+            ).catch((repairErr) => {
+              console.warn('[CALL FLOW] post-failure repair-outbound failed', repairErr?.message || repairErr);
+            });
+            void API.post('/api/numbers/fix-voice', {}, { timeout: TELECOM_HTTP_TIMEOUT_MS }).catch(
+              (voiceErr) => {
+                console.warn('[CALL FLOW] post-failure fix-voice failed', voiceErr?.message || voiceErr);
+              }
+            );
+          }
         }
         notifySubscriptionChanged({ reason: 'call-ended' });
         window.setTimeout(() => {
@@ -2582,6 +2604,33 @@ export const CallProvider = ({ children }) => {
     }
   }, []);
 
+  const runPreflightOutboundRepair = useCallback(async (destinationNumber, callerNumber, traceId) => {
+    if (isCallMinimalClient) return;
+    try {
+      const repair = await API.post(
+        '/api/webrtc/repair-outbound',
+        {
+          destinationNumber,
+          callerNumber,
+          forceSyncCallerConnectionId: true,
+        },
+        { timeout: TELECOM_HTTP_TIMEOUT_MS, ...traceHeaders(traceId) }
+      );
+      const ok =
+        typeof repair.status === 'number' &&
+        repair.status >= 200 &&
+        repair.status < 300 &&
+        !repair.error;
+      if (ok) {
+        console.log('[CALL FLOW] preflight repair-outbound ok', repair.data?.actions || []);
+      } else {
+        console.warn('[CALL FLOW] preflight repair-outbound failed', repair);
+      }
+    } catch (err) {
+      console.warn('[CALL FLOW] preflight repair-outbound error (continuing dial)', err?.message || err);
+    }
+  }, []);
+
   const fixPhoneConfiguration = useCallback(async () => {
     const now = Date.now();
     const recentlyFixed =
@@ -2727,6 +2776,15 @@ export const CallProvider = ({ children }) => {
           'Microphone is required to place a call. Allow access and try again.'
         );
       }
+
+      lastOutboundDialRef.current = {
+        destination: destE164,
+        caller: callerE164,
+      };
+
+      execTrace(traceId, 'makeCall:before_preflight_repair', {});
+      await runPreflightOutboundRepair(destE164, callerE164, traceId);
+      execTrace(traceId, 'makeCall:after_preflight_repair', {});
 
       let callRecordId = null;
 
@@ -3164,6 +3222,7 @@ export const CallProvider = ({ children }) => {
     credentials,
     saveCallRecord,
     ensureMicrophonePermission,
+    runPreflightOutboundRepair,
     fixPhoneConfiguration,
     resetOutboundRetryState,
     patchCallProviderIds,

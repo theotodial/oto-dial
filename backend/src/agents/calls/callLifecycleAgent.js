@@ -40,6 +40,9 @@ export const callLifecycleAgent = {
     const earlyCutoff = new Date(
       now - Number(process.env.AGENT_CALL_EARLY_STALE_MS || 8 * 60 * 1000)
     );
+    const fastStaleCutoff = new Date(
+      now - Number(process.env.AGENT_CALL_FAST_STALE_MS || 90 * 1000)
+    );
     const dialingCutoff = new Date(
       now - Number(process.env.AGENT_CALL_DIALING_STALE_MS || 10 * 60 * 1000)
     );
@@ -71,7 +74,18 @@ export const callLifecycleAgent = {
       const isRingPhase =
         call.status === CALL_STATES.RINGING || call.status === CALL_STATES.EARLY_MEDIA;
       const isDialing = call.status === CALL_STATES.DIALING;
-      const cutoff = isRingPhase ? ringingCutoff : isDialing ? dialingCutoff : earlyCutoff;
+      const isEarlyOutboundWebrtc =
+        call.direction === "outbound" &&
+        (call.status === CALL_STATES.INITIATED ||
+          call.status === CALL_STATES.QUEUED ||
+          call.status === CALL_STATES.DIALING);
+      const cutoff = isRingPhase
+        ? ringingCutoff
+        : isDialing
+          ? dialingCutoff
+          : isEarlyOutboundWebrtc
+            ? fastStaleCutoff
+            : earlyCutoff;
       if (lastActivityMs(call) > cutoff.getTime()) {
         continue;
       }

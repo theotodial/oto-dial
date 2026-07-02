@@ -57,6 +57,7 @@ import {
 import { startSubscriptionReconciliationScheduler } from "./src/services/subscriptionReconciliationScheduler.js";
 import { startSystemHealthService } from "./src/services/systemHealthService.js";
 import { startCallHeartbeatMonitor } from "./src/services/callHeartbeatMonitor.js";
+import { startCallSelfRepairWorker } from "./src/services/callSelfRepairService.js";
 import { startCallCreditIntervalWorker } from "./src/services/callCreditIntervalWorker.js";
 import { recoverActiveCallEconomics } from "./src/services/economicRecoveryService.js";
 import { initCampaignQueue } from "./src/services/campaignQueueService.js";
@@ -820,6 +821,11 @@ async function startServer() {
       startCallHeartbeatMonitor();
     } catch (hbErr) {
       console.error("⚠️ Call heartbeat monitor failed to start:", hbErr.message);
+    }
+    try {
+      startCallSelfRepairWorker();
+    } catch (repairErr) {
+      console.error("⚠️ Call self-repair worker failed to start:", repairErr.message);
     }
     try {
       const startupLimit = Math.min(

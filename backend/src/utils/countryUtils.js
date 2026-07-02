@@ -42,7 +42,16 @@ export const SUPPORTED_COUNTRIES = [
   
   // Africa
   { code: "ZA", name: "South Africa", iso2: "ZA", telnyxCode: "ZA", numberProvisioningEnabled: false },
-  { code: "ZW", name: "Zimbabwe", iso2: "ZW", telnyxCode: "ZW", numberProvisioningEnabled: false }
+  { code: "ZW", name: "Zimbabwe", iso2: "ZW", telnyxCode: "ZW", numberProvisioningEnabled: false },
+  { code: "VE", name: "Venezuela", iso2: "VE", telnyxCode: "VE", numberProvisioningEnabled: false },
+  { code: "CO", name: "Colombia", iso2: "CO", telnyxCode: "CO", numberProvisioningEnabled: false },
+  { code: "PE", name: "Peru", iso2: "PE", telnyxCode: "PE", numberProvisioningEnabled: false },
+  { code: "BR", name: "Brazil", iso2: "BR", telnyxCode: "BR", numberProvisioningEnabled: false },
+  { code: "AR", name: "Argentina", iso2: "AR", telnyxCode: "AR", numberProvisioningEnabled: false },
+  { code: "CL", name: "Chile", iso2: "CL", telnyxCode: "CL", numberProvisioningEnabled: false },
+  { code: "DO", name: "Dominican Republic", iso2: "DO", telnyxCode: "DO", numberProvisioningEnabled: false },
+  { code: "PR", name: "Puerto Rico", iso2: "PR", telnyxCode: "PR", numberProvisioningEnabled: false },
+  { code: "PH", name: "Philippines", iso2: "PH", telnyxCode: "PH", numberProvisioningEnabled: false }
 ];
 
 // Country code to country mapping
@@ -80,8 +89,58 @@ const DIALING_CODES = {
   "61": "AU", // Australia
   "64": "NZ", // New Zealand
   "27": "ZA", // South Africa
-  "263": "ZW" // Zimbabwe
+  "263": "ZW", // Zimbabwe
+  "58": "VE", // Venezuela
+  "57": "CO", // Colombia
+  "51": "PE", // Peru
+  "55": "BR", // Brazil
+  "54": "AR", // Argentina
+  "56": "CL", // Chile
+  "1809": "DO", // Dominican Republic (shared +1 — resolved via +1 logic)
+  "1829": "DO",
+  "1849": "DO",
+  "63": "PH" // Philippines
 };
+
+const BASE_OUTBOUND_COUNTRIES = ["US", "CA", "uitf"];
+
+function parseEnvCountryList(value) {
+  if (!value) return [];
+  return String(value)
+    .split(/[,;\s]+/)
+    .map((part) => part.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+/**
+ * Telnyx-oriented destination country for outbound voice profile whitelists.
+ * Falls back to ITU prefix resolution when the curated list does not match.
+ */
+export function resolveTelnyxDestinationCountry(phoneNumber) {
+  const detected = detectCountryFromPhoneNumber(phoneNumber);
+  if (detected) return detected;
+
+  if (!phoneNumber) return null;
+  const cleaned = String(phoneNumber).replace(/[^\d+]/g, "");
+  if (!cleaned.startsWith("+")) return null;
+
+  const withoutPlus = cleaned.substring(1);
+  const sortedCodes = Object.keys(DIALING_CODES).sort((a, b) => b.length - a.length);
+  for (const code of sortedCodes) {
+    if (withoutPlus.startsWith(code)) {
+      return DIALING_CODES[code];
+    }
+  }
+  return null;
+}
+
+export function getBaseOutboundWhitelistCountries() {
+  const merged = new Set(BASE_OUTBOUND_COUNTRIES);
+  for (const code of parseEnvCountryList(process.env.TELNYX_DEFAULT_OUTBOUND_COUNTRIES)) {
+    merged.add(code);
+  }
+  return Array.from(merged);
+}
 
 /**
  * Check if a country code is supported

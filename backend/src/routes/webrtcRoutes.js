@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import axios from "axios";
 import PhoneNumber from "../models/PhoneNumber.js";
 import getTelnyxClient from "../services/telnyxService.js";
-import { detectCountryFromPhoneNumber } from "../utils/countryUtils.js";
+import { resolveTelnyxDestinationCountry, getBaseOutboundWhitelistCountries } from "../utils/countryUtils.js";
 import {
   checkUnlimitedUsageBeforeAction,
   createSuspiciousActivityErrorPayload,
@@ -203,7 +203,7 @@ function buildCredentialOutboundPatchPayload(connection, profileId, dialContext 
     ? String(dialContext.destinationNumber).trim()
     : "";
   const destDigits = destRaw.replace(/[^\d+]/g, "");
-  const destCountry = destRaw ? detectCountryFromPhoneNumber(destRaw) : null;
+  const destCountry = destRaw ? resolveTelnyxDestinationCountry(destRaw) : null;
 
   const nanpLike =
     (destRaw && isUsTollFreeE164(destRaw)) ||
@@ -649,7 +649,7 @@ router.post("/repair-outbound", async (req, res) => {
     const destinationNumber = String(req.body?.destinationNumber || "").trim() || null;
     const callerNumber = String(req.body?.callerNumber || "").trim() || null;
     const forceSyncCallerConnectionId = req.body?.forceSyncCallerConnectionId === true;
-    const destinationCountry = destinationNumber ? detectCountryFromPhoneNumber(destinationNumber) : null;
+    const destinationCountry = destinationNumber ? resolveTelnyxDestinationCountry(destinationNumber) : null;
 
     const result = {
       success: true,
@@ -863,6 +863,9 @@ router.post("/repair-outbound", async (req, res) => {
         } else {
           next = new Set(whitelist);
           for (const c of parseCommaList(process.env.TELNYX_MERGE_OUTBOUND_WHITELIST)) {
+            next.add(c);
+          }
+          for (const c of getBaseOutboundWhitelistCountries()) {
             next.add(c);
           }
         }
