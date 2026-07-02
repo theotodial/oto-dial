@@ -219,6 +219,7 @@ router.post("/tickets", authenticateUser, async (req, res) => {
       message: `${userEmail} created a support ticket`,
       sourceModel: "SupportTicket",
       sourceId: ticket._id,
+      dedupeKey: `support_ticket:${ticket._id}`,
       data: {
         ticketId: ticket._id.toString(),
         issueType: ticket.issueType,
@@ -383,6 +384,24 @@ router.post("/tickets/:id/reply", authenticateUser, async (req, res) => {
     }
 
     await ticket.save();
+
+    await createAdminNotification({
+      type: "support",
+      title: "Customer replied to support ticket",
+      message: `${userEmail} replied on "${ticket.subject || ticket.issueType || "support ticket"}"`,
+      sourceModel: "SupportTicket",
+      sourceId: ticket._id,
+      dedupeKey: `support_reply:${ticket._id}:${ticket.replies.length}`,
+      data: {
+        ticketId: ticket._id.toString(),
+        issueType: ticket.issueType,
+        priority: ticket.priority,
+        userEmail,
+        replyPreview: message.trim().slice(0, 160)
+      }
+    }).catch((err) => {
+      console.warn("Failed to create support reply notification:", err.message);
+    });
 
     res.json({
       success: true,

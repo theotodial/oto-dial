@@ -9,7 +9,7 @@ import {
   isEventProcessed,
   markEventProcessed
 } from "../services/stripeSubscriptionService.js";
-import { createAdminNotification } from "../services/adminNotificationService.js";
+import { notifyAdminStripePayment } from "../services/stripePaymentNotificationService.js";
 import { markAffiliateReferralPaid } from "../services/affiliateService.js";
 import User from "../models/User.js";
 import {
@@ -181,10 +181,20 @@ router.post("/", async (req, res) => {
     // Mark event as successfully processed
     await markEventProcessed(eventId, eventType, result.success, result.error || null);
 
-    if (
-      result.success &&
-      (eventType === "invoice.payment_succeeded" || eventType === "invoice.paid")
-    ) {
+    if (eventType === "checkout.session.completed") {
+      const sessionObject = event?.data?.object || {};
+      if (sessionObject.payment_status === "paid") {
+        await notifyAdminStripePayment({
+          session: sessionObject,
+          userId: result?.userId || sessionObject?.metadata?.userId || null,
+          eventId
+        }).catch((err) => {
+          console.warn("⚠️ Failed to create checkout payment notification:", err.message);
+        });
+      }
+    }
+
+    if (eventType === "invoice.payment_succeeded" || eventType === "invoice.paid") {
       const invoiceObject = event?.data?.object || {};
       const userId =
         result?.userId ||
@@ -192,80 +202,78 @@ router.post("/", async (req, res) => {
         invoiceObject?.lines?.data?.[0]?.metadata?.userId ||
         null;
       const subscriptionId = result?.subscriptionId || null;
+      const isPaid =
+        invoiceObject.paid === true ||
+        invoiceObject.status === "paid" ||
+        Number(invoiceObject.amount_paid || 0) > 0;
 
-      if (userId) {
-        await markAffiliateReferralPaid({ userId, subscriptionId }).catch((err) => {
-          console.warn(
-            `⚠️ Failed to mark affiliate referral paid for user ${userId}:`,
-            err.message
-          );
-        });
-      }
-
-      await createAdminNotification({
-        type: "sale",
-        title: "Stripe payment received",
-        message: `Invoice ${invoiceObject?.id || "unknown"} was paid`,
-        sourceModel: "StripeInvoice",
-        sourceId: invoiceObject?.id || eventId,
-        dedupeKey: `stripe_sale:${invoiceObject?.id || eventId}`,
-        data: {
-          amountPaid: Number(invoiceObject?.amount_paid || 0) / 100,
-          currency: invoiceObject?.currency || "usd",
-          userId: userId ? String(userId) : null,
-          stripeCustomerId: invoiceObject?.customer || null,
-          stripeSubscriptionId: invoiceObject?.subscription || null
-        }
-      }).catch((err) => {
-        console.warn("⚠️ Failed to create sale notification:", err.message);
-      });
-
-      if (!result.skippedActivation && invoiceObject?.id) {
-        await maybeSendInvoicePaymentSuccessEmail({
+      if (isPaid) {
+        await notifyAdminStripePayment({
           invoice: invoiceObject,
-          userId: userId || null
+          userId,
+          eventId
         }).catch((err) => {
-          console.warn("⚠️ Payment success email helper error:", err.message);
+          console.warn("⚠️ Failed to create sale notification:", err.message);
         });
       }
 
-      // --- Analytics: canonical purchase conversion (source of truth) ---
-      const purchaseAmount = Number(invoiceObject?.amount_paid || 0) / 100;
-      const purchaseCurrency = invoiceObject?.currency || "usd";
-      const transactionId = invoiceObject?.id || eventId;
-      const planId =
-        invoiceObject?.lines?.data?.[0]?.price?.id ||
-        invoiceObject?.metadata?.planId ||
-        null;
-      const planName =
-        invoiceObject?.lines?.data?.[0]?.description ||
-        invoiceObject?.metadata?.planName ||
-        null;
+      if (result.success) {
+        if (userId) {
+          await markAffiliateReferralPaid({ userId, subscriptionId }).catch((err) => {
+            console.warn(
+              `⚠️ Failed to mark affiliate referral paid for user ${userId}:`,
+              err.message
+            );
+          });
+        }
 
-      await recordServerEvent({
-        name: ANALYTICS_EVENTS.SUBSCRIPTION_PURCHASED,
-        userId: userId || null,
-        value: purchaseAmount,
-        currency: purchaseCurrency,
-        props: {
+        if (!result.skippedActivation && invoiceObject?.id) {
+          await maybeSendInvoicePaymentSuccessEmail({
+            invoice: invoiceObject,
+            userId: userId || null
+          }).catch((err) => {
+            console.warn("⚠️ Payment success email helper error:", err.message);
+          });
+        }
+
+        // --- Analytics: canonical purchase conversion (source of truth) ---
+        const purchaseAmount = Number(invoiceObject?.amount_paid || 0) / 100;
+        const purchaseCurrency = invoiceObject?.currency || "usd";
+        const transactionId = invoiceObject?.id || eventId;
+        const planId =
+          invoiceObject?.lines?.data?.[0]?.price?.id ||
+          invoiceObject?.metadata?.planId ||
+          null;
+        const planName =
+          invoiceObject?.lines?.data?.[0]?.description ||
+          invoiceObject?.metadata?.planName ||
+          null;
+
+        await recordServerEvent({
+          name: ANALYTICS_EVENTS.SUBSCRIPTION_PURCHASED,
+          userId: userId || null,
+          value: purchaseAmount,
+          currency: purchaseCurrency,
+          props: {
+            transactionId,
+            subscriptionId: subscriptionId ? String(subscriptionId) : null,
+            stripeCustomerId: invoiceObject?.customer || null,
+            planId,
+            planName,
+            invoiceId: transactionId
+          },
+          eventId: transactionId ? `srv:purchase:${transactionId}` : null
+        }).catch((err) => console.warn("⚠️ analytics purchase event failed:", err.message));
+
+        await sendPurchaseEvent({
+          userId: userId || null,
           transactionId,
-          subscriptionId: subscriptionId ? String(subscriptionId) : null,
-          stripeCustomerId: invoiceObject?.customer || null,
+          value: purchaseAmount,
+          currency: purchaseCurrency,
           planId,
-          planName,
-          invoiceId: transactionId
-        },
-        eventId: transactionId ? `srv:purchase:${transactionId}` : null
-      }).catch((err) => console.warn("⚠️ analytics purchase event failed:", err.message));
-
-      await sendPurchaseEvent({
-        userId: userId || null,
-        transactionId,
-        value: purchaseAmount,
-        currency: purchaseCurrency,
-        planId,
-        planName
-      }).catch((err) => console.warn("⚠️ GA4 MP purchase failed:", err.message));
+          planName
+        }).catch((err) => console.warn("⚠️ GA4 MP purchase failed:", err.message));
+      }
     }
 
     if (result.success) {

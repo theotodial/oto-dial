@@ -40,7 +40,7 @@ const SoundOffIcon = () => (
 const TYPE_LABELS = {
   sale: 'Payment',
   number_purchase: 'Number bought',
-  support: 'Support ticket',
+  support: 'Support',
   identity_verification: 'ID verification',
 };
 
