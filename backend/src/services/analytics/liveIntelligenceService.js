@@ -725,8 +725,10 @@ function applyVisitorFilters(sessions, { search, filters } = {}) {
 export async function getIntelligenceSnapshot(options = {}) {
   const {
     window = DEFAULT_TIMEFRAME,
+    range = null,
     startDate = null,
     endDate = null,
+    tzOffset = 0,
     search = "",
     filters = {},
     page = 1,
@@ -738,8 +740,10 @@ export async function getIntelligenceSnapshot(options = {}) {
   const started = Date.now();
   const snapshot = await queryWindowSnapshot({
     window,
+    range,
     startDate,
     endDate,
+    tzOffset,
     search,
     filters,
     page,

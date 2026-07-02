@@ -159,6 +159,8 @@ function parseIntelligenceQuery(q = {}) {
   return {
     search: q.search ? String(q.search) : "",
     filters,
+    range: q.range && RANGE_PRESETS.has(String(q.range)) ? String(q.range) : null,
+    tzOffset: Number.isFinite(Number(q.tzOffset)) ? Number(q.tzOffset) : 0,
     window: TIMEFRAME_PRESETS.has(String(q.window || DEFAULT_TIMEFRAME))
       ? String(q.window || DEFAULT_TIMEFRAME)
       : DEFAULT_TIMEFRAME,

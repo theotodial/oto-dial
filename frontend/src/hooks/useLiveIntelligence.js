@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import API from '../api';
 import { viteApiOriginForSockets } from '../utils/viteApiBase';
+import { liveSnapshotMatchesParams } from '../utils/analyticsRangeSync';
 
 const POLL_INTERVAL_MS = 5000;
+const DEFAULT_LIVE_WINDOW = '15m';
 
 /**
  * Enterprise live intelligence hook — websocket snapshot stream with
@@ -12,7 +14,9 @@ const POLL_INTERVAL_MS = 5000;
 export default function useLiveIntelligence(options = {}) {
   const {
     enabled = true,
-    window = '15m',
+    window = DEFAULT_LIVE_WINDOW,
+    range = null,
+    tzOffset = 0,
     startDate = null,
     endDate = null,
     search = '',
@@ -27,13 +31,32 @@ export default function useLiveIntelligence(options = {}) {
   const [connecting, setConnecting] = useState(true);
   const [loading, setLoading] = useState(true);
   const pollTimer = useRef(null);
-  const filtersKey = JSON.stringify({ search, filters, revealIp, page, limit, window, startDate, endDate });
+  const requestKey = JSON.stringify({
+    search,
+    filters,
+    revealIp,
+    page,
+    limit,
+    window,
+    range,
+    tzOffset,
+    startDate,
+    endDate
+  });
+
+  const usesHistoricalRange = Boolean(range);
+  const usesDefaultWindow = !usesHistoricalRange && window === DEFAULT_LIVE_WINDOW && !startDate && !endDate;
 
   const fetchIntel = useCallback(async () => {
     const token = localStorage.getItem('adminToken');
     if (!token) return null;
     const params = new URLSearchParams();
-    params.set('window', window || '15m');
+    if (range) {
+      params.set('range', range);
+      params.set('tzOffset', String(tzOffset));
+    } else {
+      params.set('window', window || DEFAULT_LIVE_WINDOW);
+    }
     if (startDate) params.set('startDate', startDate);
     if (endDate) params.set('endDate', endDate);
     if (search) params.set('search', search);
@@ -47,7 +70,7 @@ export default function useLiveIntelligence(options = {}) {
       headers: { Authorization: `Bearer ${token}` }
     });
     return res?.data?.data || null;
-  }, [search, filters, revealIp, page, limit, window, startDate, endDate]);
+  }, [search, filters, revealIp, page, limit, window, range, tzOffset, startDate, endDate]);
 
   const fetchVisitor = useCallback(async (sessionId, reveal = false) => {
     const token = localStorage.getItem('adminToken');
@@ -67,9 +90,10 @@ export default function useLiveIntelligence(options = {}) {
     if (!token) return undefined;
 
     let disposed = false;
+    const liveParams = { window, range, tzOffset, startDate, endDate };
 
     const applySnapshot = (snap) => {
-      if (!disposed && snap) {
+      if (!disposed && snap && liveSnapshotMatchesParams(snap, liveParams)) {
         setIntel(snap);
         setLoading(false);
       }
@@ -96,7 +120,17 @@ export default function useLiveIntelligence(options = {}) {
       }
     };
 
-    fetchIntel().then(applySnapshot).catch(() => setLoading(false));
+    setLoading(true);
+    fetchIntel()
+      .then((data) => {
+        if (!disposed) {
+          if (data) setIntel(data);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!disposed) setLoading(false);
+      });
 
     const socket = io(viteApiOriginForSockets(import.meta.env.VITE_API_URL || ''), {
       path: '/socket.io',
@@ -108,14 +142,13 @@ export default function useLiveIntelligence(options = {}) {
       if (disposed) return;
       setConnecting(false);
       setConnected(true);
-      stopPolling();
+      if (usesDefaultWindow) stopPolling();
+      else startPolling();
     });
 
     socket.on('admin:live_intelligence', (payload) => {
       if (disposed || !payload) return;
-      const payloadWindow = payload.timeframe?.window || payload.timeframe?.label;
-      const currentWindow = window || '15m';
-      if (payloadWindow && payloadWindow !== currentWindow && payloadWindow !== window) return;
+      if (!usesDefaultWindow) return;
       if (payload.type === 'snapshot' || payload.kpis) {
         applySnapshot(payload);
       }
@@ -139,12 +172,14 @@ export default function useLiveIntelligence(options = {}) {
       startPolling();
     });
 
+    if (!usesDefaultWindow) startPolling();
+
     return () => {
       disposed = true;
       stopPolling();
       socket.disconnect();
     };
-  }, [enabled, filtersKey, fetchIntel]);
+  }, [enabled, requestKey, fetchIntel, usesDefaultWindow, window, range, tzOffset, startDate, endDate]);
 
   return { intel, connected, connecting, loading, fetchIntel, fetchVisitor, refresh: fetchIntel };
 }

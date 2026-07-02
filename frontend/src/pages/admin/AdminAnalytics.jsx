@@ -260,6 +260,7 @@ function AdminAnalytics() {
       {/* Live Operations Center — primary dashboard (always visible) */}
       <div className="mb-10">
         <RealtimeIntelligenceCenter
+          historicalFilters={filters}
           legacyLive={live}
           legacyConnected={connected}
           onRefreshHistorical={() => fetchData({ refresh: true })}

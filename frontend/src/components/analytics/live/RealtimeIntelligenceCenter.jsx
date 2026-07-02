@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Shield } from 'lucide-react';
 import useLiveIntelligence from '../../../hooks/useLiveIntelligence';
 import { isSuperAdmin, readStoredAdminProfile } from '../../../utils/adminAccess';
+import { historicalFiltersToLiveParams } from '../../../utils/analyticsRangeSync';
 import LiveKpiStrip from './LiveKpiStrip';
 import LiveFilters from './LiveFilters';
 import ActiveVisitorTable from './ActiveVisitorTable';
@@ -23,6 +24,7 @@ import { isGa4Debug } from '../../../config/ga4';
  * for rolling-window realtime analytics (default: last 15 minutes).
  */
 export default function RealtimeIntelligenceCenter({
+  historicalFilters,
   legacyLive,
   legacyConnected,
   onRefreshHistorical,
@@ -34,6 +36,7 @@ export default function RealtimeIntelligenceCenter({
   const adminProfile = readStoredAdminProfile();
   const superAdmin = isSuperAdmin(adminProfile);
 
+  const [useCustomLiveWindow, setUseCustomLiveWindow] = useState(false);
   const [window, setWindow] = useState('15m');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -44,11 +47,22 @@ export default function RealtimeIntelligenceCenter({
   const [lastLiveRefresh, setLastLiveRefresh] = useState(null);
   const [liveRefreshing, setLiveRefreshing] = useState(false);
 
-  const windowParams = useMemo(() => ({
-    window,
-    startDate: window === 'custom' && customStart ? new Date(customStart).toISOString() : null,
-    endDate: window === 'custom' && customEnd ? new Date(customEnd).toISOString() : null
-  }), [window, customStart, customEnd]);
+  const syncedParams = useMemo(
+    () => historicalFiltersToLiveParams(historicalFilters || {}),
+    [historicalFilters]
+  );
+
+  const windowParams = useMemo(() => {
+    if (!useCustomLiveWindow) return syncedParams;
+    return {
+      range: null,
+      tzOffset: syncedParams.tzOffset,
+      window,
+      startDate: window === 'custom' && customStart ? new Date(customStart).toISOString() : null,
+      endDate: window === 'custom' && customEnd ? new Date(customEnd).toISOString() : null,
+      label: window
+    };
+  }, [useCustomLiveWindow, syncedParams, window, customStart, customEnd]);
 
   const { intel, connected, connecting, loading, fetchVisitor, refresh } = useLiveIntelligence({
     enabled: true,
@@ -101,7 +115,10 @@ export default function RealtimeIntelligenceCenter({
   }, [revealIp, detailVisitor, fetchVisitor, superAdmin]);
 
   const legacyKpis = !intel?.kpis ? legacyLive : null;
-  const timeframeLabel = intel?.timeframe?.label || window;
+  const timeframeLabel = useCustomLiveWindow
+    ? (intel?.timeframe?.label || window)
+    : (syncedParams.label || intel?.timeframe?.label || window);
+  const healthWindow = useCustomLiveWindow ? window : (syncedParams.range || syncedParams.window || '15m');
 
   return (
     <div className="space-y-4">
@@ -111,22 +128,33 @@ export default function RealtimeIntelligenceCenter({
             Live Operations Center
           </h2>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Rolling-window realtime · <strong>{timeframeLabel}</strong>
+            {useCustomLiveWindow ? 'Custom rolling window' : 'Synced with Historical Reports'} · <strong>{timeframeLabel}</strong>
             {intel?.source === 'legacy_analytics' && ' · visit tracking (legacy)'}
             {intel?.source === 'mongodb_window' && ' · session tracking'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <LiveTimeframeSelector
-            window={window}
-            onChange={setWindow}
-            customStart={customStart}
-            customEnd={customEnd}
-            onCustomChange={({ start, end }) => {
-              if (start !== undefined) setCustomStart(start);
-              if (end !== undefined) setCustomEnd(end);
-            }}
-          />
+          <label className="flex items-center gap-2 text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/70 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={useCustomLiveWindow}
+              onChange={(e) => setUseCustomLiveWindow(e.target.checked)}
+              className="rounded"
+            />
+            Custom live window
+          </label>
+          {useCustomLiveWindow && (
+            <LiveTimeframeSelector
+              window={window}
+              onChange={setWindow}
+              customStart={customStart}
+              customEnd={customEnd}
+              onCustomChange={({ start, end }) => {
+                if (start !== undefined) setCustomStart(start);
+                if (end !== undefined) setCustomEnd(end);
+              }}
+            />
+          )}
           {superAdmin && (
             <label className="flex items-center gap-2 text-xs px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300 cursor-pointer">
               <Shield className="w-4 h-4" />
@@ -144,7 +172,7 @@ export default function RealtimeIntelligenceCenter({
         meta={{ ...liveMeta, ...historicalMeta }}
       />
 
-      <AnalyticsHealthPanel window={window} />
+      <AnalyticsHealthPanel window={healthWindow} />
 
       {(isGa4Debug() || import.meta.env.DEV) && <Ga4DebugPanel />}
 

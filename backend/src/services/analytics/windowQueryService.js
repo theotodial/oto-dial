@@ -14,9 +14,16 @@ import AnalyticsSession from "../../models/analytics/AnalyticsSession.js";
 import AnalyticsEvent from "../../models/analytics/AnalyticsEvent.js";
 import AnalyticsPageView from "../../models/analytics/AnalyticsPageView.js";
 import { ANALYTICS_EVENTS } from "../../constants/analyticsEvents.js";
-import { resolveTimeframe, DEFAULT_TIMEFRAME } from "./timeframeService.js";
+import { resolveTimeframe, TIMEFRAME_MS, DEFAULT_TIMEFRAME } from "./timeframeService.js";
+import { resolveRange, RANGE_PRESETS } from "./rangeService.js";
 import { queryLegacyRealtime, legacySummaryToKpis } from "./legacyRealtimeService.js";
-import { enrichRowsWithReturningStatus, countReturningInRange } from "./visitorClassificationService.js";
+import {
+  enrichRowsWithReturningStatus,
+  countReturningInRange,
+  sessionStartedInRange
+} from "./visitorClassificationService.js";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function sessionActivityMatch(start, end) {
   return {
@@ -24,6 +31,95 @@ function sessionActivityMatch(start, end) {
       { lastActivityAt: { $gte: start, $lte: end } },
       { startedAt: { $gte: start, $lte: end } }
     ]
+  };
+}
+
+function resolveWindowBounds({ window = DEFAULT_TIMEFRAME, range = null, startDate = null, endDate = null, tzOffset = 0 } = {}) {
+  if (range && RANGE_PRESETS.has(String(range))) {
+    const resolved = resolveRange({
+      range: String(range),
+      startDate,
+      endDate,
+      tzOffset: Number.isFinite(Number(tzOffset)) ? Number(tzOffset) : 0
+    });
+    return {
+      start: resolved.start,
+      end: resolved.end,
+      label: resolved.label,
+      window: String(range),
+      useSessionStart: true
+    };
+  }
+
+  const tf = resolveTimeframe({ window, startDate, endDate, tzOffset });
+  const duration = TIMEFRAME_MS[tf.window];
+  return {
+    start: tf.start,
+    end: tf.end,
+    label: tf.label,
+    window: tf.window,
+    useSessionStart: duration != null && duration >= DAY_MS
+  };
+}
+
+function resolveSessionMatch(start, end, useSessionStart) {
+  return useSessionStart ? sessionStartedInRange(start, end) : sessionActivityMatch(start, end);
+}
+
+function latestSessionPerVisitor(rows = []) {
+  const byVisitor = new Map();
+  for (const row of rows) {
+    const prev = byVisitor.get(row.visitorId);
+    if (!prev || new Date(row.lastActivityAt) > new Date(prev.lastActivityAt)) {
+      byVisitor.set(row.visitorId, row);
+    }
+  }
+  return Array.from(byVisitor.values());
+}
+
+async function countAudienceMetrics(start, end, useSessionStart) {
+  const match = resolveSessionMatch(start, end, useSessionStart);
+
+  const [loggedInVisitorIds, subscriberVisitorIds] = await Promise.all([
+    AnalyticsSession.distinct("visitorId", { ...match, userId: { $ne: null } }),
+    AnalyticsSession.distinct("visitorId", { ...match, hasSubscription: true })
+  ]);
+
+  if (useSessionStart) {
+    const visitorCounts = await countReturningInRange(start, end);
+    return {
+      ...visitorCounts,
+      activeLoggedIn: loggedInVisitorIds.length,
+      anonymousVisitors: Math.max(0, visitorCounts.uniqueVisitors - loggedInVisitorIds.length),
+      subscribersInWindow: subscriberVisitorIds.length
+    };
+  }
+
+  const uniqueVisitorIds = await AnalyticsSession.distinct("visitorId", match);
+  const sessions = await AnalyticsSession.find(match)
+    .select("visitorId isReturning startedAt lastActivityAt")
+    .lean();
+  const rows = await enrichRowsWithReturningStatus(
+    sessions.map((doc) => ({
+      visitorId: doc.visitorId,
+      isReturning: doc.isReturning,
+      sessionStartedAt: doc.startedAt,
+      startedAt: doc.startedAt,
+      lastActivityAt: doc.lastActivityAt
+    }))
+  );
+  const returningVisitors = new Set(
+    rows.filter((r) => r.isReturning).map((r) => r.visitorId)
+  ).size;
+  const uniqueVisitors = uniqueVisitorIds.length;
+
+  return {
+    uniqueVisitors,
+    returningVisitors,
+    newVisitors: Math.max(0, uniqueVisitors - returningVisitors),
+    activeLoggedIn: loggedInVisitorIds.length,
+    anonymousVisitors: Math.max(0, uniqueVisitors - loggedInVisitorIds.length),
+    subscribersInWindow: subscriberVisitorIds.length
   };
 }
 
@@ -124,10 +220,20 @@ async function enrichSessionsWithUsers(rows) {
 /**
  * Build authoritative window snapshot from MongoDB collections.
  */
-export async function queryWindowSnapshot({ window = DEFAULT_TIMEFRAME, startDate, endDate, search, filters, page = 1, limit = 100 } = {}) {
-  const tf = resolveTimeframe({ window, startDate, endDate });
-  const { start, end } = tf;
-  const match = sessionActivityMatch(start, end);
+export async function queryWindowSnapshot({
+  window = DEFAULT_TIMEFRAME,
+  range = null,
+  startDate,
+  endDate,
+  tzOffset = 0,
+  search,
+  filters,
+  page = 1,
+  limit = 100
+} = {}) {
+  const tf = resolveWindowBounds({ window, range, startDate, endDate, tzOffset });
+  const { start, end, useSessionStart } = tf;
+  const match = resolveSessionMatch(start, end, useSessionStart);
 
   const [
     legacyRealtime,
@@ -225,8 +331,11 @@ export async function queryWindowSnapshot({ window = DEFAULT_TIMEFRAME, startDat
         revenue,
         signups
       })
-    : buildSessionKpis({
+    : await buildSessionKpis({
         rows,
+        start,
+        end,
+        useSessionStart,
         uniqueVisitors,
         sessionCount,
         signups,
@@ -289,7 +398,7 @@ export async function queryWindowSnapshot({ window = DEFAULT_TIMEFRAME, startDat
   const visitors = useLegacyKpis ? legacyRealtime.summary.totalUsers : uniqueVisitors.length;
   const returning = useLegacyKpis
     ? legacyRealtime.summary.returningVisitors || 0
-    : rows.filter((s) => s.isReturning).length;
+    : kpis.returningVisitors || 0;
   const subscribedInWindow = kpis.subscribersOnline || 0;
   const funnel = [
     { step: "Visitors", count: visitors, rate: 100 },
@@ -370,8 +479,11 @@ export async function queryWindowSnapshot({ window = DEFAULT_TIMEFRAME, startDat
   };
 }
 
-function buildSessionKpis({
+async function buildSessionKpis({
   rows,
+  start,
+  end,
+  useSessionStart,
   uniqueVisitors,
   sessionCount,
   signups,
@@ -382,9 +494,8 @@ function buildSessionKpis({
   revenue,
   pageViews
 }) {
-  const loggedIn = rows.filter((s) => s.userId).length;
-  const returning = rows.filter((s) => s.isReturning).length;
-  const subscribers = rows.filter((s) => s.isSubscriber).length;
+  const audience = await countAudienceMetrics(start, end, useSessionStart);
+  const uniqueRows = latestSessionPerVisitor(rows);
   const avgSession =
     rows.length > 0
       ? Math.round(rows.reduce((a, s) => a + (s.sessionDurationSeconds || 0), 0) / rows.length)
@@ -396,22 +507,22 @@ function buildSessionKpis({
   const activeNow = rows.filter((s) => (s.idleSeconds ?? 999) <= 300).length;
 
   return {
-    activeVisitors: uniqueVisitors.length,
+    activeVisitors: audience.uniqueVisitors,
     activeNow,
-    activeLoggedIn: loggedIn,
-    anonymousVisitors: rows.length - loggedIn,
-    returningVisitors: returning,
-    newVisitors: rows.length - returning,
-    subscribersOnline: subscribers,
-    paidSubscribersOnline: subscribers,
-    basicUsersOnline: rows.filter((s) => /basic/i.test(String(s.planTier || s.subscriptionPlan || ""))).length,
-    superUsersOnline: rows.filter((s) => /super/i.test(String(s.planTier || s.subscriptionPlan || ""))).length,
-    unlimitedUsersOnline: rows.filter((s) => /unlimited/i.test(String(s.planTier || s.subscriptionPlan || ""))).length,
-    enterpriseUsersOnline: rows.filter((s) => /enterprise/i.test(String(s.planTier || s.subscriptionPlan || ""))).length,
-    visitorsInCheckout: rows.filter((s) => s.flags?.inCheckout).length,
-    visitorsOnPricing: rows.filter((s) => s.flags?.onPricing).length,
-    visitorsOnSignup: rows.filter((s) => s.flags?.onSignup).length,
-    visitorsOnDashboard: rows.filter((s) => s.flags?.onDashboard).length,
+    activeLoggedIn: audience.activeLoggedIn,
+    anonymousVisitors: audience.anonymousVisitors,
+    returningVisitors: audience.returningVisitors,
+    newVisitors: audience.newVisitors,
+    subscribersOnline: audience.subscribersInWindow,
+    paidSubscribersOnline: audience.subscribersInWindow,
+    basicUsersOnline: uniqueRows.filter((s) => /basic/i.test(String(s.planTier || s.subscriptionPlan || ""))).length,
+    superUsersOnline: uniqueRows.filter((s) => /super/i.test(String(s.planTier || s.subscriptionPlan || ""))).length,
+    unlimitedUsersOnline: uniqueRows.filter((s) => /unlimited/i.test(String(s.planTier || s.subscriptionPlan || ""))).length,
+    enterpriseUsersOnline: uniqueRows.filter((s) => /enterprise/i.test(String(s.planTier || s.subscriptionPlan || ""))).length,
+    visitorsInCheckout: uniqueRows.filter((s) => s.flags?.inCheckout).length,
+    visitorsOnPricing: uniqueRows.filter((s) => s.flags?.onPricing).length,
+    visitorsOnSignup: uniqueRows.filter((s) => s.flags?.onSignup).length,
+    visitorsOnDashboard: uniqueRows.filter((s) => s.flags?.onDashboard).length,
     liveCalls: calls,
     liveSms: sms,
     livePurchases: purchaseCount,
@@ -422,8 +533,8 @@ function buildSessionKpis({
     avgPagesViewed: avgPages,
     bounceRisk: 0,
     liveConversionRate:
-      uniqueVisitors.length > 0
-        ? Number(((signups / uniqueVisitors.length) * 100).toFixed(2))
+      audience.uniqueVisitors > 0
+        ? Number(((signups / audience.uniqueVisitors) * 100).toFixed(2))
         : 0,
     pageViews,
     sessionsInWindow: sessionCount,

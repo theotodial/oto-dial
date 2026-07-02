@@ -19,10 +19,10 @@ const accentClasses = {
 
 /** Hero KPIs — matches legacy realtime summary card */
 const HERO_KPIS = [
-  { key: 'activeVisitors', label: 'Users in Window', icon: Users, accent: 'indigo' },
+  { key: 'activeVisitors', label: 'Unique Visitors', icon: Users, accent: 'indigo' },
   { key: 'activeNow', label: 'Active Now (5m)', icon: Zap, accent: 'emerald' },
-  { key: 'liveSignups', label: 'Conversions', icon: UserCheck, accent: 'violet' },
-  { key: 'subscribersOnline', label: 'Subscribers', icon: Crown, accent: 'amber' }
+  { key: 'liveSignups', label: 'Sign-ups', icon: UserCheck, accent: 'violet' },
+  { key: 'subscribersOnline', label: 'Subscribers in Window', icon: Crown, accent: 'amber' }
 ];
 
 const AUDIENCE_KPIS = [
